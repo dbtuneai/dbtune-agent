@@ -1,0 +1,6 @@
+postgresql:
+  connection_url: postgresql://dbtune:password@localhost:5432/dbtune
+
+dbtune:
+  server_url: http://localhost:8080
+  api_key: 1234567890
