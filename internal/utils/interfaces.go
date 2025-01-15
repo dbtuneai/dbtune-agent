@@ -2,14 +2,22 @@ package utils
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/hashicorp/go-retryablehttp"
+	"io"
 	"net/http"
+	"sync"
 	"time"
+
+	"github.com/hashicorp/go-retryablehttp"
+	"github.com/spf13/viper"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 )
-import log "github.com/sirupsen/logrus"
 
 type ConfigArraySchema []interface{}
 
@@ -37,6 +45,10 @@ type AgentLooper interface {
 	//   "no_cpu": { "type": "int", "value": 4 },
 	//   "available_memory": { "type": "bytes", "value": 1024 },
 	// }
+	// The current implementation of GetMetrics is following a concurrent collection
+	// approach, where the collectors are executed in parallel and the errors are
+	// collected in a channel. The channel is then closed and the results are
+	// returned. Uses the errgroup package to delegate the concurrent execution.
 	GetMetrics() ([]FlatValue, error)
 	SendMetrics([]FlatValue) error
 
@@ -65,6 +77,9 @@ type AgentLooper interface {
 
 	// Revert calls the back-end to start a revert process for a non-performing configuration
 	Revert() error
+
+	// GetLogger returns the logger for the agent
+	Logger() *logrus.Logger
 }
 
 type AgentPayload struct {
@@ -72,6 +87,14 @@ type AgentPayload struct {
 	AgentStartTime string `json:"agent_start_time"`
 }
 
+type IOCounterStat struct {
+	ReadCount  uint64
+	WriteCount uint64
+}
+
+// Caches is a struct that holds the caches for the agent
+// that is updated between each metric collection beat.
+// Currently, this is fixed for all adapters.
 type Caches struct {
 	// QueryRuntimeList is a list of all the queries in pg_stat_statements
 	// The list is used to calculate the runtime of the queries
@@ -87,12 +110,14 @@ type Caches struct {
 	// XactCommit is the number of transactions committed
 	// This is used to calculate the TPS between two heartbeats
 	XactCommit int64
+
+	IOCountersStat IOCounterStat
 }
 
 type MetricCollector struct {
 	Key        string
 	MetricType string
-	Collector  func(state *MetricsState) error
+	Collector  func(ctx context.Context, state *MetricsState) error
 }
 
 type MetricsState struct {
@@ -102,6 +127,14 @@ type MetricsState struct {
 	// Every round of metric collections this array will be filled with the metrics
 	// that are collected, and then emptied
 	Metrics []FlatValue
+	Mutex   *sync.Mutex
+}
+
+// AddMetric appends a metric in a thread-safe way
+func (state *MetricsState) AddMetric(metric FlatValue) {
+	state.Mutex.Lock()
+	defer state.Mutex.Unlock()
+	state.Metrics = append(state.Metrics, metric)
 }
 
 // The list below be used to remove
@@ -142,26 +175,31 @@ type CommonAgent struct {
 	MetricsState MetricsState
 }
 
-func CreateCommonAgent(baseURL, dbID, apiKey string) *CommonAgent {
+func CreateCommonAgent() *CommonAgent {
 	logger := log.New()
 	logger.SetFormatter(&log.TextFormatter{
 		FullTimestamp: true,
 	})
-	logger.SetLevel(log.DebugLevel)
+
+	if viper.GetBool("debug") {
+		logger.SetLevel(log.DebugLevel)
+	} else {
+		logger.SetLevel(log.InfoLevel)
+	}
+
+	serverUrl, err := CreateServerURLs()
+	if err != nil {
+		logger.Fatalf("Error creating server URLs: %s", err)
+	}
 
 	client := retryablehttp.NewClient()
-	// 50 retries, as the cap is 30seconds for the back-off wait time
-	client.RetryMax = 50
-	client.Logger = logger
+	// 30 retries, as the cap is 30seconds for the back-off wait time
+	client.RetryMax = 30
+	client.Logger = &LeveledLogrus{Logger: logger}
 
 	// Intercept the request to add the API token
 	client.RequestLogHook = func(logger retryablehttp.Logger, req *http.Request, retry int) {
-		req.Header.Add("DBTUNE-API-KEY", apiKey)
-	}
-
-	serverUrl, err := CreateServerURLs(baseURL, apiKey, dbID)
-	if err != nil {
-		logger.Fatalf("Error creating server URLs: %s", err)
+		req.Header.Add("DBTUNE-API-KEY", serverUrl.ApiKey)
 	}
 
 	return &CommonAgent{
@@ -172,6 +210,13 @@ func CreateCommonAgent(baseURL, dbID, apiKey string) *CommonAgent {
 	}
 }
 
+func (a *CommonAgent) Logger() *logrus.Logger {
+	return a.Logger
+}
+
+// SendHeartbeat sends a heartbeat to the DBtune server
+// to indicate that the agent is running.
+// This method does not need to be overridden by any adapter
 func (a *CommonAgent) SendHeartbeat() error {
 	a.Logger.Infof("Sending heartbeat to %s", a.ServerURLs.PostHeartbeat())
 
@@ -198,6 +243,199 @@ func (a *CommonAgent) SendHeartbeat() error {
 	}
 
 	return nil
+}
+
+// GetMetrics will have a default implementation to handle gracefully
+// error and send partial metrics rather than failing.
+// It is discouraged for every adapter overriding this one.
+func (a *CommonAgent) GetMetrics() ([]FlatValue, error) {
+	a.Logger.Println("Staring metric collection")
+
+	// Cleanup metrics from the previous heartbeat
+	a.MetricsState.Metrics = []FlatValue{}
+
+	// Create error group with timeout context
+	// Default timeout is 20 seconds
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	g, ctx := errgroup.WithContext(ctx)
+
+	// Channel to collect results from goroutines
+	// resultsChan := make(chan []utils.FlatValue, len(a.MetricsState.Collectors))
+	errorsChan := make(chan error, len(a.MetricsState.Collectors))
+
+	// Launch collectors in parallel
+	for _, collector := range a.MetricsState.Collectors {
+		c := collector // Create local copy for goroutine
+		g.Go(func() error {
+			// Individual collector timeout
+			collectorCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+
+			done := make(chan error, 1)
+
+			go func() {
+				err := c.Collector(collectorCtx, &a.MetricsState)
+				if err != nil {
+					a.Logger.Error("Error in collector", c.Key, err)
+					done <- fmt.Errorf("collector %s failed: %w", c.Key, err)
+				}
+				done <- err
+			}()
+
+			select {
+			case err := <-done:
+				// If the error is not nil and the error channel is not closed,
+				// return the error but send it to the error channel also
+				if err != nil {
+					errorsChan <- err
+				}
+				return err
+			case <-collectorCtx.Done():
+				return fmt.Errorf("collector %s timed out", c.Key)
+			}
+		})
+	}
+
+	// Wait for all collectors or timeout
+	if err := g.Wait(); err != nil {
+		a.Logger.Errorln("Some collectors failed:", err)
+	}
+
+	// Collect errors before closing the channel
+	var errors []error
+	close(errorsChan) // Close channel after all collectors are done
+	for err := range errorsChan {
+		errors = append(errors, err)
+	}
+
+	if len(errors) > 0 {
+		a.Logger.Errorln("Collector errors:")
+		for _, err := range errors {
+			a.Logger.Errorln(err)
+		}
+	}
+
+	a.Logger.Debug("Metrics collected", a.MetricsState.Metrics)
+
+	return a.MetricsState.Metrics, nil
+}
+
+func (a *CommonAgent) SendMetrics(metrics []FlatValue) error {
+	a.Logger.Println("Sending metrics to server")
+
+	formattedMetrics := FormatMetrics(metrics)
+
+	jsonData, err := json.Marshal(formattedMetrics)
+	if err != nil {
+		return err
+	}
+
+	a.Logger.Debug("Metrics body payload")
+	a.Logger.Debug(string(jsonData))
+
+	resp, err := a.APIClient.Post(a.ServerURLs.PostMetrics(), "application/json", jsonData)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 204 {
+		body, _ := io.ReadAll(resp.Body)
+		a.Logger.Debug("Failed to send metrics. Response body: ", string(body))
+		return errors.New(fmt.Sprintf("Failed to send metrics, code: %d", resp.StatusCode))
+	}
+
+	return nil
+}
+
+func (a *CommonAgent) SendSystemInfo(systemInfo []FlatValue) error {
+	a.Logger.Println("Sending system info to server")
+
+	formattedMetrics := FormatSystemInfo(systemInfo)
+
+	jsonData, err := json.Marshal(formattedMetrics)
+	if err != nil {
+		return err
+	}
+
+	a.Logger.Debug("System info body payload")
+	a.Logger.Debug(string(jsonData))
+
+	req, _ := retryablehttp.NewRequest("PUT", a.ServerURLs.PostSystemInfo(), bytes.NewBuffer(jsonData))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.APIClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 204 && resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		a.Logger.Error("Failed to send system info. Response body: ", string(body))
+		return errors.New(fmt.Sprintf("Failed to send syste info, code: %d", resp.StatusCode))
+	}
+
+	return nil
+}
+
+func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
+	a.Logger.Println("Sending active configuration to server")
+
+	type Payload struct {
+		Config ConfigArraySchema `json:"config"`
+	}
+
+	jsonData, err := json.Marshal(Payload{Config: config})
+	if err != nil {
+		return err
+	}
+
+	a.Logger.Debug("Configuration info body payload")
+	a.Logger.Debug(string(jsonData))
+
+	resp, err := a.APIClient.Post(a.ServerURLs.PostActiveConfig(), "application/json", jsonData)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 204 && resp.StatusCode != 201 {
+		body, _ := io.ReadAll(resp.Body)
+		a.Logger.Error("Failed to send configuration info. Response body: ", string(body))
+		return fmt.Errorf("Failed to send config info, code: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (a *CommonAgent) GetProposedConfig() (*ProposedConfigResponse, error) {
+	a.Logger.Println("Fetching proposed configurations")
+
+	resp, err := a.APIClient.Get(a.ServerURLs.GetKnobRecommendations())
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var proposedConfig []ProposedConfigResponse
+
+	if err := json.Unmarshal(body, &proposedConfig); err != nil {
+		return nil, err
+	}
+
+	if len(proposedConfig) > 0 {
+		return &proposedConfig[0], nil
+	} else {
+		return nil, nil
+	}
 }
 
 func (a *CommonAgent) Guardrails() bool {

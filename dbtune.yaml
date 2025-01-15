@@ -1,6 +1,12 @@
+debug: false
+
 postgresql:
-  connection_url: postgresql://dbtune:password@localhost:5432/dbtune
+  connection_url: postgresql://dbtune:password@localhost:1994/dbtune
+
+docker:
+  container_name: demo-postgres
 
 dbtune:
-  server_url: http://localhost:8080
-  api_key: 1234567890
+  server_url: http://localhost:8000
+  api_key: 920d7224-ebb3-4df3-94b7-78684b5efe35
+  database_id: 0ced6e90-0bd0-4876-8e98-3e9bd0537c75

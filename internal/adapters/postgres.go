@@ -1,13 +1,10 @@
 package adapters
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"strconv"
+	"sync"
 
 	"example.com/dbtune-agent/internal/collectors"
 	"example.com/dbtune-agent/internal/parameters"
@@ -25,102 +22,101 @@ type DefaultPostgreSQLAdapter struct {
 	pgDriver *pgPool.Pool
 }
 
-func CreateDefaultPostgreSQLAdapter(url string, agentID string, instanceID string) *DefaultPostgreSQLAdapter {
+func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 	dbtuneConfig := viper.Sub("postgresql")
 	dbtuneConfig.BindEnv("connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
 	dbURL := dbtuneConfig.GetString("connection_url")
 	if dbURL == "" {
-		panic("DBT_POSTGRESQL_CONNECTION_URL is not set")
+		return nil, fmt.Errorf("postgresql connection URL not configured (postgresql.connection_url)")
 	}
 
 	dbpool, err := pgPool.New(context.Background(), dbURL)
 	if err != nil {
-		fmt.Println("Could not create PG driver")
-		panic(err)
+		return nil, fmt.Errorf("failed to create PG driver: %w", err)
 	}
 
-	commonAgent := utils.CreateCommonAgent(url, agentID, instanceID)
+	commonAgent := utils.CreateCommonAgent()
 
-	commonAgent.MetricsState = utils.MetricsState{
-		Collectors: DefaultCollectors(dbpool),
+	c := &DefaultPostgreSQLAdapter{}
+	c.CommonAgent = *commonAgent
+	c.pgDriver = dbpool
+
+	// Initialize collectors after the adapter is fully set up
+	c.MetricsState = utils.MetricsState{
+		Collectors: DefaultCollectors(c),
 		Cache:      utils.Caches{},
+		Mutex:      &sync.Mutex{},
 	}
 
-	return &DefaultPostgreSQLAdapter{
-		CommonAgent: *commonAgent,
-		pgDriver:    dbpool,
-	}
+	return c, nil
 }
 
-// Example on how to override one of the shared methods
-//func (adapter *DefaultPostgreSQLAdapter) SendHeartbeat() error {
-//	adapter.logger.Infof("Overriding shared SendHeartbeat logic")
-//	return nil
-//}
-
-func DefaultCollectors(driver *pgPool.Pool) []utils.MetricCollector {
+func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []utils.MetricCollector {
+	// TODO: Is the metric type needed here? Maybe this can be dropped,
+	// as collectors may collect multiple metrics
+	// TODO: Find a bettet way to re-use collectors between adapters, current method does
+	// not work nice, as the RemoveKey method is available on MetricsState,
+	// which is inconvenient to use
 	return []utils.MetricCollector{
 		{
-			Key:        "query_runtime",
+			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  collectors.QueryRuntime(driver),
+			Collector:  collectors.QueryRuntime(pgAdapter),
 		},
 		{
-			Key:        "transactions_per_second",
+			Key:        "database_transactions_per_second",
 			MetricType: "int",
-			Collector:  collectors.TransactionsPerSecond(driver),
+			Collector:  collectors.TransactionsPerSecond(pgAdapter),
 		},
 		{
-			Key:        "active_connections",
+			Key:        "database_active_connections",
 			MetricType: "int",
-			Collector:  collectors.ActiveConnections(driver),
+			Collector:  collectors.ActiveConnections(pgAdapter),
 		},
+		{
+			Key:        "system_db_size",
+			MetricType: "int",
+			Collector:  collectors.DatabaseSize(pgAdapter),
+		},
+		{
+			Key:        "database_autovacuum_count",
+			MetricType: "int",
+			Collector:  collectors.Autovacuum(pgAdapter),
+		},
+		{
+			Key:        "server_uptime",
+			MetricType: "float",
+			Collector:  collectors.Uptime(pgAdapter),
+		},
+		{
+			Key:        "database_cache_hit_ratio",
+			MetricType: "float",
+			Collector:  collectors.BufferCacheHitRatio(pgAdapter),
+		},
+		{
+			Key:        "database_wait_events",
+			MetricType: "int",
+			Collector:  collectors.WaitEvents(pgAdapter),
+		},
+		{
+			Key:        "hardware",
+			MetricType: "int",
+			Collector:  collectors.HardwareInfoOnPremise(pgAdapter),
+		},
+		//{
+		//	Key:        "failing_slow_queries",
+		//	MetricType: "int",
+		//	Collector:  collectors.ArtificiallyFailingQueries(pgAdapter),
+		//},
 	}
 }
 
-func (adapter *DefaultPostgreSQLAdapter) GetMetrics() ([]utils.FlatValue, error) {
-	adapter.Logger.Println("Collecting metrics")
-	// Cleanup metrics from the previous heartbeat
-	adapter.MetricsState.Metrics = []utils.FlatValue{}
-
-	for _, collector := range adapter.MetricsState.Collectors {
-		adapter.Logger.Println("Collector", collector.Key)
-		err := collector.Collector(&adapter.MetricsState)
-		if err != nil {
-			adapter.Logger.Error("Error in collector", collector.Key)
-			adapter.Logger.Error(err)
-		}
-	}
-
-	adapter.Logger.Debug("Metrics collected", adapter.MetricsState.Metrics)
-
-	return adapter.MetricsState.Metrics, nil
+func (adapter *DefaultPostgreSQLAdapter) PGDriver() *pgPool.Pool {
+	return adapter.pgDriver
 }
 
-func (adapter *DefaultPostgreSQLAdapter) SendMetrics(metrics []utils.FlatValue) error {
-	adapter.Logger.Println("Sending metrics to server")
-
-	formattedMetrics := utils.FormatMetrics(metrics)
-
-	jsonData, err := json.Marshal(formattedMetrics)
-	if err != nil {
-		return err
-	}
-
-	adapter.Logger.Debug("Metrics body payload")
-	adapter.Logger.Debug(string(jsonData))
-
-	resp, err := adapter.APIClient.Post(adapter.ServerURLs.PostMetrics(), "application/json", jsonData)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 204 {
-		return errors.New(fmt.Sprintf("Failed to send metrics, code: %d", resp.StatusCode))
-	}
-
-	return nil
+func (adapter *DefaultPostgreSQLAdapter) APIClient() *retryablehttp.Client {
+	return adapter.APIClient
 }
 
 func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
@@ -128,7 +124,12 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 
 	var systemInfo []utils.FlatValue
 
-	pgVersion, err := collectors.PGVersion(adapter.pgDriver)
+	pgVersion, err := collectors.PGVersion(adapter)
+	if err != nil {
+		return nil, err
+	}
+
+	maxConnections, err := collectors.MaxConnections(adapter)
 	if err != nil {
 		return nil, err
 	}
@@ -154,127 +155,63 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 	}
 
 	version, _ := utils.NewMetric("system_info_pg_version", pgVersion, utils.String)
-	hostOS, _ := utils.NewMetric("system_info_OS", hostInfo.OS, utils.String)
+	hostOS, _ := utils.NewMetric("system_info_os", hostInfo.OS, utils.String)
 	platform, _ := utils.NewMetric("system_info_platform", hostInfo.Platform, utils.String)
 	platformVersion, _ := utils.NewMetric("system_info_platform_version", hostInfo.PlatformVersion, utils.String)
-	systemInfo = append(systemInfo, version, totalMemory, hostOS, platformVersion, platform)
+	maxConnectionsMetric, _ := utils.NewMetric("database_info_max_connections", maxConnections, utils.Int)
+
+	systemInfo = append(systemInfo, version, totalMemory, hostOS, platformVersion, platform, maxConnectionsMetric)
 
 	if len(cpuInfo) > 0 {
-		noCPUs, _ := utils.NewMetric("hardware_info_no_cpu", cpuInfo[0].Cores, utils.Int)
+		noCPUs, _ := utils.NewMetric("hardware_info_num_cpus", cpuInfo[0].Cores, utils.Int)
 		systemInfo = append(systemInfo, noCPUs)
 	}
 
 	return systemInfo, nil
 }
 
-func (adapter *DefaultPostgreSQLAdapter) SendSystemInfo(systemInfo []utils.FlatValue) error {
-	adapter.Logger.Println("Sending system info to server")
-
-	formattedMetrics := utils.FormatSystemInfo(systemInfo)
-
-	adapter.Logger.Info(formattedMetrics)
-	jsonData, err := json.Marshal(formattedMetrics)
-	if err != nil {
-		return err
-	}
-
-	adapter.Logger.Debug("System info body payload")
-	adapter.Logger.Debug(string(jsonData))
-
-	req, _ := retryablehttp.NewRequest("PUT", adapter.ServerURLs.PostSystemInfo(), bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := adapter.APIClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 204 && resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		adapter.Logger.Error("Failed to send system info. Response body: ", string(body))
-		return errors.New(fmt.Sprintf("Failed to send syste info, code: %d", resp.StatusCode))
-	}
-
-	return nil
-}
-
 func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig() (utils.ConfigArraySchema, error) {
-
 	var configRows utils.ConfigArraySchema
-	rows, err := adapter.pgDriver.Query(context.Background(), "SELECT name, setting, unit, vartype, context from pg_settings;")
+
+	// Query for numeric types (real and integer)
+	numericRows, err := adapter.pgDriver.Query(context.Background(), `
+		SELECT name, setting::numeric as setting, unit, vartype, context 
+		FROM pg_settings 
+		WHERE vartype IN ('real', 'integer');`)
 	if err != nil {
 		return nil, err
 	}
 
-	for rows.Next() {
+	for numericRows.Next() {
 		var row utils.PGConfigRow
-		err := rows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
+		err := numericRows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
 		if err != nil {
-			adapter.Logger.Error("Error scanning row", err)
+			adapter.Logger.Error("Error scanning numeric row", err)
+			continue
+		}
+		configRows = append(configRows, row)
+	}
+
+	// Query for non-numeric types
+	nonNumericRows, err := adapter.pgDriver.Query(context.Background(), `
+		SELECT name, setting, unit, vartype, context 
+		FROM pg_settings 
+		WHERE vartype NOT IN ('real', 'integer');`)
+	if err != nil {
+		return nil, err
+	}
+
+	for nonNumericRows.Next() {
+		var row utils.PGConfigRow
+		err := nonNumericRows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
+		if err != nil {
+			adapter.Logger.Error("Error scanning non-numeric row", err)
 			continue
 		}
 		configRows = append(configRows, row)
 	}
 
 	return configRows, nil
-}
-
-func (adapter *DefaultPostgreSQLAdapter) SendActiveConfig(config utils.ConfigArraySchema) error {
-	adapter.Logger.Println("Sending active configuration to server")
-
-	type Payload struct {
-		Config utils.ConfigArraySchema `json:"config"`
-	}
-
-	jsonData, err := json.Marshal(Payload{Config: config})
-	if err != nil {
-		return err
-	}
-
-	adapter.Logger.Debug("Configuration info body payload")
-	//adapter.Logger.Debug(string(jsonData))
-
-	resp, err := adapter.APIClient.Post(adapter.ServerURLs.PostActiveConfig(), "application/json", jsonData)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 204 && resp.StatusCode != 201 {
-		body, _ := io.ReadAll(resp.Body)
-		adapter.Logger.Error("Failed to send configuration info. Response body: ", string(body))
-		return errors.New(fmt.Sprintf("Failed to send config info, code: %d", resp.StatusCode))
-	}
-
-	return nil
-}
-
-func (adapter *DefaultPostgreSQLAdapter) GetProposedConfig() (*utils.ProposedConfigResponse, error) {
-	adapter.Logger.Println("Fetching proposed configurations")
-
-	resp, err := adapter.APIClient.Get(adapter.ServerURLs.GetKnobRecommendations())
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var proposedConfig []utils.ProposedConfigResponse
-
-	if err := json.Unmarshal(body, &proposedConfig); err != nil {
-		return nil, err
-	}
-
-	if len(proposedConfig) > 0 {
-		return &proposedConfig[0], nil
-	} else {
-		return nil, nil
-	}
 }
 
 func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *utils.ProposedConfigResponse) error {

@@ -1,0 +1,10 @@
+version: "3"
+
+tasks:
+  start-demo-postgres:
+    cmds:
+      - docker rm -f demo-postgres
+      - docker run --name demo-postgres -e POSTGRES_PASSWORD=password -e POSTGRES_USER=dbtune -p 1994:5432 -d postgres -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all
+      # TODO: When starting the demo postgresql we need to create the extension pg_stat_statements, maybe we need a custom entry and use a docker compose file, will revisit this
+      # - docker exec -it demo-postgres psql -U dbtune -d dbtune -c "CREATE EXTENSION pg_stat_statements;"
+    silent: true

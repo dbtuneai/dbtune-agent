@@ -16,7 +16,7 @@ type ServerURLs struct {
 	DbID      string `mapstructure:"database_id"`
 }
 
-func CreateServerURLs(serverUrl, apiKey, dbID string) (ServerURLs, error) {
+func CreateServerURLs() (ServerURLs, error) {
 	dbtuneConfig := viper.Sub("dbtune")
 	dbtuneConfig.BindEnv("server_url", "DBT_DBTUNE_SERVER_URL")
 	dbtuneConfig.SetDefault("server_url", DefaultServerURL)
@@ -38,9 +38,9 @@ func CreateServerURLs(serverUrl, apiKey, dbID string) (ServerURLs, error) {
 	}
 
 	return ServerURLs{
-		ServerUrl: serverUrl,
-		ApiKey:    apiKey,
-		DbID:      dbID,
+		ServerUrl: servTest.ServerUrl,
+		ApiKey:    servTest.ApiKey,
+		DbID:      servTest.DbID,
 	}, nil
 }
 
@@ -59,25 +59,25 @@ func (s ServerURLs) validate() error {
 
 // PostHeartbeat generates the URL for posting a heartbeat.
 func (s ServerURLs) PostHeartbeat() string {
-	return fmt.Sprintf("%s/api/databases/%s/agents/heartbeat", s.ServerUrl, s.DbID)
+	return fmt.Sprintf("%s/api/v1/databases/%s/agents/heartbeat", s.ServerUrl, s.DbID)
 }
 
 // PostSystemInfo generates the URL for posting system info.
 func (s ServerURLs) PostSystemInfo() string {
-	return fmt.Sprintf("%s/api/databases/%s/system-info", s.ServerUrl, s.DbID)
+	return fmt.Sprintf("%s/api/v1/databases/%s/system-info", s.ServerUrl, s.DbID)
 }
 
 // PostMetrics generates the URL for posting metrics.
 func (s ServerURLs) PostMetrics() string {
-	return fmt.Sprintf("%s/api/databases/%s/post-metrics", s.ServerUrl, s.DbID)
+	return fmt.Sprintf("%s/api/v1/databases/%s/post-metrics", s.ServerUrl, s.DbID)
 }
 
 // PostActiveConfig generates the URL for posting active configurations.
 func (s ServerURLs) PostActiveConfig() string {
-	return fmt.Sprintf("%s/api/databases/%s/configurations", s.ServerUrl, s.DbID)
+	return fmt.Sprintf("%s/api/v1/databases/%s/configurations", s.ServerUrl, s.DbID)
 }
 
 // GetKnobRecommendations generates the URL for getting knob recommendations.
 func (s ServerURLs) GetKnobRecommendations() string {
-	return fmt.Sprintf("%s/api/databases/%s/configurations?status=recommended", s.ServerUrl, s.DbID)
+	return fmt.Sprintf("%s/api/v1/databases/%s/configurations?status=recommended", s.ServerUrl, s.DbID)
 }

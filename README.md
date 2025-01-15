@@ -1,85 +1,155 @@
 <h1 align="center">DBtune Agent</h1>
 
-This repository includes the open-source DBtune agent.
+The DBtune agent is a lightweight, extensible monitoring and configuration management tool for PostgreSQL databases. It collects system metrics, database performance data, and manages database configurations through a centralized DBtune service.
 
-There are batteries includes agent implementations for many PostgreSQL deployments/services, but the agent can be extended to incorporate new environments and data sources.
+## Features
 
-The agent currently collects information about (not limited to the following):
+- Real-time metric collection and monitoring
+- Automatic configuration management and optimization
+- Support for multiple PostgreSQL deployment types:
+  - Standalone PostgreSQL servers
+  - Docker containers
+  - Amazon RDS (beta)
+  - Amazon Aurora (beta)
+- Extensible adapter architecture for custom deployments
+- Concurrent metric collection with error handling
+- Configuration through YAML or environment variables
 
-- System metrics
-  a. CPU
-  b. Memory
-  c. Disk
-  d. Network
-- PostgreSQL metrics
-  a. Query runtime
-  b. TPS
-  c. Active connections
-- Server metrics
-  a. Configuration running
-  b. Postgresql version
+## Quick Start
 
-## Templates
+### Prerequisites
 
-1. VM server running PostgreSQL
-2. Docker hosted PostgreSQL
-3. RDS PostgreSQL
-4. Aurora PostgreSQL
+There are multiple ways to run the DBtune agent:
 
-## How to run
+- Download and run the pre-built binary from the releases page
+- Use our official Docker image
+- Build from source (requires Go 1.23.1 or later)
 
-We provide docker images for the templates (see above).
+### Installation
 
-If you want to customise the agent, you can ....
+1. Download the latest release for your platform from our releases page or pull our Docker image:
 
-## Configs
-
-The agent uses Viper for configuration. You can either set a `dbtune.yaml` file in the location that you run the binary run or set the environment variables.
-
-The environment variables are prefixed with `DBT_DBTUNE_`, with all the keys screaming snake case, and flat structure.
-
-For example the following `dbtune.yaml` file:
-
-```
-postgresql:
-  connection_url: postgresql://user:password@localhost:5432/database
+```bash
+docker pull dbtune/agent:latest
 ```
 
-Will be translated to the following environment variables:
-
-```
-DBT_DBTUNE_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database
-```
-
-## Default config values
-
-Below are the default values for the config. You can override them in the `dbtune.yaml` file or the environment variables.
+2. Configure your environment by creating a `dbtune.yaml` file:
 
 ```yaml
-# Shared settings
-debug: bool # Enable debug mode - default: False
+debug: false
+postgresql:
+  connection_url: postgresql://user:password@localhost:5432/database
+dbtune:
+  server_url: http://your-dbtune-server:8000
+  api_key: your-api-key
+  database_id: your-database-id
 ```
 
-### TODOs:
+3. Run the agent:
 
-1. Why I implemented this with a flat array and not a dict from first place? cannot even remember:
-   This snippet may be easier to work with, and this append may not be safe for concurrency if multiple threads want to use the same array (for get metrics)
-
-```golang
-	totalMemory, err := utils.NewMetric("system_info_total_memory", memoryInfo.Total, utils.Int)
-	systemInfo = append(systemInfo, totalMemory)
+```bash
+./dbtune-agent  # If using binary
+# OR with Docker:
+docker run -v $(pwd)/dbtune.yaml:/etc/dbtune/dbtune.yaml dbtune/agent:latest
 ```
 
-2. Create a runner functionality that will execute the main loop based on the adapter
+## Configuration
 
-3. Create a config with Viper
+### Required YAML Configuration
 
-4. Add required metrics to operate:
+```yaml
+# Basic configuration
+postgresql:
+  connection_url: postgresql://user:password@localhost:5432/database # Required: Database connection string
+
+dbtune:
+  server_url: http://localhost:8000 # Required: DBtune server endpoint
+  api_key: your-api-key # Required: Your DBtune API key
+  database_id: your-database-id # Required: Unique identifier for your database
+
+# Optional settings
+debug: false # Enable debug logging
+collection_interval: 60 # Metrics collection interval in seconds
+
+# Docker-specific settings (only needed for Docker deployments)
+docker:
+  container_name: "postgres" # Name of your PostgreSQL container
+  network: "docker_default" # Docker network name
+```
+
+### Environment Variables
+
+All configuration options can be set through environment variables, prefixed with `DBT_`:
+
+```bash
+export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database
+export DBT_DBTUNE_SERVER_URL=http://localhost:8000
+export DBT_DBTUNE_API_KEY=your-api-key
+export DBT_DBTUNE_DATABASE_ID=your-database-id
+```
+
+## Core Metrics
+
+The agent collects essential metrics required for DBtune's optimization engine:
+
+### Required System Metrics
+
+- CPU usage (user, system, idle)
+- Memory utilization (total, used, cached)
+- Disk I/O (reads/writes per second)
+- Network statistics (bytes in/out)
+
+### Essential PostgreSQL Metrics
+
+- Query performance statistics
+  - Transactions per second
+  - Query runtime distribution
+  - Cache hit ratios
+- Resource utilization
+  - Active connections
+  - Connection states
+  - Database size
+- Background processes
+  - Autovacuum statistics
+  - Background writer statistics
+- Wait events and locks
+
+### Configuration Information
+
+- PostgreSQL version and settings
+- System configuration
+- Hardware specifications
+
+## Troubleshooting
+
+### Common Issues
+
+1. Connection Issues
 
 ```
-database_avg_query_runtime: float
-database_tps: int
-
-Optional - Implemented in template agents
-database_active_connections: int
+Error: could not create PG driver
 ```
+
+- Verify PostgreSQL connection URL
+- Check network connectivity
+- Ensure PostgreSQL is running
+
+2. Metric Collection Errors
+
+```
+Error: collector failed: context deadline exceeded
+```
+
+- Increase collection timeout in configuration
+- Check database performance
+- Verify network stability
+
+### Getting Help
+
+- Check our [documentation](https://docs.dbtune.com)
+- Join our [community Discord](https://discord.gg/dbtune)
+- Email support: support@dbtune.com
+
+## License
+
+[Add License Information]

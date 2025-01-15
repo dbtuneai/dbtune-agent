@@ -1,7 +1,8 @@
 package main
 
 import (
-	"fmt"
+	"context"
+	"flag"
 	"log"
 	"time"
 
@@ -11,63 +12,120 @@ import (
 )
 
 func runner(adapter utils.AgentLooper) {
-	for {
-		data, err := adapter.GetMetrics()
-		if err != nil {
-			panic(err)
-		}
+	logger := adapter.Logger()
 
-		err = adapter.SendMetrics(data)
-		if err != nil {
-			panic(err)
-		}
+	// Create tickers for different intervals
+	metricsTicker := time.NewTicker(5 * time.Second)
+	//systemMetricsTicker := time.NewTicker(1 * time.Minute)
+	systemMetricsTicker := time.NewTicker(5 * time.Second)
+	configTicker := time.NewTicker(15 * time.Second)
+	heartbeatTicker := time.NewTicker(15 * time.Second)
 
-		data, err = adapter.GetSystemInfo()
-		if err != nil {
-			panic(err)
-		}
+	// Create a context that we can cancel
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-		err = adapter.SendSystemInfo(data)
-		if err != nil {
-			panic(err)
-		}
-
-		err = adapter.SendHeartbeat()
-		if err != nil {
-			panic(err)
-		}
-
-		config, err := adapter.GetActiveConfig()
-		if err != nil {
-			panic(err)
-		}
-
-		err = adapter.SendActiveConfig(config)
-		if err != nil {
-			panic(err)
-		}
-
-		conf, _ := adapter.GetProposedConfig()
-
-		if conf != nil {
-			err = adapter.ApplyConfig(conf)
-			if err != nil {
-				panic(err)
+	// Heartbeat goroutine
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-heartbeatTicker.C:
+				if err := adapter.SendHeartbeat(); err != nil {
+					logger.Errorf("heartbeat sending error: %v", err)
+				}
 			}
 		}
-		time.Sleep(time.Second * 10)
-	}
+	}()
 
+	// Metrics collection goroutine
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-metricsTicker.C:
+				data, err := adapter.GetMetrics()
+				if err != nil {
+					logger.Errorf("metrics collection error: %v", err)
+					continue
+				}
+				if err := adapter.SendMetrics(data); err != nil {
+					logger.Errorf("metrics sending error: %v", err)
+				}
+			}
+		}
+	}()
+
+	// System metrics collection goroutine
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-systemMetricsTicker.C:
+				data, err := adapter.GetSystemInfo()
+				if err != nil {
+					logger.Errorf("system info collection error: %v", err)
+					continue
+				}
+				if err := adapter.SendSystemInfo(data); err != nil {
+					logger.Errorf("system info sending error: %v", err)
+				}
+			}
+		}
+	}()
+
+	// Config management goroutine
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-configTicker.C:
+				// Get and send current config
+				config, err := adapter.GetActiveConfig()
+				if err != nil {
+					logger.Errorf("config collection error: %v", err)
+					continue
+				}
+				if err := adapter.SendActiveConfig(config); err != nil {
+					logger.Errorf("config sending error: %v", err)
+					continue
+				}
+
+				// Check for and apply new config recommendations
+				proposedConfig, err := adapter.GetProposedConfig()
+				if err != nil {
+					logger.Errorf("proposed config fetch error: %v", err)
+					continue
+				}
+
+				if proposedConfig != nil {
+					if err := adapter.ApplyConfig(proposedConfig); err != nil {
+						logger.Errorf("config application error: %v", err)
+					}
+				}
+			}
+		}
+	}()
+
+	// Block forever
+	select {}
 }
 
 func main() {
+	// Define flags
+	useDocker := flag.Bool("docker", false, "Use Docker adapter")
+	flag.Parse()
+
 	// Set the file name of the configurations file
 	viper.SetConfigName("dbtune")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(".") // optionally look for config in the working directory
 
 	// Read the configuration file
-	// Attempt to read the configuration file
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
 			// Config file not found; ignore the error
@@ -78,18 +136,25 @@ func main() {
 		}
 	}
 
-	viper.AutomaticEnv() // Read also environment variables, need this to work with Docker containers without mounting config file
-	// Define environment variable prefix (optional)
-	viper.SetEnvPrefix("DBT")                                                   // Set a prefix for environment variables
-	viper.BindEnv("postgresql.connection_url", "DBT_POSTGRESQL_CONNECTION_URL") // Bind to the environment variable
+	viper.AutomaticEnv()      // Read also environment variables
+	viper.SetEnvPrefix("DBT") // Set a prefix for environment variables
 
-	var pgAdapter = adapters.CreateDefaultPostgreSQLAdapter(
-		"http://localhost:8000",
-		"3071dd11-91e6-4351-b445-81a6f121d6ee",
-		"920d7224-ebb3-4df3-94b7-78684b5efe35",
-	)
+	var adapter utils.AgentLooper
+	var err error
 
-	// runner(pgAdapter)
+	// Create the appropriate adapter based on flags
+	switch {
+	case *useDocker:
+		adapter, err = adapters.CreateDockerContainerAdapter()
+		if err != nil {
+			log.Fatalf("Failed to create Docker adapter: %v", err)
+		}
+	default:
+		adapter, err = adapters.CreateDefaultPostgreSQLAdapter()
+		if err != nil {
+			log.Fatalf("Failed to create PostgreSQL adapter: %v", err)
+		}
+	}
 
-	fmt.Println(pgAdapter)
+	runner(adapter)
 }
