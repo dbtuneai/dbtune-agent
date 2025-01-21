@@ -10,3 +10,6 @@ dbtune:
   server_url: http://localhost:8000
   api_key: 920d7224-ebb3-4df3-94b7-78684b5efe35
   database_id: 0ced6e90-0bd0-4876-8e98-3e9bd0537c75
+  # server_url: https://staging.dbtune.com
+  # api_key: 560cdb61-4fc1-4107-94b6-3896d67d90bc
+  # database_id: e59e880d-87a7-4003-9d78-d6291c52004a

@@ -38,7 +38,7 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 	}
 
 	// Create Docker client
-	cli, err := client.NewClientWithOpts(client.FromEnv)
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Docker client: %w", err)
 	}
@@ -121,7 +121,7 @@ func DockerCollectors(adapter *DockerContainerAdapter) []utils.MetricCollector {
 }
 
 func (d *DockerContainerAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
-	d.Logger.Println("Collecting system info for Docker container")
+	d.Logger().Println("Collecting system info for Docker container")
 
 	var systemInfo []utils.FlatValue
 

@@ -3,7 +3,10 @@ package adapters
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"example.com/dbtune-agent/internal/collectors"
@@ -11,6 +14,7 @@ import (
 	"example.com/dbtune-agent/internal/utils"
 	"github.com/hashicorp/go-retryablehttp"
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jaypipes/ghw"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/host"
 	"github.com/shirou/gopsutil/v4/mem"
@@ -116,11 +120,11 @@ func (adapter *DefaultPostgreSQLAdapter) PGDriver() *pgPool.Pool {
 }
 
 func (adapter *DefaultPostgreSQLAdapter) APIClient() *retryablehttp.Client {
-	return adapter.APIClient
+	return adapter.APIClient()
 }
 
 func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
-	adapter.Logger.Println("Collecting system info")
+	adapter.Logger().Println("Collecting system info")
 
 	var systemInfo []utils.FlatValue
 
@@ -167,6 +171,14 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 		systemInfo = append(systemInfo, noCPUs)
 	}
 
+	diskType, err := getDiskType(adapter)
+	if err != nil {
+		adapter.Logger().Debug("Error getting disk type", err)
+	}
+
+	diskTypeMetric, _ := utils.NewMetric("node_disk_device_type", diskType, utils.String)
+	systemInfo = append(systemInfo, diskTypeMetric)
+
 	return systemInfo, nil
 }
 
@@ -186,7 +198,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig() (utils.ConfigArraySch
 		var row utils.PGConfigRow
 		err := numericRows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
 		if err != nil {
-			adapter.Logger.Error("Error scanning numeric row", err)
+			adapter.Logger().Error("Error scanning numeric row", err)
 			continue
 		}
 		configRows = append(configRows, row)
@@ -205,7 +217,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig() (utils.ConfigArraySch
 		var row utils.PGConfigRow
 		err := nonNumericRows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
 		if err != nil {
-			adapter.Logger.Error("Error scanning non-numeric row", err)
+			adapter.Logger().Error("Error scanning non-numeric row", err)
 			continue
 		}
 		configRows = append(configRows, row)
@@ -215,7 +227,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig() (utils.ConfigArraySch
 }
 
 func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *utils.ProposedConfigResponse) error {
-	adapter.Logger.Infof("Applying Config: %s", proposedConfig.KnobApplication)
+	adapter.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
 	if proposedConfig.KnobApplication == "restart" {
 		panic("Restart application not implemented")
@@ -230,7 +242,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *utils.Propo
 
 		// We make the assumption every setting is a number parsed as float
 		query := fmt.Sprintf(`ALTER SYSTEM SET "%s" = %s;`, knobConfig.Name, strconv.FormatFloat(knobConfig.Setting.(float64), 'f', -1, 64))
-		adapter.Logger.Debugf(`Executing: %s`, query)
+		adapter.Logger().Debugf(`Executing: %s`, query)
 
 		_, err = adapter.pgDriver.Exec(context.Background(), query)
 		if err != nil {
@@ -242,6 +254,98 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *utils.Propo
 	_, err := adapter.pgDriver.Exec(context.Background(), "SELECT pg_reload_conf();")
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// TODO: This was heavily influenced by Claude, need to revisit and test properly
+func getDiskType(adapter *DefaultPostgreSQLAdapter) (string, error) {
+	// First we query PostgreSQL to get data directory mount point
+	var dataDir string
+	err := adapter.PGDriver().QueryRow(context.Background(), "SHOW data_directory;").Scan(&dataDir)
+	if err != nil {
+		return "UNKNOWN", err
+	}
+
+	// Resolve symlinks and get absolute path
+	realPath, err := filepath.EvalSymlinks(dataDir)
+	if err != nil {
+		return "UNKNOWN", err
+	}
+
+	// Get device name using df
+	cmd := exec.Command("df", realPath)
+	output, err := cmd.Output()
+	if err != nil {
+		return "UNKNOWN", err
+	}
+
+	// Parse df output - skip header line and get first field
+	var deviceName string
+	lines := strings.Split(string(output), "\n")
+	if len(lines) >= 2 {
+		fields := strings.Fields(lines[1])
+		if len(fields) > 0 {
+			deviceName = fields[0]
+		}
+	}
+
+	// Get block storage information using ghw
+	block, err := ghw.Block()
+	if err != nil {
+		return "UNKNOWN", err
+	}
+
+	// Find the disk type for the device
+	for _, disk := range block.Disks {
+		// Check if this disk matches our device
+		possiblePaths := []string{
+			deviceName,
+			"/dev/" + filepath.Base(deviceName),
+			disk.Name,
+			"/dev/" + disk.Name,
+		}
+
+		for _, p := range possiblePaths {
+			if p == deviceName {
+				// Check for NVMe drives
+				if disk.StorageController == ghw.STORAGE_CONTROLLER_NVME {
+					return "NVME", nil
+				}
+				// Check for SSDs vs HDDs
+				if disk.DriveType == ghw.DRIVE_TYPE_HDD {
+					return "HDD", nil
+				}
+				return "SSD", nil
+			}
+		}
+	}
+
+	return "UNKNOWN", nil
+}
+
+// Guardrails for default PostgreSQL adapter performs the following:
+// 1. Checks if the total memory is set. If not fetches it from the system and sets it in cache.
+// 2. Fetches current memory usage
+// 3. If memory usage is greater than 90% of total memory, triggers a critical guardrail
+func (adapter *DefaultPostgreSQLAdapter) Guardrails() *utils.GuardrailType {
+	// Get memory info
+	memoryInfo, err := mem.VirtualMemory()
+	if err != nil {
+		adapter.Logger().Error("Failed to get memory info:", err)
+		return nil
+	}
+
+	// Calculate memory usage percentage
+	memoryUsagePercent := float64(memoryInfo.Used) / float64(memoryInfo.Total) * 100
+
+	adapter.Logger().Debugf("Memory usage: %f%%", memoryUsagePercent)
+
+	// If memory usage is greater than 90%, trigger critical guardrail
+	if memoryUsagePercent > 10 {
+		level := utils.Critical
+		return &level
 	}
 
 	return nil

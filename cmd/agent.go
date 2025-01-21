@@ -8,112 +8,9 @@ import (
 
 	"example.com/dbtune-agent/internal/adapters"
 	"example.com/dbtune-agent/internal/utils"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
-
-func runner(adapter utils.AgentLooper) {
-	logger := adapter.Logger()
-
-	// Create tickers for different intervals
-	metricsTicker := time.NewTicker(5 * time.Second)
-	//systemMetricsTicker := time.NewTicker(1 * time.Minute)
-	systemMetricsTicker := time.NewTicker(5 * time.Second)
-	configTicker := time.NewTicker(15 * time.Second)
-	heartbeatTicker := time.NewTicker(15 * time.Second)
-
-	// Create a context that we can cancel
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Heartbeat goroutine
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-heartbeatTicker.C:
-				if err := adapter.SendHeartbeat(); err != nil {
-					logger.Errorf("heartbeat sending error: %v", err)
-				}
-			}
-		}
-	}()
-
-	// Metrics collection goroutine
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-metricsTicker.C:
-				data, err := adapter.GetMetrics()
-				if err != nil {
-					logger.Errorf("metrics collection error: %v", err)
-					continue
-				}
-				if err := adapter.SendMetrics(data); err != nil {
-					logger.Errorf("metrics sending error: %v", err)
-				}
-			}
-		}
-	}()
-
-	// System metrics collection goroutine
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-systemMetricsTicker.C:
-				data, err := adapter.GetSystemInfo()
-				if err != nil {
-					logger.Errorf("system info collection error: %v", err)
-					continue
-				}
-				if err := adapter.SendSystemInfo(data); err != nil {
-					logger.Errorf("system info sending error: %v", err)
-				}
-			}
-		}
-	}()
-
-	// Config management goroutine
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-configTicker.C:
-				// Get and send current config
-				config, err := adapter.GetActiveConfig()
-				if err != nil {
-					logger.Errorf("config collection error: %v", err)
-					continue
-				}
-				if err := adapter.SendActiveConfig(config); err != nil {
-					logger.Errorf("config sending error: %v", err)
-					continue
-				}
-
-				// Check for and apply new config recommendations
-				proposedConfig, err := adapter.GetProposedConfig()
-				if err != nil {
-					logger.Errorf("proposed config fetch error: %v", err)
-					continue
-				}
-
-				if proposedConfig != nil {
-					if err := adapter.ApplyConfig(proposedConfig); err != nil {
-						logger.Errorf("config application error: %v", err)
-					}
-				}
-			}
-		}
-	}()
-
-	// Block forever
-	select {}
-}
 
 func main() {
 	// Define flags
@@ -157,4 +54,102 @@ func main() {
 	}
 
 	runner(adapter)
+}
+
+func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger *logrus.Logger, fn func() error) {
+	// Run immediately
+	if err := fn(); err != nil {
+		logger.Errorf("initial %s error: %v", name, err)
+	}
+
+	// Then run on ticker
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := fn(); err != nil {
+				logger.Errorf("%s error: %v", name, err)
+			}
+		}
+	}
+}
+
+func runner(adapter utils.AgentLooper) {
+	logger := adapter.Logger()
+
+	// Create tickers for different intervals
+	metricsTicker := time.NewTicker(5 * time.Second)
+	systemMetricsTicker := time.NewTicker(1 * time.Minute)
+	configTicker := time.NewTicker(5 * time.Second)
+	heartbeatTicker := time.NewTicker(15 * time.Second)
+	guardrailTicker := time.NewTicker(1 * time.Second)
+
+	// Create a context that we can cancel
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Heartbeat goroutine
+	go runWithTicker(ctx, heartbeatTicker, "heartbeat", logger, adapter.SendHeartbeat)
+
+	// Metrics collection goroutine
+	go runWithTicker(ctx, metricsTicker, "metrics", logger, func() error {
+		data, err := adapter.GetMetrics()
+		if err != nil {
+			return err
+		}
+		return adapter.SendMetrics(data)
+	})
+
+	// System metrics collection goroutine
+	go runWithTicker(ctx, systemMetricsTicker, "system info", logger, func() error {
+		data, err := adapter.GetSystemInfo()
+		if err != nil {
+			return err
+		}
+		return adapter.SendSystemInfo(data)
+	})
+
+	// Config management goroutine
+	go runWithTicker(ctx, configTicker, "config", logger, func() error {
+		config, err := adapter.GetActiveConfig()
+		if err != nil {
+			return err
+		}
+		if err := adapter.SendActiveConfig(config); err != nil {
+			return err
+		}
+
+		proposedConfig, err := adapter.GetProposedConfig()
+		if err != nil {
+			return err
+		}
+		if proposedConfig != nil {
+			return adapter.ApplyConfig(proposedConfig)
+		}
+		return nil
+	})
+
+	// Guardrail check goroutine
+	// Time is kept in a pointer to keep a persistent reference
+	// May need to refactor this for testing
+	var lastCheck *time.Time
+	go runWithTicker(ctx, guardrailTicker, "guardrail", logger, func() error {
+		if lastCheck != nil && time.Since(*lastCheck) < 15*time.Second {
+			return nil
+		}
+		if level := adapter.Guardrails(); level != nil {
+			if err := adapter.SendGuardrailSignal(*level); err != nil {
+				now := time.Now()
+				lastCheck = &now
+				return err
+			}
+			now := time.Now()
+			lastCheck = &now
+		}
+		return nil
+	})
+
+	// Block forever
+	select {}
 }

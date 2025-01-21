@@ -17,10 +17,7 @@ import (
 )
 
 func QueryRuntime(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *utils.MetricsState) error {
-	// Perform runtime reflection to make sure that the
-	// struct is embedding the default adapter
 	return func(ctx context.Context, state *utils.MetricsState) error {
-
 		var query = `
 		SELECT JSON_OBJECT_AGG(queryid, JSON_BUILD_OBJECT('calls',calls,'total_exec_time',total_exec_time))
         AS qrt_stats
@@ -46,7 +43,7 @@ func QueryRuntime(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, s
 		} else {
 			runtime := utils.CalculateQueryRuntime(state.Cache.QueryRuntimeList, queryStats)
 
-			metricEntry, err := utils.NewMetric("database_average_query_runtime", runtime, utils.Float)
+			metricEntry, err := utils.NewMetric("perf_average_query_runtime", runtime, utils.Float)
 			if err != nil {
 				return err
 			}
@@ -60,10 +57,7 @@ func QueryRuntime(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, s
 }
 
 func ActiveConnections(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *utils.MetricsState) error {
-	// Perform runtime reflection to make sure that the
-	// struct is embedding the default adapter
 	return func(ctx context.Context, state *utils.MetricsState) error {
-
 		var query = `
 		/*dbtune*/
 		SELECT COUNT(*) AS active_connections
@@ -77,7 +71,7 @@ func ActiveConnections(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Conte
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric("database_active_connections", result, utils.Int)
+		metricEntry, err := utils.NewMetric("pg_active_connections", result, utils.Int)
 		if err != nil {
 			return err
 		}
@@ -115,7 +109,6 @@ func ArtificiallyFailingQueries(pgAdapter utils.PostgreSQLAdapter) func(ctx cont
 
 func TransactionsPerSecond(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *utils.MetricsState) error {
 	return func(ctx context.Context, state *utils.MetricsState) error {
-
 		var query = `
 		/*dbtune*/
 	    SELECT SUM(xact_commit)::bigint
@@ -135,7 +128,7 @@ func TransactionsPerSecond(pgAdapter utils.PostgreSQLAdapter) func(ctx context.C
 			return nil
 		}
 
-		metricEntry, err := utils.NewMetric("database_transactions_per_second", serverXactCommits-state.Cache.XactCommit, utils.Int)
+		metricEntry, err := utils.NewMetric("perf_transactions_per_second", serverXactCommits-state.Cache.XactCommit, utils.Int)
 		if err != nil {
 			return err
 		}
@@ -151,7 +144,6 @@ func TransactionsPerSecond(pgAdapter utils.PostgreSQLAdapter) func(ctx context.C
 // DatabaseSize returns the size of all the databases combined in bytes
 func DatabaseSize(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *utils.MetricsState) error {
 	return func(ctx context.Context, state *utils.MetricsState) error {
-
 		var query = `
 		/*dbtune*/
 		SELECT sum(pg_database_size(datname)) as total_size_bytes FROM pg_database;
@@ -163,7 +155,7 @@ func DatabaseSize(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, s
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric("system_db_size", totalSizeBytes, utils.Int)
+		metricEntry, err := utils.NewMetric("pg_instance_size", totalSizeBytes, utils.Int)
 		if err != nil {
 			return err
 		}
@@ -188,7 +180,7 @@ func Autovacuum(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, sta
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric("database_autovacuum_count", result, utils.Int)
+		metricEntry, err := utils.NewMetric("pg_autovacuum_count", result, utils.Int)
 		if err != nil {
 			return err
 		}
@@ -228,7 +220,6 @@ func Uptime(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *
 // as this may add much noise from unused DBs.
 func BufferCacheHitRatio(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *utils.MetricsState) error {
 	return func(ctx context.Context, state *utils.MetricsState) error {
-
 		var query = `
 		/*dbtune*/
 		SELECT ROUND(100.0 * blks_hit / (blks_hit + blks_read), 2) as cache_hit_ratio
@@ -242,7 +233,7 @@ func BufferCacheHitRatio(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Con
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric("database_cache_hit_ratio", bufferCacheHitRatio, utils.Float)
+		metricEntry, err := utils.NewMetric("pg_cache_hit_ratio", bufferCacheHitRatio, utils.Float)
 		if err != nil {
 			return err
 		}
@@ -325,10 +316,6 @@ func HardwareInfoOnPremise(pgAdapter utils.PostgreSQLAdapter) func(ctx context.C
 		cpuModelMetric, _ := utils.NewMetric("hardware_info_cpu_usage", cpuPercentage[0], utils.Float)
 		state.AddMetric(cpuModelMetric)
 
-		diskUsage, _ := disk.Usage("/")
-		diskUsageMetric, _ := utils.NewMetric("hardware_info_disk_usage", diskUsage.UsedPercent, utils.Percentage)
-		state.AddMetric(diskUsageMetric)
-
 		// Get Reads and Write IOps
 		ioCounters, _ := disk.IOCounters()
 		// Get the total Read and Write IOps
@@ -342,10 +329,14 @@ func HardwareInfoOnPremise(pgAdapter utils.PostgreSQLAdapter) func(ctx context.C
 		}
 
 		if state.Cache.IOCountersStat != (utils.IOCounterStat{}) {
-			readCountMetric, _ := utils.NewMetric("hardware_info_disk_read_iops", reads-state.Cache.IOCountersStat.ReadCount, utils.Int)
+			totalIOps := (reads + writes) - (state.Cache.IOCountersStat.ReadCount + state.Cache.IOCountersStat.WriteCount)
+			iopsTotalMetric, _ := utils.NewMetric("node_disk_io_ops_total", totalIOps, utils.Int)
+			state.AddMetric(iopsTotalMetric)
+
+			readCountMetric, _ := utils.NewMetric("node_disk_io_ops_read", reads-state.Cache.IOCountersStat.ReadCount, utils.Int)
 			state.AddMetric(readCountMetric)
 
-			writeCountMetric, _ := utils.NewMetric("hardware_info_disk_write_iops", writes-state.Cache.IOCountersStat.WriteCount, utils.Int)
+			writeCountMetric, _ := utils.NewMetric("node_disk_io_ops_write", writes-state.Cache.IOCountersStat.WriteCount, utils.Int)
 			state.AddMetric(writeCountMetric)
 		}
 
@@ -354,7 +345,7 @@ func HardwareInfoOnPremise(pgAdapter utils.PostgreSQLAdapter) func(ctx context.C
 
 		// Memory usage
 		memoryInfo, _ := mem.VirtualMemory()
-		usedMemory, _ := utils.NewMetric("hardware_info_used_memory", memoryInfo.Used, utils.Int)
+		usedMemory, _ := utils.NewMetric("node_memory_used", memoryInfo.Used, utils.Int)
 		state.AddMetric(usedMemory)
 
 		return nil

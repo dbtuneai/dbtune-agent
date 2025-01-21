@@ -1,5 +1,7 @@
 <h1 align="center">DBtune Agent</h1>
 
+![Go](https://img.shields.io/badge/golang-00ADD8?&style=plastic&logo=go&logoColor=white)
+
 The DBtune agent is a lightweight, extensible monitoring and configuration management tool for PostgreSQL databases. It collects system metrics, database performance data, and manages database configurations through a centralized DBtune service.
 
 ## Features

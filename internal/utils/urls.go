@@ -81,3 +81,8 @@ func (s ServerURLs) PostActiveConfig() string {
 func (s ServerURLs) GetKnobRecommendations() string {
 	return fmt.Sprintf("%s/api/v1/databases/%s/configurations?status=recommended", s.ServerUrl, s.DbID)
 }
+
+// PostGuardrailSignal generates the URL for posting a guardrail signal.
+func (s ServerURLs) PostGuardrailSignal() string {
+	return fmt.Sprintf("%s/api/v1/databases/%s/guardrail", s.ServerUrl, s.DbID)
+}
