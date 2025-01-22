@@ -228,7 +228,10 @@ func CreateCommonAgent() *CommonAgent {
 
 	// Intercept the request to add the API token
 	client.RequestLogHook = func(logger retryablehttp.Logger, req *http.Request, retry int) {
-		req.Header.Add("DBTUNE-API-KEY", serverUrl.ApiKey)
+		key := req.Header.Get("DBTUNE-API-KEY")
+		if key == "" {
+			req.Header.Add("DBTUNE-API-KEY", serverUrl.ApiKey)
+		}
 	}
 
 	return &CommonAgent{
