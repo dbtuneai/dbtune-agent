@@ -97,7 +97,7 @@ func ArtificiallyFailingQueries(pgAdapter utils.PostgreSQLAdapter) func(ctx cont
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric("database_active_connections", result, utils.Int)
+		metricEntry, err := utils.NewMetric("pg_active_connections", result, utils.Int)
 		if err != nil {
 			return err
 		}
@@ -301,7 +301,7 @@ func WaitEvents(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, sta
 				pgAdapter.Logger().Debug("Error scanning row", err)
 			}
 
-			metricEntry, _ := utils.NewMetric(fmt.Sprintf("database_wait_events_%s", strings.ToLower(event)), count, utils.Int)
+			metricEntry, _ := utils.NewMetric(fmt.Sprintf("pg_wait_events_%s", strings.ToLower(event)), count, utils.Int)
 			state.AddMetric(metricEntry)
 		}
 

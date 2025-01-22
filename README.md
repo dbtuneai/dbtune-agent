@@ -35,14 +35,14 @@ There are multiple ways to run the DBtune agent:
 docker pull dbtune/agent:latest
 ```
 
-2. Configure your environment by creating a `dbtune.yaml` file:
+2. Configure your environment by creating a `dbtune.yaml` file (check the [configuration section](#configuration) for more details):
 
 ```yaml
 debug: false
 postgresql:
   connection_url: postgresql://user:password@localhost:5432/database
 dbtune:
-  server_url: http://your-dbtune-server:8000
+  server_url: https://app.dbtune.com
   api_key: your-api-key
   database_id: your-database-id
 ```
@@ -52,12 +52,21 @@ dbtune:
 ```bash
 ./dbtune-agent  # If using binary
 # OR with Docker:
+# Example with mounted config file
 docker run -v $(pwd)/dbtune.yaml:/etc/dbtune/dbtune.yaml dbtune/agent:latest
+
+# Example with environment variables
+docker run \
+  -e DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database \
+  -e DBT_DBTUNE_SERVER_URL=https://app.dbtune.com \
+  -e DBT_DBTUNE_API_KEY=your-api-key \
+  -e DBT_DBTUNE_DATABASE_ID=your-database-id \
+  dbtune/agent:latest
 ```
 
 ## Configuration
 
-### Required YAML Configuration
+### Configuration via YAML
 
 ```yaml
 # Basic configuration
@@ -65,23 +74,21 @@ postgresql:
   connection_url: postgresql://user:password@localhost:5432/database # Required: Database connection string
 
 dbtune:
-  server_url: http://localhost:8000 # Required: DBtune server endpoint
+  server_url: https://app.dbtune.com # Optional: DBtune server endpoint (change for self-hosted)
   api_key: your-api-key # Required: Your DBtune API key
   database_id: your-database-id # Required: Unique identifier for your database
 
 # Optional settings
 debug: false # Enable debug logging
-collection_interval: 60 # Metrics collection interval in seconds
 
 # Docker-specific settings (only needed for Docker deployments)
 docker:
   container_name: "postgres" # Name of your PostgreSQL container
-  network: "docker_default" # Docker network name
 ```
 
 ### Environment Variables
 
-All configuration options can be set through environment variables, prefixed with `DBT_`:
+All configuration options can be set through environment variables, prefixed with `DBT_` and following a screaming snake case format:
 
 ```bash
 export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database
@@ -92,14 +99,13 @@ export DBT_DBTUNE_DATABASE_ID=your-database-id
 
 ## Core Metrics
 
-The agent collects essential metrics required for DBtune's optimization engine:
+The agent collects essential metrics required for DBtune's optimization engine, you can find more information about the metrics in our [Notion page](https://dbtune.notion.site/DBtune-Collected-Metrics-17b1ecfc272180cc9f2cd7faeab2c503?pvs=4).
 
 ### Required System Metrics
 
-- CPU usage (user, system, idle)
-- Memory utilization (total, used, cached)
+- CPU usage
+- Memory utilization
 - Disk I/O (reads/writes per second)
-- Network statistics (bytes in/out)
 
 ### Essential PostgreSQL Metrics
 
@@ -122,36 +128,16 @@ The agent collects essential metrics required for DBtune's optimization engine:
 - System configuration
 - Hardware specifications
 
-## Troubleshooting
+## How to contribute
 
-### Common Issues
-
-1. Connection Issues
-
-```
-Error: could not create PG driver
-```
-
-- Verify PostgreSQL connection URL
-- Check network connectivity
-- Ensure PostgreSQL is running
-
-2. Metric Collection Errors
-
-```
-Error: collector failed: context deadline exceeded
-```
-
-- Increase collection timeout in configuration
-- Check database performance
-- Verify network stability
+- Fork the repo and create a new branch
+- Then make a PR to the main branch
 
 ### Getting Help
 
 - Check our [documentation](https://docs.dbtune.com)
-- Join our [community Discord](https://discord.gg/dbtune)
-- Email support: support@dbtune.com
+- Email support: support at dbtune.com
 
 ## License
 
-[Add License Information]
+See https://github.com/dbtuneai/agent/blob/main/LICENSE
