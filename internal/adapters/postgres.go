@@ -58,7 +58,7 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []utils.MetricCollector {
 	// TODO: Is the metric type needed here? Maybe this can be dropped,
 	// as collectors may collect multiple metrics
-	// TODO: Find a bettet way to re-use collectors between adapters, current method does
+	// TODO: Find a better way to re-use collectors between adapters, current method does
 	// not work nice, as the RemoveKey method is available on MetricsState,
 	// which is inconvenient to use
 	return []utils.MetricCollector{

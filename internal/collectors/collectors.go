@@ -122,20 +122,31 @@ func TransactionsPerSecond(pgAdapter utils.PostgreSQLAdapter) func(ctx context.C
 			return err
 		}
 
-		if state.Cache.XactCommit == 0 {
+		if state.Cache.XactCommit.Count == 0 {
 			pgAdapter.Logger().Info("Cache miss, filling data")
-			state.Cache.XactCommit = serverXactCommits
+			state.Cache.XactCommit = utils.XactStat{
+				Count:     serverXactCommits,
+				Timestamp: time.Now(),
+			}
 			return nil
 		}
 
-		metricEntry, err := utils.NewMetric("perf_transactions_per_second", serverXactCommits-state.Cache.XactCommit, utils.Int)
-		if err != nil {
-			return err
+		// Calculate transactions per second
+		duration := time.Since(state.Cache.XactCommit.Timestamp).Seconds()
+		if duration > 0 {
+			tps := float64(serverXactCommits-state.Cache.XactCommit.Count) / duration
+			metricEntry, err := utils.NewMetric("perf_transactions_per_second", tps, utils.Float)
+			if err != nil {
+				return err
+			}
+			state.AddMetric(metricEntry)
 		}
-		state.AddMetric(metricEntry)
 
-		// Update caches
-		state.Cache.XactCommit = serverXactCommits
+		// Update cache
+		state.Cache.XactCommit = utils.XactStat{
+			Count:     serverXactCommits,
+			Timestamp: time.Now(),
+		}
 
 		return nil
 	}

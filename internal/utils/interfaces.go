@@ -13,7 +13,6 @@ import (
 
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/spf13/viper"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
@@ -112,6 +111,11 @@ type IOCounterStat struct {
 	WriteCount uint64
 }
 
+type XactStat struct {
+	Count     int64
+	Timestamp time.Time
+}
+
 // Caches is a struct that holds the caches for the agent
 // that is updated between each metric collection beat.
 // Currently, this is fixed for all adapters.
@@ -131,7 +135,7 @@ type Caches struct {
 
 	// XactCommit is the number of transactions committed
 	// This is used to calculate the TPS between two heartbeats
-	XactCommit int64
+	XactCommit XactStat
 
 	IOCountersStat IOCounterStat
 
@@ -286,21 +290,21 @@ func (a *CommonAgent) GetMetrics() ([]FlatValue, error) {
 	// Cleanup metrics from the previous heartbeat
 	a.MetricsState.Metrics = []FlatValue{}
 
-	// Create error group with timeout context
-	// Default timeout is 20 seconds
+	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	g, ctx := errgroup.WithContext(ctx)
-
-	// Channel to collect results from goroutines
-	// resultsChan := make(chan []utils.FlatValue, len(a.MetricsState.Collectors))
+	// Use WaitGroup to wait for all collectors
+	var wg sync.WaitGroup
 	errorsChan := make(chan error, len(a.MetricsState.Collectors))
 
 	// Launch collectors in parallel
 	for _, collector := range a.MetricsState.Collectors {
 		c := collector // Create local copy for goroutine
-		g.Go(func() error {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
 			// Individual collector timeout
 			collectorCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
@@ -308,32 +312,33 @@ func (a *CommonAgent) GetMetrics() ([]FlatValue, error) {
 			done := make(chan error, 1)
 
 			go func() {
-				err := c.Collector(collectorCtx, &a.MetricsState)
+				a.Logger().Debugf("Starting collector: %s", c.Key)
+				// Create copy of the context to be passed to the collector
+				newCtx, cancel := context.WithCancel(collectorCtx)
+				defer cancel()
+
+				err := c.Collector(newCtx, &a.MetricsState)
 				if err != nil {
-					a.Logger().Error("Error in collector", c.Key, err)
+					a.Logger().Errorf("Error in collector %s: %v", c.Key, err)
 					done <- fmt.Errorf("collector %s failed: %w", c.Key, err)
+					return
 				}
-				done <- err
+				done <- nil
 			}()
 
 			select {
 			case err := <-done:
-				// If the error is not nil and the error channel is not closed,
-				// return the error but send it to the error channel also
 				if err != nil {
 					errorsChan <- err
 				}
-				return err
 			case <-collectorCtx.Done():
-				return fmt.Errorf("collector %s timed out", c.Key)
+				errorsChan <- fmt.Errorf("collector %s timed out", c.Key)
 			}
-		})
+		}()
 	}
 
-	// Wait for all collectors or timeout
-	if err := g.Wait(); err != nil {
-		a.Logger().Errorln("Some collectors failed:", err)
-	}
+	// Wait for all collectors to complete
+	wg.Wait()
 
 	// Collect errors before closing the channel
 	var errors []error
@@ -392,8 +397,8 @@ func (a *CommonAgent) SendSystemInfo(systemInfo []FlatValue) error {
 		return err
 	}
 
-	a.Logger().Debug("System info body payload")
-	a.Logger().Debug(string(jsonData))
+	// a.Logger().Debug("System info body payload")
+	// a.Logger().Debug(string(jsonData))
 
 	req, _ := retryablehttp.NewRequest("PUT", a.ServerURLs.PostSystemInfo(), bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")
@@ -425,8 +430,8 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 		return err
 	}
 
-	a.Logger().Debug("Configuration info body payload")
-	a.Logger().Debug(string(jsonData))
+	// a.Logger().Debug("Configuration info body payload")
+	// a.Logger().Debug(string(jsonData))
 
 	resp, err := a.APIClient.Post(a.ServerURLs.PostActiveConfig(), "application/json", jsonData)
 	if err != nil {
