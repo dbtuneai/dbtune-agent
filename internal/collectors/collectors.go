@@ -313,7 +313,7 @@ func HardwareInfoOnPremise(pgAdapter utils.PostgreSQLAdapter) func(ctx context.C
 	return func(ctx context.Context, state *utils.MetricsState) error {
 
 		cpuPercentage, _ := cpu.Percent(time.Millisecond*100, false) // Report the average CPU usage over 100ms
-		cpuModelMetric, _ := utils.NewMetric("hardware_info_cpu_usage", cpuPercentage[0], utils.Float)
+		cpuModelMetric, _ := utils.NewMetric("node_cpu_usage", cpuPercentage[0], utils.Float)
 		state.AddMetric(cpuModelMetric)
 
 		// Get Reads and Write IOps

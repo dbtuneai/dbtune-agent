@@ -159,17 +159,17 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 
 	// Create metrics
 	version, _ := utils.NewMetric("system_info_pg_version", pgVersion, utils.String)
-	maxConnectionsMetric, _ := utils.NewMetric("database_info_max_connections", maxConnections, utils.Int)
+	maxConnectionsMetric, _ := utils.NewMetric("pg_max_connections", maxConnections, utils.Int)
 
 	// Memory info
-	memLimitMetric, _ := utils.NewMetric("hardware_info_total_memory", statsJSON.MemoryStats.Limit, utils.Int)
+	memLimitMetric, _ := utils.NewMetric("node_memory_total", statsJSON.MemoryStats.Limit, utils.Int)
 
 	// CPU info
 	noCPUs := float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
 	if statsJSON.CPUStats.OnlineCPUs > 0 {
 		noCPUs = float64(statsJSON.CPUStats.OnlineCPUs)
 	}
-	cpuMetric, _ := utils.NewMetric("hardware_info_num_cpus", noCPUs, utils.Float)
+	cpuMetric, _ := utils.NewMetric("node_cpu_count", noCPUs, utils.Float)
 
 	// Container info
 	containerOS, _ := utils.NewMetric("system_info_os", "linux", utils.String) // Docker containers are Linux-based

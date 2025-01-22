@@ -143,7 +143,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 		return nil, err
 	}
 
-	totalMemory, err := utils.NewMetric("hardware_info_total_memory", memoryInfo.Total, utils.Int)
+	totalMemory, err := utils.NewMetric("node_memory_total", memoryInfo.Total, utils.Int)
 	if err != nil {
 		return nil, err
 	}
@@ -162,12 +162,12 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 	hostOS, _ := utils.NewMetric("system_info_os", hostInfo.OS, utils.String)
 	platform, _ := utils.NewMetric("system_info_platform", hostInfo.Platform, utils.String)
 	platformVersion, _ := utils.NewMetric("system_info_platform_version", hostInfo.PlatformVersion, utils.String)
-	maxConnectionsMetric, _ := utils.NewMetric("database_info_max_connections", maxConnections, utils.Int)
+	maxConnectionsMetric, _ := utils.NewMetric("pg_max_connections", maxConnections, utils.Int)
 
 	systemInfo = append(systemInfo, version, totalMemory, hostOS, platformVersion, platform, maxConnectionsMetric)
 
 	if len(cpuInfo) > 0 {
-		noCPUs, _ := utils.NewMetric("hardware_info_num_cpus", cpuInfo[0].Cores, utils.Int)
+		noCPUs, _ := utils.NewMetric("node_cpu_count", cpuInfo[0].Cores, utils.Int)
 		systemInfo = append(systemInfo, noCPUs)
 	}
 
@@ -343,7 +343,7 @@ func (adapter *DefaultPostgreSQLAdapter) Guardrails() *utils.GuardrailType {
 	adapter.Logger().Debugf("Memory usage: %f%%", memoryUsagePercent)
 
 	// If memory usage is greater than 90%, trigger critical guardrail
-	if memoryUsagePercent > 10 {
+	if memoryUsagePercent > 90 {
 		level := utils.Critical
 		return &level
 	}

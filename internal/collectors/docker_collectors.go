@@ -46,17 +46,17 @@ func DockerHardwareInfo(dockerAdapter utils.DockerAdapter) func(ctx context.Cont
 		// // Calculate memory percentage
 		// memoryPercent := float64(statsJSON.MemoryStats.Usage) / float64(statsJSON.MemoryStats.Limit) * 100
 
-		// memPercentMetric, _ := utils.NewMetric("hardware_info_memory_usage", memoryPercent, utils.Float)
+		// memPercentMetric, _ := utils.NewMetric("node_memory_usage", memoryPercent, utils.Float)
 		// state.AddMetric(memPercentMetric)
 
 		// Add metrics
-		cpuMetric, _ := utils.NewMetric("hardware_info_cpu_usage", cpuPercent, utils.Float)
+		cpuMetric, _ := utils.NewMetric("node_cpu_usage", cpuPercent, utils.Float)
 		state.AddMetric(cpuMetric)
 
-		memUsedMetric, _ := utils.NewMetric("hardware_info_used_memory", statsJSON.MemoryStats.Usage, utils.Int)
+		memUsedMetric, _ := utils.NewMetric("node_memory_used", statsJSON.MemoryStats.Usage, utils.Int)
 		state.AddMetric(memUsedMetric)
 
-		memLimitMetric, _ := utils.NewMetric("hardware_info_total_memory", statsJSON.MemoryStats.Limit, utils.Int)
+		memLimitMetric, _ := utils.NewMetric("node_memory_total", statsJSON.MemoryStats.Limit, utils.Int)
 		state.AddMetric(memLimitMetric)
 
 		return nil
