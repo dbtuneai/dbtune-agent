@@ -24,3 +24,17 @@ func CalculateDockerCPUPercent(previousCPU, previousSystem uint64, v *container.
 
 	return cpuPercent
 }
+
+// CalculateDockerMemoryUsed is mirroring the official way to calculate:
+// https://github.com/docker/cli/blob/master/cli/command/container/stats_helpers.go#L239
+func CalculateDockerMemoryUsed(mem container.MemoryStats) float64 {
+	// cgroup v1
+	if v, isCgroup1 := mem.Stats["total_inactive_file"]; isCgroup1 && v < mem.Usage {
+		return float64(mem.Usage - v)
+	}
+	// cgroup v2
+	if v := mem.Stats["inactive_file"]; v < mem.Usage {
+		return float64(mem.Usage - v)
+	}
+	return float64(mem.Usage)
+}

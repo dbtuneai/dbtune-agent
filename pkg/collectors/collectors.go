@@ -8,16 +8,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shirou/gopsutil/v4/disk"
-	"github.com/shirou/gopsutil/v4/mem"
-
-	"example.com/dbtune-agent/internal/utils"
+	"github.com/dbtuneai/agent/pkg/adeptersinterfaces"
+	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/internal/utils"
 
 	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/disk"
+	"github.com/shirou/gopsutil/v4/mem"
 )
 
-func QueryRuntime(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *utils.MetricsState) error {
-	return func(ctx context.Context, state *utils.MetricsState) error {
+func QueryRuntime(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
 		var query = `
 		SELECT JSON_OBJECT_AGG(queryid, JSON_BUILD_OBJECT('calls',calls,'total_exec_time',total_exec_time))
         AS qrt_stats
@@ -56,8 +57,8 @@ func QueryRuntime(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, s
 	}
 }
 
-func ActiveConnections(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *utils.MetricsState) error {
-	return func(ctx context.Context, state *utils.MetricsState) error {
+func ActiveConnections(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
 		var query = `
 		/*dbtune*/
 		SELECT COUNT(*) AS active_connections
@@ -81,10 +82,10 @@ func ActiveConnections(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Conte
 	}
 }
 
-func ArtificiallyFailingQueries(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *utils.MetricsState) error {
+func ArtificiallyFailingQueries(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
 	// Perform runtime reflection to make sure that the
 	// struct is embedding the default adapter
-	return func(ctx context.Context, state *utils.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
 
 		var query = `
 		/*dbtune*/
@@ -107,8 +108,8 @@ func ArtificiallyFailingQueries(pgAdapter utils.PostgreSQLAdapter) func(ctx cont
 	}
 }
 
-func TransactionsPerSecond(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *utils.MetricsState) error {
-	return func(ctx context.Context, state *utils.MetricsState) error {
+func TransactionsPerSecond(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
 		var query = `
 		/*dbtune*/
 	    SELECT SUM(xact_commit)::bigint
@@ -124,7 +125,7 @@ func TransactionsPerSecond(pgAdapter utils.PostgreSQLAdapter) func(ctx context.C
 
 		if state.Cache.XactCommit.Count == 0 {
 			pgAdapter.Logger().Info("Cache miss, filling data")
-			state.Cache.XactCommit = utils.XactStat{
+			state.Cache.XactCommit = agent.XactStat{
 				Count:     serverXactCommits,
 				Timestamp: time.Now(),
 			}
@@ -143,7 +144,7 @@ func TransactionsPerSecond(pgAdapter utils.PostgreSQLAdapter) func(ctx context.C
 		}
 
 		// Update cache
-		state.Cache.XactCommit = utils.XactStat{
+		state.Cache.XactCommit = agent.XactStat{
 			Count:     serverXactCommits,
 			Timestamp: time.Now(),
 		}
@@ -153,8 +154,8 @@ func TransactionsPerSecond(pgAdapter utils.PostgreSQLAdapter) func(ctx context.C
 }
 
 // DatabaseSize returns the size of all the databases combined in bytes
-func DatabaseSize(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *utils.MetricsState) error {
-	return func(ctx context.Context, state *utils.MetricsState) error {
+func DatabaseSize(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
 		var query = `
 		/*dbtune*/
 		SELECT sum(pg_database_size(datname)) as total_size_bytes FROM pg_database;
@@ -176,8 +177,8 @@ func DatabaseSize(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, s
 	}
 }
 
-func Autovacuum(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *utils.MetricsState) error {
-	return func(ctx context.Context, state *utils.MetricsState) error {
+func Autovacuum(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
 
 		// https://stackoverflow.com/a/25012622
 		var query = `
@@ -201,8 +202,8 @@ func Autovacuum(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, sta
 	}
 }
 
-func Uptime(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *utils.MetricsState) error {
-	return func(ctx context.Context, state *utils.MetricsState) error {
+func Uptime(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
 
 		var query = `
 		/*dbtune*/
@@ -229,8 +230,8 @@ func Uptime(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *
 // The current implementation gets only the hit ratio for the current database,
 // we intentionally avoid aggregating the hit ratio for all databases,
 // as this may add much noise from unused DBs.
-func BufferCacheHitRatio(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *utils.MetricsState) error {
-	return func(ctx context.Context, state *utils.MetricsState) error {
+func BufferCacheHitRatio(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
 		var query = `
 		/*dbtune*/
 		SELECT ROUND(100.0 * blks_hit / (blks_hit + blks_read), 2) as cache_hit_ratio
@@ -254,8 +255,8 @@ func BufferCacheHitRatio(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Con
 	}
 }
 
-func WaitEvents(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *utils.MetricsState) error {
-	return func(ctx context.Context, state *utils.MetricsState) error {
+func WaitEvents(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
 
 		var query = `
 		/*dbtune*/
@@ -320,8 +321,8 @@ func WaitEvents(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, sta
 	}
 }
 
-func HardwareInfoOnPremise(pgAdapter utils.PostgreSQLAdapter) func(ctx context.Context, state *utils.MetricsState) error {
-	return func(ctx context.Context, state *utils.MetricsState) error {
+func HardwareInfoOnPremise(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
 
 		cpuPercentage, _ := cpu.Percent(time.Millisecond*100, false) // Report the average CPU usage over 100ms
 		cpuModelMetric, _ := utils.NewMetric("node_cpu_usage", cpuPercentage[0], utils.Float)
@@ -339,7 +340,7 @@ func HardwareInfoOnPremise(pgAdapter utils.PostgreSQLAdapter) func(ctx context.C
 			reads += ioCounter.ReadCount
 		}
 
-		if state.Cache.IOCountersStat != (utils.IOCounterStat{}) {
+		if state.Cache.IOCountersStat != (agent.IOCounterStat{}) {
 			totalIOps := (reads + writes) - (state.Cache.IOCountersStat.ReadCount + state.Cache.IOCountersStat.WriteCount)
 			iopsTotalMetric, _ := utils.NewMetric("node_disk_io_ops_total", totalIOps, utils.Int)
 			state.AddMetric(iopsTotalMetric)
@@ -352,7 +353,7 @@ func HardwareInfoOnPremise(pgAdapter utils.PostgreSQLAdapter) func(ctx context.C
 		}
 
 		// Update cache
-		state.Cache.IOCountersStat = utils.IOCounterStat{ReadCount: reads, WriteCount: writes}
+		state.Cache.IOCountersStat = agent.IOCounterStat{ReadCount: reads, WriteCount: writes}
 
 		// Memory usage
 		memoryInfo, _ := mem.VirtualMemory()
@@ -365,7 +366,7 @@ func HardwareInfoOnPremise(pgAdapter utils.PostgreSQLAdapter) func(ctx context.C
 
 // PGVersion returns the version of the PostgreSQL instance
 // Example: 16.4
-func PGVersion(pgAdapter utils.PostgreSQLAdapter) (string, error) {
+func PGVersion(pgAdapter adeptersinterfaces.PostgreSQLAdapter) (string, error) {
 	var pgVersion string
 	versionRegex := regexp.MustCompile(`PostgreSQL (\d+\.\d+)`)
 	err := pgAdapter.PGDriver().QueryRow(context.Background(), "SELECT version();").Scan(&pgVersion)
@@ -377,7 +378,7 @@ func PGVersion(pgAdapter utils.PostgreSQLAdapter) (string, error) {
 	return matches[1], nil
 }
 
-func MaxConnections(pgAdapter utils.PostgreSQLAdapter) (int, error) {
+func MaxConnections(pgAdapter adeptersinterfaces.PostgreSQLAdapter) (int, error) {
 	var maxConnections int
 	err := pgAdapter.PGDriver().
 		QueryRow(context.Background(), "SELECT setting::integer FROM pg_settings WHERE  name = 'max_connections';").

@@ -26,6 +26,11 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
+      - name: Run tests
+        run: |
+          go mod tidy
+          go test -count=1 ./...
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:

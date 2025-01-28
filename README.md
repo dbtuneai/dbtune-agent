@@ -11,8 +11,8 @@ The DBtune agent is a lightweight, extensible monitoring and configuration manag
 - Support for multiple PostgreSQL deployment types:
   - Standalone PostgreSQL servers
   - Docker containers
-  - Amazon RDS (beta)
-  - Amazon Aurora (beta)
+  - Amazon RDS (coming soon)
+  - Amazon Aurora (coming soon)
 - Extensible adapter architecture for custom deployments
 - Concurrent metric collection with error handling
 - Configuration through YAML or environment variables
@@ -53,7 +53,9 @@ dbtune:
 ./dbtune-agent  # If using binary
 # OR with Docker:
 # Example with mounted config file
-docker run -v $(pwd)/dbtune.yaml:/etc/dbtune/dbtune.yaml dbtune/agent:latest
+docker run -v $(pwd)/dbtune.yaml:/app/dbtune.yaml \
+    --name dbtune-agent \
+     public.ecr.aws/dbtune/dbtune/agent:latest
 
 # Example with environment variables
 docker run \
@@ -61,7 +63,7 @@ docker run \
   -e DBT_DBTUNE_SERVER_URL=https://app.dbtune.com \
   -e DBT_DBTUNE_API_KEY=your-api-key \
   -e DBT_DBTUNE_DATABASE_ID=your-database-id \
-  dbtune/agent:latest
+  public.ecr.aws/dbtune/dbtune/agent:latest
 ```
 
 ## Configuration
@@ -140,4 +142,4 @@ The agent collects essential metrics required for DBtune's optimization engine, 
 
 ## License
 
-See https://github.com/dbtuneai/agent/blob/main/LICENSE
+See github.com/dbtuneai/agent//blob/main/LICENSE

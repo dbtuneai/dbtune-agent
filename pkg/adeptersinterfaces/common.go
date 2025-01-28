@@ -1,4 +1,4 @@
-package utils
+package adeptersinterfaces
 
 import (
 	"github.com/docker/docker/client"

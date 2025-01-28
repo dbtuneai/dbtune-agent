@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 
-	"example.com/dbtune-agent/internal/utils"
+	adapters "github.com/dbtuneai/agent/pkg/adeptersinterfaces"
+	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/internal/utils"
+
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 )
 
 // DockerHardwareInfo collects hardware metrics from a Docker container using the Docker API
-func DockerHardwareInfo(dockerAdapter utils.DockerAdapter) func(ctx context.Context, state *utils.MetricsState) error {
-	return func(ctx context.Context, state *utils.MetricsState) error {
+func DockerHardwareInfo(dockerAdapter adapters.DockerAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
 		// Create a new Docker client
 		cli, err := client.NewClientWithOpts(client.FromEnv)
 		if err != nil {
@@ -53,7 +56,8 @@ func DockerHardwareInfo(dockerAdapter utils.DockerAdapter) func(ctx context.Cont
 		cpuMetric, _ := utils.NewMetric("node_cpu_usage", cpuPercent, utils.Float)
 		state.AddMetric(cpuMetric)
 
-		memUsedMetric, _ := utils.NewMetric("node_memory_used", statsJSON.MemoryStats.Usage, utils.Int)
+		memoryUsed := utils.CalculateDockerMemoryUsed(statsJSON.MemoryStats)
+		memUsedMetric, _ := utils.NewMetric("node_memory_used", memoryUsed, utils.Float)
 		state.AddMetric(memUsedMetric)
 
 		memLimitMetric, _ := utils.NewMetric("node_memory_total", statsJSON.MemoryStats.Limit, utils.Int)

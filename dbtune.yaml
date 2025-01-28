@@ -1,15 +1,13 @@
-debug: false
+debug: true
 
 postgresql:
-  connection_url: postgresql://dbtune:password@localhost:1926/dbtune
+  connection_url: postgresql://username:password@your-ip:5432/database
 
+# Use with docker flag to monitor a PostgreSQL container
 docker:
   container_name: demo-postgres
 
 dbtune:
-  server_url: http://localhost:8000
-  api_key: 920d7224-ebb3-4df3-94b7-78684b5efe35
-  database_id: 3c4a23e9-6508-4d10-b921-fb46beb7c0b3
-  # server_url: https://staging.dbtune.com
-  # api_key: 560cdb61-4fc1-4107-94b6-3896d67d90bc
-  # database_id: e59e880d-87a7-4003-9d78-d6291c52004a
+  server_url: https://app.dbtune.com
+  api_key: "your-api-key"
+  database_id: "your-database-id"
