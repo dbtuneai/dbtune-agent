@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/collectors"
@@ -23,9 +24,15 @@ import (
 	"github.com/spf13/viper"
 )
 
+type PostgreSQLConfig struct {
+	ConnectionURL string `mapstructure:"connection_url"`
+	ServiceName   string `mapstructure:"service_name"`
+}
+
 type DefaultPostgreSQLAdapter struct {
 	agent.CommonAgent
 	pgDriver *pgPool.Pool
+	pgConfig PostgreSQLConfig
 }
 
 func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
@@ -35,12 +42,19 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 	}
 
 	dbtuneConfig.BindEnv("connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
-	dbURL := dbtuneConfig.GetString("connection_url")
-	if dbURL == "" {
+	dbtuneConfig.BindEnv("service_name", "DBT_POSTGRESQL_SERVICE_NAME")
+
+	var pgConfig PostgreSQLConfig
+	err := dbtuneConfig.Unmarshal(&pgConfig)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode into struct, %v", err)
+	}
+
+	if pgConfig.ConnectionURL == "" {
 		return nil, fmt.Errorf("postgresql connection URL not configured (postgresql.connection_url)")
 	}
 
-	dbpool, err := pgPool.New(context.Background(), dbURL)
+	dbpool, err := pgPool.New(context.Background(), pgConfig.ConnectionURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PG driver: %w", err)
 	}
@@ -50,6 +64,7 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 	c := &DefaultPostgreSQLAdapter{}
 	c.CommonAgent = *commonAgent
 	c.pgDriver = dbpool
+	c.pgConfig = pgConfig
 
 	// Initialize collectors after the adapter is fully set up
 	c.MetricsState = agent.MetricsState{
@@ -159,7 +174,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 		return nil, err
 	}
 
-	cpuInfo, err := cpu.Info()
+	noCPUs, err := cpu.Counts(true)
 	if err != nil {
 		return nil, err
 	}
@@ -169,13 +184,9 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 	platform, _ := utils.NewMetric("system_info_platform", hostInfo.Platform, utils.String)
 	platformVersion, _ := utils.NewMetric("system_info_platform_version", hostInfo.PlatformVersion, utils.String)
 	maxConnectionsMetric, _ := utils.NewMetric("pg_max_connections", maxConnections, utils.Int)
+	noCPUsMetric, _ := utils.NewMetric("node_cpu_count", noCPUs, utils.Int)
 
-	systemInfo = append(systemInfo, version, totalMemory, hostOS, platformVersion, platform, maxConnectionsMetric)
-
-	if len(cpuInfo) > 0 {
-		noCPUs, _ := utils.NewMetric("node_cpu_count", cpuInfo[0].Cores, utils.Int)
-		systemInfo = append(systemInfo, noCPUs)
-	}
+	systemInfo = append(systemInfo, version, totalMemory, hostOS, platformVersion, platform, maxConnectionsMetric, noCPUsMetric)
 
 	diskType, err := getDiskType(adapter)
 	if err != nil {
@@ -236,7 +247,10 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 	adapter.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
 	if proposedConfig.KnobApplication == "restart" {
-		panic("Restart application not implemented")
+		// If service name is missing, skip
+		if adapter.pgConfig.ServiceName == "" {
+			return fmt.Errorf("service name not configured, skipping restarting and applying configuration")
+		}
 	}
 
 	// Apply the configuration with ALTER
@@ -256,10 +270,40 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 		}
 	}
 
-	// Reload database when everything is applied
-	_, err := adapter.pgDriver.Exec(context.Background(), "SELECT pg_reload_conf();")
-	if err != nil {
-		return err
+	if proposedConfig.KnobApplication == "restart" {
+		// Restart the service
+		adapter.Logger().Warn("Restarting service")
+
+		// Execute systemctl restart command
+		cmd := exec.Command("systemctl", "restart", adapter.pgConfig.ServiceName)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to restart PostgreSQL service: %w", err)
+		}
+
+		// Wait for PostgreSQL to be back online with retries
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
+		defer cancel()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("timeout waiting for PostgreSQL to come back online")
+			case <-time.After(1 * time.Second):
+				// Try to execute a simple query
+				_, err := adapter.pgDriver.Exec(ctx, "SELECT 1")
+				if err == nil {
+					adapter.Logger().Info("PostgreSQL is back online")
+					return nil
+				}
+				adapter.Logger().Debug("PostgreSQL not ready yet, retrying...")
+			}
+		}
+	} else {
+		// Reload database when everything is applied
+		_, err := adapter.pgDriver.Exec(context.Background(), "SELECT pg_reload_conf();")
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

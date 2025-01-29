@@ -74,6 +74,11 @@ docker run \
 # Basic configuration
 postgresql:
   connection_url: postgresql://user:password@localhost:5432/database # Required: Database connection string
+  # Restart specific variable
+  # This variable is about restarting postgresql service with the default PostgreSQL adapter.
+  # It might need to run as root depending on your system and service setup.
+  # Check the postgres.go adapter to see which commands are getting executed.
+  service_name: postgresql-17 # (required) name of the service in case of restarts
 
 dbtune:
   server_url: https://app.dbtune.com # Optional: DBtune server endpoint (change for self-hosted)
