@@ -29,7 +29,7 @@ dockers:
       - go.mod
       - go.sum
       - cmd/
-      - internal/
+      - pkg/
     build_flag_templates:
       - "--pull"
       - "--label=org.opencontainers.image.created={{.Date}}"
