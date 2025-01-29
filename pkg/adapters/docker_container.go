@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"example.com/dbtune-agent/internal/collectors"
-	"example.com/dbtune-agent/internal/utils"
+	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/collectors"
+	"github.com/dbtuneai/agent/pkg/internal/utils"
+
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/spf13/viper"
@@ -65,8 +67,8 @@ func (d *DockerContainerAdapter) GetDockerClient() *client.Client {
 
 // DockerCollectors returns the list of collectors for Docker, replacing system metrics
 // with Docker-specific ones while keeping database-specific collectors
-func DockerCollectors(adapter *DockerContainerAdapter) []utils.MetricCollector {
-	return []utils.MetricCollector{
+func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
+	return []agent.MetricCollector{
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
@@ -112,6 +114,7 @@ func DockerCollectors(adapter *DockerContainerAdapter) []utils.MetricCollector {
 			MetricType: "int",
 			Collector:  collectors.DockerHardwareInfo(adapter),
 		},
+		// Use it for testing
 		//{
 		//	Key:        "failing_slow_queries",
 		//	MetricType: "int",
@@ -187,4 +190,39 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 	)
 
 	return systemInfo, nil
+}
+
+func (d *DockerContainerAdapter) Guardrails() *agent.GuardrailType {
+	// Get container stats
+	stats, err := d.dockerClient.ContainerStats(context.Background(), d.ContainerName, false)
+	if err != nil {
+		d.Logger().Printf("guardrail: could not fetch docker stats: %v", err)
+		return nil
+	}
+	defer stats.Body.Close()
+
+	// Parse stats
+	var statsJSON container.StatsResponse
+	decoder := json.NewDecoder(stats.Body)
+	if err := decoder.Decode(&statsJSON); err != nil {
+		d.Logger().Printf("guardrail: could not decode docker stats: %v", err)
+		return nil
+	}
+
+	// Check if there's a memory limit
+	if statsJSON.MemoryStats.Limit > 0 {
+		memoryLimit := statsJSON.MemoryStats.Limit
+
+		memoryUsagePercent := utils.CalculateDockerMemoryUsed(statsJSON.MemoryStats) / float64(memoryLimit) * 100
+		d.Logger().Debugf("guardrail: memory percentage is %f", memoryUsagePercent)
+
+		if memoryUsagePercent > 90 {
+			level := agent.GuardrailType("critical")
+			return &level
+		}
+	} else {
+		d.Logger().Debug("guardrail: could not fetch memory limit")
+	}
+
+	return nil
 }

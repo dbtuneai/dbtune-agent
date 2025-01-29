@@ -11,8 +11,8 @@ The DBtune agent is a lightweight, extensible monitoring and configuration manag
 - Support for multiple PostgreSQL deployment types:
   - Standalone PostgreSQL servers
   - Docker containers
-  - Amazon RDS (beta)
-  - Amazon Aurora (beta)
+  - Amazon RDS (coming soon)
+  - Amazon Aurora (coming soon)
 - Extensible adapter architecture for custom deployments
 - Concurrent metric collection with error handling
 - Configuration through YAML or environment variables
@@ -53,7 +53,9 @@ dbtune:
 ./dbtune-agent  # If using binary
 # OR with Docker:
 # Example with mounted config file
-docker run -v $(pwd)/dbtune.yaml:/etc/dbtune/dbtune.yaml dbtune/agent:latest
+docker run -v $(pwd)/dbtune.yaml:/app/dbtune.yaml \
+    --name dbtune-agent \
+     public.ecr.aws/dbtune/dbtune/agent:latest
 
 # Example with environment variables
 docker run \
@@ -61,7 +63,7 @@ docker run \
   -e DBT_DBTUNE_SERVER_URL=https://app.dbtune.com \
   -e DBT_DBTUNE_API_KEY=your-api-key \
   -e DBT_DBTUNE_DATABASE_ID=your-database-id \
-  dbtune/agent:latest
+  public.ecr.aws/dbtune/dbtune/agent:latest
 ```
 
 ## Configuration
@@ -72,6 +74,11 @@ docker run \
 # Basic configuration
 postgresql:
   connection_url: postgresql://user:password@localhost:5432/database # Required: Database connection string
+  # Restart specific variable
+  # This variable is about restarting postgresql service with the default PostgreSQL adapter.
+  # It might need to run as root depending on your system and service setup.
+  # Check the postgres.go adapter to see which commands are getting executed.
+  service_name: postgresql-17 # (required) name of the service in case of restarts
 
 dbtune:
   server_url: https://app.dbtune.com # Optional: DBtune server endpoint (change for self-hosted)
@@ -140,4 +147,4 @@ The agent collects essential metrics required for DBtune's optimization engine, 
 
 ## License
 
-See https://github.com/dbtuneai/agent/blob/main/LICENSE
+See github.com/dbtuneai/agent//blob/main/LICENSE

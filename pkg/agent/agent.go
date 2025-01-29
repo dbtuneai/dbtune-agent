@@ -1,4 +1,4 @@
-package utils
+package agent
 
 import (
 	"bytes"
@@ -11,11 +11,12 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/sirupsen/logrus"
+
+	"github.com/dbtuneai/agent/pkg/internal/utils"
+
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/spf13/viper"
-
-	"github.com/sirupsen/logrus"
-	log "github.com/sirupsen/logrus"
 )
 
 type ConfigArraySchema []interface{}
@@ -48,8 +49,8 @@ type AgentLooper interface {
 	// approach, where the collectors are executed in parallel and the errors are
 	// collected in a channel. The channel is then closed and the results are
 	// returned. Uses the errgroup package to delegate the concurrent execution.
-	GetMetrics() ([]FlatValue, error)
-	SendMetrics([]FlatValue) error
+	GetMetrics() ([]utils.FlatValue, error)
+	SendMetrics([]utils.FlatValue) error
 
 	// GetSystemInfo returns the system info of the PostgresSQL server
 	// Example of system info:
@@ -57,8 +58,8 @@ type AgentLooper interface {
 	//   "no_cpu": { "type": "int", "value": 4 },
 	//   "total_memory": { "type": "bytes", "value": 1024 },
 	// }
-	GetSystemInfo() ([]FlatValue, error)
-	SendSystemInfo([]FlatValue) error
+	GetSystemInfo() ([]utils.FlatValue, error)
+	SendSystemInfo([]utils.FlatValue) error
 
 	GetActiveConfig() (ConfigArraySchema, error)
 	SendActiveConfig(ConfigArraySchema) error
@@ -80,7 +81,7 @@ type AgentLooper interface {
 	SendGuardrailSignal(level GuardrailType) error
 
 	// GetLogger returns the logger for the agent
-	Logger() *logrus.Logger
+	Logger() *log.Logger
 }
 
 type AgentPayload struct {
@@ -131,7 +132,7 @@ type Caches struct {
 	// 		"time": 1000
 	// 	},
 	// }
-	QueryRuntimeList map[string]CachedPGStatStatement
+	QueryRuntimeList map[string]utils.CachedPGStatStatement
 
 	// XactCommit is the number of transactions committed
 	// This is used to calculate the TPS between two heartbeats
@@ -159,12 +160,12 @@ type MetricsState struct {
 	Cache Caches
 	// Every round of metric collections this array will be filled with the metrics
 	// that are collected, and then emptied
-	Metrics []FlatValue
+	Metrics []utils.FlatValue
 	Mutex   *sync.Mutex
 }
 
 // AddMetric appends a metric in a thread-safe way
-func (state *MetricsState) AddMetric(metric FlatValue) {
+func (state *MetricsState) AddMetric(metric utils.FlatValue) {
 	state.Mutex.Lock()
 	defer state.Mutex.Unlock()
 	state.Metrics = append(state.Metrics, metric)
@@ -200,12 +201,15 @@ func (state *MetricsState) RemoveKey(key MetricKey) error {
 }
 
 type CommonAgent struct {
-	ServerURLs
+	utils.ServerURLs
 	logger    *log.Logger
 	APIClient *retryablehttp.Client
 	// Time the agent started
 	StartTime    string
 	MetricsState MetricsState
+	// Timeout configuration
+	CollectionTimeout time.Duration // Total timeout for all collectors
+	IndividualTimeout time.Duration // Timeout for each individual collector
 }
 
 func CreateCommonAgent() *CommonAgent {
@@ -220,7 +224,7 @@ func CreateCommonAgent() *CommonAgent {
 		logger.SetLevel(log.InfoLevel)
 	}
 
-	serverUrl, err := CreateServerURLs()
+	serverUrl, err := utils.CreateServerURLs()
 	if err != nil {
 		logger.Fatalf("Error creating server URLs: %s", err)
 	}
@@ -228,7 +232,7 @@ func CreateCommonAgent() *CommonAgent {
 	client := retryablehttp.NewClient()
 	// 30 retries, as the cap is 30seconds for the back-off wait time
 	client.RetryMax = 30
-	client.Logger = &LeveledLogrus{Logger: logger}
+	client.Logger = &utils.LeveledLogrus{Logger: logger}
 
 	// Intercept the request to add the API token
 	client.RequestLogHook = func(logger retryablehttp.Logger, req *http.Request, retry int) {
@@ -243,10 +247,13 @@ func CreateCommonAgent() *CommonAgent {
 		APIClient:  client,
 		logger:     logger,
 		StartTime:  time.Now().UTC().Format(time.RFC3339),
+		// Default timeouts
+		CollectionTimeout: 20 * time.Second,
+		IndividualTimeout: 10 * time.Second,
 	}
 }
 
-func (a *CommonAgent) Logger() *logrus.Logger {
+func (a *CommonAgent) Logger() *log.Logger {
 	return a.logger
 }
 
@@ -284,14 +291,14 @@ func (a *CommonAgent) SendHeartbeat() error {
 // GetMetrics will have a default implementation to handle gracefully
 // error and send partial metrics rather than failing.
 // It is discouraged for every adapter overriding this one.
-func (a *CommonAgent) GetMetrics() ([]FlatValue, error) {
+func (a *CommonAgent) GetMetrics() ([]utils.FlatValue, error) {
 	a.Logger().Println("Staring metric collection")
 
 	// Cleanup metrics from the previous heartbeat
-	a.MetricsState.Metrics = []FlatValue{}
+	a.MetricsState.Metrics = []utils.FlatValue{}
 
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	// Create context with configured timeout
+	ctx, cancel := context.WithTimeout(context.Background(), a.CollectionTimeout)
 	defer cancel()
 
 	// Use WaitGroup to wait for all collectors
@@ -305,8 +312,8 @@ func (a *CommonAgent) GetMetrics() ([]FlatValue, error) {
 		go func() {
 			defer wg.Done()
 
-			// Individual collector timeout
-			collectorCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			// Individual collector timeout using configured value
+			collectorCtx, cancel := context.WithTimeout(ctx, a.IndividualTimeout)
 			defer cancel()
 
 			done := make(chan error, 1)
@@ -359,10 +366,10 @@ func (a *CommonAgent) GetMetrics() ([]FlatValue, error) {
 	return a.MetricsState.Metrics, nil
 }
 
-func (a *CommonAgent) SendMetrics(metrics []FlatValue) error {
+func (a *CommonAgent) SendMetrics(metrics []utils.FlatValue) error {
 	a.Logger().Println("Sending metrics to server")
 
-	formattedMetrics := FormatMetrics(metrics)
+	formattedMetrics := utils.FormatMetrics(metrics)
 
 	jsonData, err := json.Marshal(formattedMetrics)
 	if err != nil {
@@ -387,10 +394,10 @@ func (a *CommonAgent) SendMetrics(metrics []FlatValue) error {
 	return nil
 }
 
-func (a *CommonAgent) SendSystemInfo(systemInfo []FlatValue) error {
+func (a *CommonAgent) SendSystemInfo(systemInfo []utils.FlatValue) error {
 	a.Logger().Println("Sending system info to server")
 
-	formattedMetrics := FormatSystemInfo(systemInfo)
+	formattedMetrics := utils.FormatSystemInfo(systemInfo)
 
 	jsonData, err := json.Marshal(formattedMetrics)
 	if err != nil {
