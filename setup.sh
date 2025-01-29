@@ -11,7 +11,7 @@ get_platform() {
     # Convert architecture names to GoReleaser naming convention
     case "${ARCH}" in
         x86_64)
-            ARCH="amd64"
+            ARCH="x86_64"
             ;;
         aarch64)
             ARCH="arm64"
