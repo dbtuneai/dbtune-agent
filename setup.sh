@@ -31,8 +31,22 @@ get_platform() {
     echo "${OS}_${ARCH}"
 }
 
+# Parse command line arguments
+INSTALL=false
+for arg in "$@"; do
+    case $arg in
+        --install)
+            INSTALL=true
+            shift
+            ;;
+    esac
+done
+
 # Get the platform identifier
 PLATFORM=$(get_platform)
+
+# Store the current directory
+CURRENT_DIR=$(pwd)
 
 # Create temporary directory
 TMP_DIR=$(mktemp -d)
@@ -60,20 +74,29 @@ fi
 
 # Make the binary executable
 if ! chmod +x dbtune-agent; then
-    echo "Error: Failed to make goreleaser executable"
+    echo "Error: Failed to make dbtune-agent executable"
     exit 1
 fi
 
-# Move to a suitable location (you might need sudo for these operations)
-echo "Installing dbtune-agent to /usr/local/bin (requires sudo)"
-if ! sudo mv dbtune-agent /usr/local/bin/; then
-    echo "Error: Failed to move dbtune-agent to /usr/local/bin/"
-    exit 1
+if [ "$INSTALL" = true ]; then
+    # Move to a suitable location (you might need sudo for these operations)
+    echo "Installing dbtune-agent to /usr/local/bin (requires sudo)"
+    if ! sudo mv dbtune-agent /usr/local/bin/; then
+        echo "Error: Failed to move dbtune-agent to /usr/local/bin/"
+        exit 1
+    fi
+    echo "DBtune agent ${LATEST_VERSION} has been successfully installed to /usr/local/bin/dbtune-agent"
+    echo "You can now run 'dbtune-agent' from anywhere in your terminal"
+else
+    # Copy the binary to the original directory
+    if ! cp dbtune-agent "${CURRENT_DIR}/"; then
+        echo "Error: Failed to copy dbtune-agent to current directory"
+        exit 1
+    fi
+    echo "DBtune agent ${LATEST_VERSION} has been downloaded to: ${CURRENT_DIR}/dbtune-agent"
 fi
 
 # Clean up
-cd - > /dev/null
+cd "${CURRENT_DIR}"
 rm -rf "${TMP_DIR}"
 
-echo "DBtune agent ${LATEST_VERSION} has been successfully installed to /usr/local/bin/dbtune-agent"
-echo "You can now run 'dbtune-agent' from anywhere in your terminal"
