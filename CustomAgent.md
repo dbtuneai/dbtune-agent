@@ -1,8 +1,8 @@
-# Extending DBtune Agent
+# Extending DBtune agent
 
 This guide explains how to build DBtune agent from source and extend it with custom functionality.
 
-## Building from Source
+## Building from source
 
 1. Prerequisites:
 
@@ -17,30 +17,30 @@ cd dbtune-agent
 go build -o dbtune-agent cmd/agent.go
 ```
 
-## Project Structure
+## Project structure
 
 ```
 dbtune-agent/
 ├── cmd/                    # Main application entry points
-├── pkg/                   # Core packages
-│   ├── adapters/         # Database deployment type adapters (PostgreSQL, Docker)
+├── pkg/                    # Core packages
+│   ├── adapters/           # Database deployment type adapters (PostgreSQL, Docker)
 │   ├── adeptersinterfaces/ # Common interfaces for adapters
-│   ├── agent/            # Core agent functionality
-│   ├── collectors/       # Metric collection implementations
-│   ├── internal/         # Internal utilities and parameters
-│   └── runner/           # Agent runtime execution
+│   ├── agent/              # Core agent functionality
+│   ├── collectors/         # Metric collection implementations
+│   ├── internal/           # Internal utilities and parameters
+│   └── runner/             # Agent runtime execution
 ```
 
-## Extension Points
+## Extension points
 
 The DBtune agent is designed to be extensible through its adapter architecture. You can extend it in several ways:
 
-1. Custom Database Adapters (PostgreSQL On-prem, RDS, Aurora, Tembo etc.)
-2. New Metric Collectors (Custom metrics)
-3. Custom Parameter Management
-4. Additional Data Sources (sources like Prometheus, Datadog, etc.)
+1. Custom database adapters (PostgreSQL On-prem, RDS, Aurora, Tembo, etc.)
+2. New metric collectors (custom metrics)
+3. Custom parameter management
+4. Additional data sources (sources like Prometheus, Datadog, etc.)
 
-### Creating a Custom Adapter
+### Creating a custom adapter
 
 1. Create a new adapter struct that implements the PostgreSQLAdapter interface from `pkg/adeptersinterfaces`:
 
@@ -75,7 +75,7 @@ func (a *CustomAdapter) Guardrails() *agent.GuardrailType {
         }
 ```
 
-### Adding New Metric Collectors
+### Adding new metric collectors
 
 1. Create a new collector in the `pkg/collectors` package:
 
@@ -124,23 +124,23 @@ func CreateCustomAdapter() (*CustomAdapter, error) {
 }
 ```
 
-## Development Guidelines
+## Development guidelines
 
 ### Testing
 
-1. Unit Tests:
+1. Unit tests:
 
 ```bash
 go test ./...
 ```
 
-2. Integration Tests:
+2. Integration tests:
 
 ```bash
 task integration-tests
 ```
 
-3. Local Development Environment:
+3. Local development environment:
 
 ```bash
 # Start a local PostgreSQL instance
