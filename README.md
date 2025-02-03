@@ -1,8 +1,8 @@
-<h1 align="center">DBtune Agent</h1>
+<h1 align="center">DBtune agent</h1>
 
 ![Go](https://img.shields.io/badge/golang-00ADD8?&style=plastic&logo=go&logoColor=white)
 
-The DBtune agent is a lightweight, extensible monitoring and configuration management tool for PostgreSQL databases. It collects system metrics, database performance data, and manages database configurations through a centralized DBtune service.
+The DBtune agent is a lightweight, extensible monitoring and configuration management tool for PostgreSQL databases. It collects system metrics, database performance data, and manages database configurations through a centralized DBtune software as a service.
 
 ## Features
 
@@ -11,13 +11,14 @@ The DBtune agent is a lightweight, extensible monitoring and configuration manag
 - Support for multiple PostgreSQL deployment types:
   - Standalone PostgreSQL servers
   - Docker containers
-  - Amazon RDS (coming soon)
-  - Amazon Aurora (coming soon)
+  - Amazon RDS (closed Beta)
+  - Amazon Aurora (closed Beta)
+  - Azure Flexible Server (coming soon) 
 - Extensible adapter architecture for custom deployments
 - Concurrent metric collection with error handling
 - Configuration through YAML or environment variables
 
-## Quick Start
+## Quick start
 
 ### Prerequisites
 
@@ -93,7 +94,7 @@ docker:
   container_name: "postgres" # Name of your PostgreSQL container
 ```
 
-### Environment Variables
+### Environment variables
 
 All configuration options can be set through environment variables, prefixed with `DBT_` and following a screaming snake case format:
 
@@ -104,17 +105,17 @@ export DBT_DBTUNE_API_KEY=your-api-key
 export DBT_DBTUNE_DATABASE_ID=your-database-id
 ```
 
-## Core Metrics
+## Core metrics
 
 The agent collects essential metrics required for DBtune's optimization engine, you can find more information about the metrics in our [Notion page](https://dbtune.notion.site/DBtune-Collected-Metrics-17b1ecfc272180cc9f2cd7faeab2c503?pvs=4).
 
-### Required System Metrics
+### Required system metrics
 
 - CPU usage
 - Memory utilization
 - Disk I/O (reads/writes per second)
 
-### Essential PostgreSQL Metrics
+### Essential PostgreSQL metrics
 
 - Query performance statistics
   - Transactions per second
@@ -129,7 +130,7 @@ The agent collects essential metrics required for DBtune's optimization engine, 
   - Background writer statistics
 - Wait events and locks
 
-### Configuration Information
+### Configuration information
 
 - PostgreSQL version and settings
 - System configuration
@@ -140,7 +141,7 @@ The agent collects essential metrics required for DBtune's optimization engine, 
 - Fork the repo and create a new branch
 - Then make a PR to the main branch
 
-### Getting Help
+### Getting help
 
 - Check our [documentation](https://docs.dbtune.com)
 - Email support: support at dbtune.com
