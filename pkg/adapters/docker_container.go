@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/collectors"
+	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 
 	"github.com/docker/docker/api/types/container"
@@ -222,6 +225,65 @@ func (d *DockerContainerAdapter) Guardrails() *agent.GuardrailType {
 		}
 	} else {
 		d.Logger().Debug("guardrail: could not fetch memory limit")
+	}
+
+	return nil
+}
+
+func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+	d.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
+
+	// Apply the configuration with ALTER
+	for _, knob := range proposedConfig.KnobsOverrides {
+		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
+		if err != nil {
+			return err
+		}
+
+		// We make the assumption every setting is a number parsed as float
+		query := fmt.Sprintf(`ALTER SYSTEM SET "%s" = %s;`, knobConfig.Name, strconv.FormatFloat(knobConfig.Setting.(float64), 'f', -1, 64))
+		d.Logger().Debugf(`Executing: %s`, query)
+
+		_, err = d.pgDriver.Exec(context.Background(), query)
+		if err != nil {
+			return err
+		}
+	}
+
+	if proposedConfig.KnobApplication == "restart" {
+		// Restart the service
+		d.Logger().Warn("Restarting service")
+
+		// Execute docker restart command
+		err := d.dockerClient.ContainerRestart(context.Background(), d.ContainerName, container.StopOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to restart PostgreSQL service: %w", err)
+		}
+
+		// Wait for PostgreSQL to be back online with retries
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
+		defer cancel()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("timeout waiting for PostgreSQL to come back online")
+			case <-time.After(1 * time.Second):
+				// Try to execute a simple query
+				_, err := d.pgDriver.Exec(ctx, "SELECT 1")
+				if err == nil {
+					d.Logger().Info("PostgreSQL is back online")
+					return nil
+				}
+				d.Logger().Debug("PostgreSQL not ready yet, retrying...")
+			}
+		}
+	} else {
+		// Reload database when everything is applied
+		_, err := d.pgDriver.Exec(context.Background(), "SELECT pg_reload_conf();")
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

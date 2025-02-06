@@ -6,7 +6,7 @@ postgresql:
 
 # Use with docker flag to monitor a PostgreSQL container
 docker:
-  container_name: demo-postgres
+  container_name: dev-postgres
 
 dbtune:
   server_url: https://app.dbtune.com

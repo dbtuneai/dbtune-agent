@@ -144,7 +144,7 @@ task integration-tests
 
 ```bash
 # Start a local PostgreSQL instance
-task start-demo-postgres
+task start-dev-postgres
 
 # Run the agent in debug mode
 go run cmd/agent.go
