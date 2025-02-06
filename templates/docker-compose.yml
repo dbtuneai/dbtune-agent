@@ -1,0 +1,50 @@
+name: DB_NAME
+
+services:
+  postgres:
+    image: postgres:latest
+    container_name: DB_NAME
+    hostname: postgres
+    mem_limit: 500m
+    cpus: 1
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_USER: dbtune
+      POSTGRES_DB: dbtune
+    volumes:
+      - ./volumes/DB_DATA_DIR:/var/lib/postgresql/data
+      - ./templates/init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: 
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.track=all"
+    networks:
+      DB_NETWORK:
+        aliases:
+          - postgres
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: --docker
+    environment:
+      - DBT_POSTGRESQL_CONNECTION_URL=postgresql://dbtune:password@postgres:5432/dbtune
+      - DBT_DBTUNE_API_KEY=SD_API_KEY
+      - DBT_DBTUNE_SERVER_URL=SD_SERVER_URL
+      - DBT_DBTUNE_DATABASE_ID=DATABASE_UUID
+      - DBT_ADAPTER=docker
+      - DBT_DOCKER_CONTAINER_NAME=DB_NAME
+    networks:
+      - DB_NETWORK
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./dbtune.yaml:/app/dbtune.yaml
+      - /var/run/docker.sock:/var/run/docker.sock
+
+networks:
+  DB_NETWORK:
+    name: DB_NETWORK_NAME

@@ -1,0 +1,33 @@
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.docker
+
+# Directories
+volumes/
+templates/
+scripts/
+
+# Build artifacts
+bin/
+dist/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Test files
+*_test.go
+testdata/
+
+# Other
+*.md
+LICENSE
+.goreleaser.yaml 
