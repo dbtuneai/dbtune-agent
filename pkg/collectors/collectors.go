@@ -132,6 +132,21 @@ func TransactionsPerSecond(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(
 			return nil
 		}
 
+		if serverXactCommits == 0 {
+			pgAdapter.Logger().Warn("serverXactCommits is 0, will not calculate transactions per second")
+			return nil
+		}
+
+		if serverXactCommits < state.Cache.XactCommit.Count {
+			pgAdapter.Logger().Warnf("Will not calculate transactions per second, as the count is decreasing, serverXactCommits: %d, state.Cache.XactCommit.Count: %d", serverXactCommits, state.Cache.XactCommit.Count)
+			// Update the cache
+			state.Cache.XactCommit = agent.XactStat{
+				Count:     serverXactCommits,
+				Timestamp: time.Now(),
+			}
+			return nil
+		}
+
 		// Calculate transactions per second
 		duration := time.Since(state.Cache.XactCommit.Timestamp).Seconds()
 		if duration > 0 {
