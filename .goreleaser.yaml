@@ -78,3 +78,10 @@ changelog:
       order: 3
     - title: Other
       order: 999
+
+announce:
+  slack:
+    enabled: true
+    message_template: "🚀 new DBTune Agent {{.Tag}} release. [Changelog]({{.Changelog}})"
+    channel: "testingbot"
+    username: "Platform release"
