@@ -82,6 +82,6 @@ changelog:
 announce:
   slack:
     enabled: true
-    message_template: "🚀 new DBTune Agent {{.Tag}} release. [Changelog]({{.Changelog}})"
+    message_template: "🚀 new DBTune Agent {{.Tag}} release. [Changelog]({{.ReleaseURL}})"
     channel: "testingbot"
     username: "Platform release"
