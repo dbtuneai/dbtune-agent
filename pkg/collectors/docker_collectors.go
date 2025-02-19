@@ -9,18 +9,12 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
 )
 
 // DockerHardwareInfo collects hardware metrics from a Docker container using the Docker API
 func DockerHardwareInfo(dockerAdapter adapters.DockerAdapter) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-		// Create a new Docker client
-		cli, err := client.NewClientWithOpts(client.FromEnv)
-		if err != nil {
-			return err
-		}
-		defer cli.Close()
+		cli := dockerAdapter.GetDockerClient()
 
 		// Get container stats
 		containerName := dockerAdapter.GetContainerName()
@@ -45,12 +39,6 @@ func DockerHardwareInfo(dockerAdapter adapters.DockerAdapter) func(ctx context.C
 			statsJSON.PreCPUStats.SystemUsage,
 			&statsJSON,
 		)
-
-		// // Calculate memory percentage
-		// memoryPercent := float64(statsJSON.MemoryStats.Usage) / float64(statsJSON.MemoryStats.Limit) * 100
-
-		// memPercentMetric, _ := utils.NewMetric("node_memory_usage", memoryPercent, utils.Float)
-		// state.AddMetric(memPercentMetric)
 
 		// Add metrics
 		cpuMetric, _ := utils.NewMetric("node_cpu_usage", cpuPercent, utils.Float)
