@@ -3,7 +3,7 @@ module github.com/dbtuneai/agent
 go 1.23.1
 
 require (
-	github.com/docker/docker v27.4.1+incompatible
+	github.com/docker/docker v27.5.1+incompatible
 	github.com/hashicorp/go-retryablehttp v0.7.7
 	github.com/jackc/pgx/v5 v5.7.1
 	github.com/jaypipes/ghw v0.13.0
