@@ -11,9 +11,9 @@ The DBtune agent is a lightweight, extensible monitoring and configuration manag
 - Support for multiple PostgreSQL deployment types:
   - Standalone PostgreSQL servers
   - Docker containers
+  - Amazon Aurora
   - Amazon RDS (closed Beta)
-  - Amazon Aurora (closed Beta)
-  - Azure Flexible Server (coming soon) 
+  - Azure Flexible Server (coming soon)
 - Extensible adapter architecture for custom deployments
 - Concurrent metric collection with error handling
 - Configuration through YAML or environment variables
@@ -92,6 +92,14 @@ debug: false # Enable debug logging
 # Docker-specific settings (only needed for Docker deployments)
 docker:
   container_name: "postgres" # Name of your PostgreSQL container
+
+# Aurora-specific settings
+rds-aurora:
+  AWS_REGION: "<your-aws-region>"
+  AWS_ACCESS_KEY_ID: "<your-aws-access-key-id>"
+  AWS_SECRET_ACCESS_KEY: "<your-aws-secret-access-key>"
+  RDS_DATABASE_IDENTIFIER: "<your-rds-database-identifier>" # The Writer instance of the Aurora cluster
+  RDS_PARAMETER_GROUP_NAME: "<your-rds-parameter-group-name>" # Be sure to define a custom one and not to use the default.postgresXX one
 ```
 
 ### Environment variables

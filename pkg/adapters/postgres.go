@@ -25,7 +25,7 @@ import (
 )
 
 type PostgreSQLConfig struct {
-	ConnectionURL string `mapstructure:"connection_url"`
+	ConnectionURL string `mapstructure:"connection_url" validate:"required"`
 	ServiceName   string `mapstructure:"service_name"`
 }
 
@@ -38,7 +38,8 @@ type DefaultPostgreSQLAdapter struct {
 func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 	dbtuneConfig := viper.Sub("postgresql")
 	if dbtuneConfig == nil {
-		return nil, fmt.Errorf("postgresql config section not found")
+		// If the section doesn't exist in the config file, create a new Viper instance
+		dbtuneConfig = viper.New()
 	}
 
 	dbtuneConfig.BindEnv("connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
@@ -50,8 +51,9 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 		return nil, fmt.Errorf("unable to decode into struct, %v", err)
 	}
 
-	if pgConfig.ConnectionURL == "" {
-		return nil, fmt.Errorf("postgresql connection URL not configured (postgresql.connection_url)")
+	err = utils.ValidateStruct(&pgConfig)
+	if err != nil {
+		return nil, err
 	}
 
 	dbpool, err := pgPool.New(context.Background(), pgConfig.ConnectionURL)

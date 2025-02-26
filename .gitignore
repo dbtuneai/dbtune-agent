@@ -31,3 +31,5 @@ docker-compose.testing-*.yml
 
 # dist
 dist/
+.vscode/
+.idea/
