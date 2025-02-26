@@ -372,7 +372,7 @@ func HardwareInfoOnPremise(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(
 
 		// Memory usage
 		memoryInfo, _ := mem.VirtualMemory()
-		usedMemory, _ := utils.NewMetric("node_memory_used", memoryInfo.Used, utils.Int)
+		usedMemory, _ := utils.NewMetric("node_memory_used", memoryInfo.Total-memoryInfo.Available, utils.Int)
 		state.AddMetric(usedMemory)
 
 		return nil

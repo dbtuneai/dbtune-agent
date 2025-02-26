@@ -388,7 +388,7 @@ func (adapter *DefaultPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
 	}
 
 	// Calculate memory usage percentage
-	memoryUsagePercent := float64(memoryInfo.Used) / float64(memoryInfo.Total) * 100
+	memoryUsagePercent := float64(memoryInfo.Total-memoryInfo.Available) / float64(memoryInfo.Total) * 100
 
 	adapter.Logger().Debugf("Memory usage: %f%%", memoryUsagePercent)
 
