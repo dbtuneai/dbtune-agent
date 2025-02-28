@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
+	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -21,12 +24,62 @@ import (
 
 type ConfigArraySchema []interface{}
 
+// TODO: extract PostgreSQL specific types + methods to utils/separate place
 type PGConfigRow struct {
 	Name    string      `json:"name"`
 	Setting interface{} `json:"setting"`
 	Unit    interface{} `json:"unit"`
 	Vartype string      `json:"vartype"`
 	Context string      `json:"context"`
+}
+
+// GetSettingValue returns the setting value in its appropriate type and format
+// This is needed for cases like Aurora RDS when modifying parameters
+func (p PGConfigRow) GetSettingValue() (string, error) {
+	switch p.Vartype {
+	case "integer":
+		// Handle both string and number JSON representations
+		var val int64
+		switch v := p.Setting.(type) {
+		case float64:
+			val = int64(v)
+		case string:
+			parsed, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				return "", fmt.Errorf("failed to parse integer setting: %v", err)
+			}
+			val = parsed
+		default:
+			return "", fmt.Errorf("unexpected type for integer setting: %T", p.Setting)
+		}
+		return fmt.Sprintf("%d", val), nil
+
+	case "real":
+		// Handle both string and number JSON representations
+		var val float64
+		switch v := p.Setting.(type) {
+		case float64:
+			val = v
+		case string:
+			parsed, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return "", fmt.Errorf("failed to parse real setting: %v", err)
+			}
+			val = parsed
+		default:
+			return "", fmt.Errorf("unexpected type for real setting: %T", p.Setting)
+		}
+		return fmt.Sprintf("%.6g", val), nil
+
+	case "bool":
+		return fmt.Sprintf("%v", p.Setting), nil
+
+	case "string", "enum":
+		return fmt.Sprintf("%v", p.Setting), nil
+
+	default:
+		return fmt.Sprintf("%v", p.Setting), nil
+	}
 }
 
 type ProposedConfigResponse struct {
@@ -216,7 +269,12 @@ func CreateCommonAgent() *CommonAgent {
 	logger := log.New()
 	logger.SetFormatter(&log.TextFormatter{
 		FullTimestamp: true,
+		CallerPrettyfier: func(f *runtime.Frame) (string, string) {
+			filename := path.Base(f.File)
+			return "", fmt.Sprintf(" %s:%d", filename, f.Line)
+		},
 	})
+	logger.SetReportCaller(true)
 
 	if viper.GetBool("debug") {
 		logger.SetLevel(log.DebugLevel)

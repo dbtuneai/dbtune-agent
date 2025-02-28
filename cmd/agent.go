@@ -14,6 +14,7 @@ import (
 func main() {
 	// Define flags
 	useDocker := flag.Bool("docker", false, "Use Docker adapter")
+	useAurora := flag.Bool("aurora", false, "Use Aurora adapter")
 	flag.Parse()
 
 	// Set the file name of the configurations file
@@ -44,6 +45,11 @@ func main() {
 		adapter, err = adapters.CreateDockerContainerAdapter()
 		if err != nil {
 			log.Fatalf("Failed to create Docker adapter: %v", err)
+		}
+	case *useAurora:
+		adapter, err = adapters.CreateAuroraRDSAdapter()
+		if err != nil {
+			log.Fatalf("Failed to create Aurora RDS adapter: %v", err)
 		}
 	default:
 		adapter, err = adapters.CreateDefaultPostgreSQLAdapter()

@@ -7,17 +7,22 @@ import (
 )
 
 const (
-	DefaultServerURL = "https://api.dbtune.com"
+	DefaultServerURL = "https://app.dbtune.com"
 )
 
 type ServerURLs struct {
-	ServerUrl string `mapstructure:"server_url"` // Optional
-	ApiKey    string `mapstructure:"api_key"`
-	DbID      string `mapstructure:"database_id"`
+	ServerUrl string `mapstructure:"server_url" validate:"required"`
+	ApiKey    string `mapstructure:"api_key" validate:"required"`
+	DbID      string `mapstructure:"database_id" validate:"required"`
 }
 
 func CreateServerURLs() (ServerURLs, error) {
 	dbtuneConfig := viper.Sub("dbtune")
+	if dbtuneConfig == nil {
+		// If the section doesn't exist in the config file, create a new Viper instance
+		dbtuneConfig = viper.New()
+	}
+
 	dbtuneConfig.BindEnv("server_url", "DBT_DBTUNE_SERVER_URL")
 	dbtuneConfig.SetDefault("server_url", DefaultServerURL)
 	dbtuneConfig.BindEnv("api_key", "DBT_DBTUNE_API_KEY")
@@ -33,8 +38,9 @@ func CreateServerURLs() (ServerURLs, error) {
 		return ServerURLs{}, fmt.Errorf("unable to decode into struct, %v", err)
 	}
 
-	if err := servTest.validate(); err != nil {
-		return ServerURLs{}, fmt.Errorf("error validating configuration: %s", err)
+	err = ValidateStruct(&servTest)
+	if err != nil {
+		return ServerURLs{}, err
 	}
 
 	return ServerURLs{
@@ -42,19 +48,6 @@ func CreateServerURLs() (ServerURLs, error) {
 		ApiKey:    servTest.ApiKey,
 		DbID:      servTest.DbID,
 	}, nil
-}
-
-func (s ServerURLs) validate() error {
-	if s.ServerUrl == "" {
-		return fmt.Errorf("server_url is required")
-	}
-	if s.ApiKey == "" {
-		return fmt.Errorf("api_key is required")
-	}
-	if s.DbID == "" {
-		return fmt.Errorf("database_id is required")
-	}
-	return nil
 }
 
 // PostHeartbeat generates the URL for posting a heartbeat.

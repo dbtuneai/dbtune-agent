@@ -1,6 +1,13 @@
 package adeptersinterfaces
 
 import (
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/pi"
+	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/docker/docker/client"
 	"github.com/hashicorp/go-retryablehttp"
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
@@ -23,4 +30,42 @@ type DockerAdapter interface {
 	PostgreSQLAdapter
 	GetContainerName() string
 	GetDockerClient() *client.Client
+}
+
+type AuroraPerformanceInsightsState struct {
+	Enabled     bool
+	ResourceID  string
+	LastChecked time.Time
+}
+
+type AuroraHardwareState struct {
+	TotalMemoryBytes int64
+	NumCPUs          int
+	LastChecked      time.Time
+}
+
+type AuroraRDSState struct {
+	LastAppliedConfig   time.Time
+	PerformanceInsights *AuroraPerformanceInsightsState
+	Hardware            *AuroraHardwareState
+	LastGuardrailCheck  time.Time
+}
+
+type AuroraRDSConfig struct {
+	AWSAccessKey          string `mapstructure:"AWS_ACCESS_KEY_ID" validate:"required"`
+	AWSSecretAccessKey    string `mapstructure:"AWS_SECRET_ACCESS_KEY" validate:"required"`
+	AWSRegion             string `mapstructure:"AWS_REGION" validate:"required"`
+	RDSDatabaseIdentifier string `mapstructure:"RDS_DATABASE_IDENTIFIER" validate:"required"`
+	RDSParameterGroupName string `mapstructure:"RDS_PARAMETER_GROUP_NAME" validate:"required"`
+}
+
+type AuroraRDSAdapter interface {
+	PostgreSQLAdapter
+	GetPIClient() *pi.Client
+	GetEC2Client() *ec2.Client
+	GetRDSClient() *rds.Client
+	GetCWClient() *cloudwatch.Client
+	GetAuroraRDSConfig() *AuroraRDSConfig
+	GetEC2InstanceTypeInfo() (*ec2types.InstanceTypeInfo, error)
+	GetAuroraState() *AuroraRDSState
 }
