@@ -369,13 +369,7 @@ func CreateAuroraRDSAdapter() (*AuroraRDSAdapter, error) {
 		return nil, err
 	}
 
-	// Validate required configuration
-	if auroraConfig.AWSAccessKey == "" {
-		return nil, fmt.Errorf("AWS_ACCESS_KEY_ID is required")
-	}
-	if auroraConfig.AWSSecretAccessKey == "" {
-		return nil, fmt.Errorf("AWS_SECRET_ACCESS_KEY is required")
-	}
+	// Validate non-credential required configuration
 	if auroraConfig.AWSRegion == "" {
 		return nil, fmt.Errorf("AWS_REGION is required")
 	}
@@ -387,14 +381,27 @@ func CreateAuroraRDSAdapter() (*AuroraRDSAdapter, error) {
 	}
 
 	// Create AWS config
-	cfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithRegion(auroraConfig.AWSRegion),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			auroraConfig.AWSAccessKey,
-			auroraConfig.AWSSecretAccessKey,
-			"",
-		)),
-	)
+	var cfg aws.Config
+
+	if auroraConfig.AWSAccessKey != "" && auroraConfig.AWSSecretAccessKey != "" {
+		// Use static credentials if provided
+		cfg, err = config.LoadDefaultConfig(context.Background(),
+			config.WithRegion(auroraConfig.AWSRegion),
+			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+				auroraConfig.AWSAccessKey,
+				auroraConfig.AWSSecretAccessKey,
+				"",
+			)),
+		)
+	} else {
+		// Use default credential chain
+		// Includes by default WebIdentityToken:
+		// https://github.com/aws/aws-sdk-go-v2/blob/main/config/resolve_credentials.go#L119
+		cfg, err = config.LoadDefaultConfig(context.Background(),
+			config.WithRegion(auroraConfig.AWSRegion),
+		)
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("unable to load AWS config: %v", err)
 	}
