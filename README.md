@@ -96,6 +96,8 @@ docker:
 # Aurora-specific settings
 rds-aurora:
   AWS_REGION: "<your-aws-region>"
+  # AWS credentials are optional
+  # If not provided, the agent will use the default AWS credential chain, which includes WebIdentity tokens
   AWS_ACCESS_KEY_ID: "<your-aws-access-key-id>"
   AWS_SECRET_ACCESS_KEY: "<your-aws-secret-access-key>"
   RDS_DATABASE_IDENTIFIER: "<your-rds-database-identifier>" # The Writer instance of the Aurora cluster
