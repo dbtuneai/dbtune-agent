@@ -182,7 +182,8 @@ type Caches struct {
 	// {
 	// 	example_query_id: {
 	// 		"query_id": example_query_id,
-	// 		"time": 1000
+	// 		"total_exec_time": 1000,
+	// 		"calls": 10,
 	// 	},
 	// }
 	QueryRuntimeList map[string]utils.CachedPGStatStatement

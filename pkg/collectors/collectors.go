@@ -17,10 +17,18 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 )
 
-func QueryRuntime(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+func PGStatStatements(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
 		var query = `
-		SELECT JSON_OBJECT_AGG(queryid, JSON_BUILD_OBJECT('calls',calls,'total_exec_time',total_exec_time))
+		/*dbtune*/
+		SELECT JSON_OBJECT_AGG(
+			CONCAT(queryid, '_', userid, '_', dbid), 
+			JSON_BUILD_OBJECT(
+				'calls',calls,
+				'total_exec_time',total_exec_time,
+				'query_id', CONCAT(queryid, '_', userid, '_', dbid)
+			)
+		)
         AS qrt_stats
         FROM (SELECT * FROM pg_stat_statements WHERE query NOT LIKE '%dbtune%' ORDER BY calls DESC)
         AS f
@@ -42,15 +50,25 @@ func QueryRuntime(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx conte
 			pgAdapter.Logger().Info("Cache miss, filling data")
 			state.Cache.QueryRuntimeList = queryStats
 		} else {
+			// Calculate the runtime of the queries (AQR)
 			runtime := utils.CalculateQueryRuntime(state.Cache.QueryRuntimeList, queryStats)
 
 			metricEntry, err := utils.NewMetric("perf_average_query_runtime", runtime, utils.Float)
 			if err != nil {
 				return err
 			}
+			state.AddMetric(metricEntry)
+
+			// Calculate the pg_stat_statements delta to send to the server
+			pgStatStatementsDelta, totalDiffs := utils.CalculateQueryRuntimeDelta(state.Cache.QueryRuntimeList, queryStats)
+
+			totalDiffsMetric, _ := utils.NewMetric("pg_stat_statements_delta_count", totalDiffs, utils.Int)
+			state.AddMetric(totalDiffsMetric)
+
+			pgStatStatementsDeltaMetric, _ := utils.NewMetric("pg_stat_statements_delta", pgStatStatementsDelta, utils.PgssDelta)
+			state.AddMetric(pgStatStatementsDeltaMetric)
 
 			state.Cache.QueryRuntimeList = queryStats
-			state.AddMetric(metricEntry)
 		}
 
 		return nil

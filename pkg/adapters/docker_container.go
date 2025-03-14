@@ -75,7 +75,7 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  collectors.QueryRuntime(adapter),
+			Collector:  collectors.PGStatStatements(adapter),
 		},
 		{
 			Key:        "database_transactions_per_second",
