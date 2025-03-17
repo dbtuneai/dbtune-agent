@@ -33,7 +33,7 @@ There are multiple ways to run the DBtune agent:
 1. Download the latest release for your platform from our releases page or pull our Docker image:
 
 ```bash
-docker pull dbtune/agent:latest
+docker pull public.ecr.aws/dbtune/dbtune/agent:latest
 ```
 
 2. Configure your environment by creating a `dbtune.yaml` file (check the [configuration section](#configuration) for more details):
