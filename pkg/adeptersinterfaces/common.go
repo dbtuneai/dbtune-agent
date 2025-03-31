@@ -17,7 +17,6 @@ import (
 // Common interface for all PostgreSQL adapters
 // In the future if we support other databases, we can add
 // a common interface for all database adapters and attach the driver and anything shared
-
 // PostgreSQLAdapter is a struct that embeds the
 // CommonAgent and adds a PGDriver. This is used by all the PostgreSQL adapters.
 type PostgreSQLAdapter interface {
@@ -68,4 +67,29 @@ type AuroraRDSAdapter interface {
 	GetAuroraRDSConfig() *AuroraRDSConfig
 	GetEC2InstanceTypeInfo() (*ec2types.InstanceTypeInfo, error)
 	GetAuroraState() *AuroraRDSState
+}
+
+// Aiven interfaces
+type AivenHardwareState struct {
+	TotalMemoryBytes int64
+	NumCPUs          int
+	LastChecked      time.Time
+}
+
+type AivenState struct {
+	Hardware           *AivenHardwareState
+	LastAppliedConfig  time.Time
+	LastGuardrailCheck time.Time
+}
+
+type AivenConfig struct {
+	APIToken    string `mapstructure:"api_token" validate:"required"`
+	ProjectName string `mapstructure:"project_name" validate:"required"`
+	ServiceName string `mapstructure:"service_name" validate:"required"`
+}
+
+type AivenPostgreSQLAdapter interface {
+	PostgreSQLAdapter
+	GetAivenState() *AivenState
+	GetAivenConfig() *AivenConfig
 }
