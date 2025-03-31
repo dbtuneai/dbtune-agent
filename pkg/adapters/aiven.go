@@ -271,8 +271,9 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 		// Convert setting to the appropriate type and format
 		switch v := knobConfig.Setting.(type) {
 		case float64:
-			// For integer parameters, convert to integer format
-			if knobConfig.ValueType == "integer" {
+			// For numeric parameters that should be integer, convert to integer format
+			// Try to determine if this is an integer parameter based on the value
+			if v == float64(int64(v)) {
 				pgParamsMap[knobConfig.Name] = int64(v)
 			} else {
 				pgParamsMap[knobConfig.Name] = v
@@ -467,7 +468,7 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  collectors.QueryRuntime(adapter),
+			Collector:  collectors.AivenQueryRuntime(adapter), // Use Aiven-specific collector
 		},
 		{
 			Key:        "database_transactions_per_second",
