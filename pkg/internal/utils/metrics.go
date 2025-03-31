@@ -16,6 +16,7 @@ const (
 	Boolean    MetricType = "boolean"
 	Time       MetricType = "time"
 	Percentage MetricType = "percentage"
+	PgssDelta  MetricType = "pgss_delta"
 )
 
 // FlatValue is a struct that represents
@@ -42,6 +43,26 @@ type FormattedSystemInfo struct {
 	Timestamp  string                `json:"timestamp"`
 }
 
+// validatePgssDeltaItems validates that the input is an array of CachedPGStatStatement items
+func validatePgssDeltaItems(value interface{}) error {
+	v := reflect.ValueOf(value)
+	if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
+		return fmt.Errorf("value must be an array or slice")
+	}
+
+	// Check each item in the array
+	for i := 0; i < v.Len(); i++ {
+		item := v.Index(i).Interface()
+
+		// Try to convert to CachedPGStatStatement
+		if _, ok := item.(CachedPGStatStatement); !ok {
+			return fmt.Errorf("item at index %d is not a valid CachedPGStatStatement", i)
+		}
+	}
+
+	return nil
+}
+
 // NewMetric creates a new Metric object based on the provided key, value, and type.
 func NewMetric(key string, value interface{}, typeStr MetricType) (FlatValue, error) {
 
@@ -63,6 +84,17 @@ func NewMetric(key string, value interface{}, typeStr MetricType) (FlatValue, er
 	case "boolean":
 		if _, ok := value.(bool); !ok {
 			return FlatValue{}, fmt.Errorf("value is not of type boolean")
+		}
+	case "pgss_delta":
+		// For pgss_delta, we expect an array/slice
+		v := reflect.ValueOf(value)
+		if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
+			return FlatValue{}, fmt.Errorf("value is not an array or slice for pgss_delta type")
+		}
+
+		// Validate array elements using the validator
+		if err := validatePgssDeltaItems(value); err != nil {
+			return FlatValue{}, err
 		}
 	default:
 		return FlatValue{}, fmt.Errorf("unknown type: %s", typeStr)
