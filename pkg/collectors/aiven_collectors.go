@@ -2,8 +2,6 @@ package collectors
 
 import (
 	"context"
-	"fmt"
-	"time"
 
 	"github.com/dbtuneai/agent/pkg/adeptersinterfaces"
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -71,7 +69,7 @@ func AivenQueryRuntime(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx 
 			}
 			
 			queryStats[queryID] = utils.CachedPGStatStatement{
-				Calls:         calls,
+				Calls:         int(calls),
 				TotalExecTime: totalExecTime,
 			}
 		}
