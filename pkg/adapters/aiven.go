@@ -1,8 +1,10 @@
 package adapters
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -53,22 +55,32 @@ var planCPUMapping = map[string]int{
 }
 
 // aivenModifiableParams defines which PostgreSQL parameters can be modified on Aiven
-var aivenModifiableParams = map[string]bool{
-    "bgwriter_lru_maxpages":         true,
-    "bgwriter_delay":                true,
-    "max_parallel_workers_per_gather": true,
-    "max_parallel_workers":          true,
+// and how they should be applied (pg config or service-level config)
+var aivenModifiableParams = map[string]struct {
+    Modifiable  bool
+    ServiceLevel bool // If true, apply at service level instead of under pg config
+}{
+    // Parameters confirmed modifiable through pg config
+    "bgwriter_lru_maxpages":         {true, false},
+    "bgwriter_delay":                {true, false},
+    "max_parallel_workers_per_gather": {true, false},
+    "max_parallel_workers":          {true, false},
+    
+    // Parameters that must be applied at service level
+    "work_mem":                      {true, true},
+    "shared_buffers_percentage":     {true, true}, // Instead of shared_buffers
+    
+    // max_worker_processes can only be increased, not decreased
+    "max_worker_processes":          {true, true},
     
     // Known to be restricted (for documentation)
-    "work_mem":                      false,
-    "max_wal_size":                  false,
-    "min_wal_size":                  false,
-    "random_page_cost":              false,
-    "seq_page_cost":                 false,
-    "checkpoint_completion_target":  false,
-    "effective_io_concurrency":      false,
-    "shared_buffers":                false,
-    "max_worker_processes":          false,
+    "max_wal_size":                  {false, false},
+    "min_wal_size":                  {false, false},
+    "random_page_cost":              {false, false},
+    "seq_page_cost":                 {false, false},
+    "checkpoint_completion_target":  {false, false},
+    "effective_io_concurrency":      {false, false},
+    "shared_buffers":                {false, false}, // Use shared_buffers_percentage instead
 }
 
 // CreateAivenPostgreSQLAdapter creates a new Aiven PostgreSQL adapter
@@ -253,6 +265,19 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 		pgParamsMap = make(map[string]interface{})
 	}
 
+	// Log file for debugging parameter changes
+	var logWriter *bufio.Writer
+	logFile, err := os.OpenFile("/tmp/aiven_param_changes.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err == nil {
+		defer logFile.Close()
+		logWriter = bufio.NewWriter(logFile)
+		defer logWriter.Flush()
+		fmt.Fprintf(logWriter, "[%s] Applying config changes to Aiven PostgreSQL\n", time.Now().Format(time.RFC3339))
+	}
+
+	// Track if any changes were made
+	changesMade := false
+
 	// Apply the proposed config changes
 	for _, knob := range proposedConfig.KnobsOverrides {
 		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
@@ -260,32 +285,117 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 			return fmt.Errorf("failed to find recommended knob: %v", err)
 		}
 		
-		// Check if parameter is known to be modifiable
-		if modifiable, exists := aivenModifiableParams[knobConfig.Name]; exists && !modifiable {
-			adapter.Logger().Warnf("Parameter %s is known to be restricted by Aiven, skipping", knobConfig.Name)
-			continue
-		} else if !exists {
-			adapter.Logger().Warnf("Parameter %s has unknown modifiability status on Aiven, attempting anyway", knobConfig.Name)
+		// Handle shared_buffers specially - convert to shared_buffers_percentage if needed
+		// This is a special case for Aiven
+		paramName := knobConfig.Name
+		if paramName == "shared_buffers" {
+			// Convert shared_buffers to shared_buffers_percentage
+			// Get total memory in bytes
+			if adapter.state.Hardware != nil && adapter.state.Hardware.TotalMemoryBytes > 0 {
+				// Shared buffers in pg is in 8KB blocks, convert to bytes
+				sharedBuffersBytes := float64(knobConfig.Setting.(float64)) * 8 * 1024
+				// Calculate as percentage of total memory
+				percentage := (sharedBuffersBytes / float64(adapter.state.Hardware.TotalMemoryBytes)) * 100
+				// Ensure within valid range for Aiven (20-60%)
+				if percentage < 20 {
+					percentage = 20
+				} else if percentage > 60 {
+					percentage = 60
+				}
+				paramName = "shared_buffers_percentage"
+				knobConfig.Setting = percentage
+				adapter.Logger().Infof("Converting shared_buffers to shared_buffers_percentage: %.2f%%", percentage)
+				if logFile != nil {
+					fmt.Fprintf(logWriter, "Converting shared_buffers to shared_buffers_percentage: %.2f%%\n", percentage)
+				}
+			} else {
+				adapter.Logger().Warn("Cannot convert shared_buffers to percentage - hardware info not available")
+				continue
+			}
 		}
 		
-		// Convert setting to the appropriate type and format
+		// Check if parameter is known to be modifiable
+		paramInfo, exists := aivenModifiableParams[paramName]
+		if !exists {
+			adapter.Logger().Warnf("Parameter %s has unknown modifiability status on Aiven, attempting anyway", paramName)
+			if logFile != nil {
+				fmt.Fprintf(logWriter, "Parameter %s has unknown status, attempting anyway\n", paramName)
+			}
+			// Default to applying under pg config
+			paramInfo = struct {
+				Modifiable  bool
+				ServiceLevel bool
+			}{true, false}
+		} else if !paramInfo.Modifiable {
+			adapter.Logger().Warnf("Parameter %s is known to be restricted by Aiven, skipping", paramName)
+			if logFile != nil {
+				fmt.Fprintf(logWriter, "Parameter %s is restricted, skipping\n", paramName)
+			}
+			continue
+		}
+		
+		// Special handling for max_worker_processes - can only be increased
+		if paramName == "max_worker_processes" {
+			// Get current value from service
+			var currentValue int
+			if pgCurrentValue, ok := pgParamsMap[paramName]; ok {
+				currentValue = int(pgCurrentValue.(float64))
+			} else {
+				// Try at service level
+				if svcCurrentValue, ok := userConfig[paramName]; ok {
+					currentValue = int(svcCurrentValue.(float64))
+				}
+			}
+			
+			// Check if new value is lower than current
+			newValue := int(knobConfig.Setting.(float64))
+			if newValue < currentValue {
+				adapter.Logger().Warnf("Cannot decrease max_worker_processes from %d to %d on Aiven", currentValue, newValue)
+				if logWriter != nil {
+					fmt.Fprintf(logWriter, "Cannot decrease max_worker_processes from %d to %d\n", currentValue, newValue)
+				}
+				continue
+			}
+		}
+		
+		// Convert setting to appropriate type
+		var settingValue interface{}
 		switch v := knobConfig.Setting.(type) {
 		case float64:
 			// For numeric parameters that should be integer, convert to integer format
 			// Try to determine if this is an integer parameter based on the value
 			if v == float64(int64(v)) {
-				pgParamsMap[knobConfig.Name] = int64(v)
+				settingValue = int64(v)
 			} else {
-				pgParamsMap[knobConfig.Name] = v
+				settingValue = v
 			}
 		case bool:
-			pgParamsMap[knobConfig.Name] = v
+			settingValue = v
 		case string:
-			pgParamsMap[knobConfig.Name] = v
+			settingValue = v
 		default:
 			// For other types, convert to string
-			pgParamsMap[knobConfig.Name] = fmt.Sprintf("%v", v)
+			settingValue = fmt.Sprintf("%v", v)
 		}
+		
+		if logWriter != nil {
+			fmt.Fprintf(logWriter, "Setting %s = %v (service level: %v)\n", paramName, settingValue, paramInfo.ServiceLevel)
+		}
+		
+		// Apply the parameter at the correct level (service level or pg config)
+		if paramInfo.ServiceLevel {
+			userConfig[paramName] = settingValue
+		} else {
+			pgParamsMap[paramName] = settingValue
+		}
+		
+		changesMade = true
+	}
+
+	// Only update if changes were made
+	if !changesMade {
+		adapter.Logger().Info("No applicable changes to apply")
+		return nil
 	}
 
 	// Update the user_config with modified pg parameters
@@ -475,7 +585,7 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  collectors.AivenQueryRuntime(adapter), 
+			Collector:  collectors.AivenQueryRuntime(adapter), // Use Aiven-specific collector
 		},
 		{
 			Key:        "database_transactions_per_second",
@@ -490,7 +600,7 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 		{
 			Key:        "system_db_size",
 			MetricType: "int",
-			Collector:  collectors.DatabaseSize(adapter), 
+			Collector:  collectors.DatabaseSize(adapter), // Use standard collector for consistency
 		},
 		{
 			Key:        "database_autovacuum_count",
