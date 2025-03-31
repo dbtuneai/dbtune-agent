@@ -423,8 +423,15 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
 		`SELECT COALESCE(sum(pg_database_size(datname)), 0) FROM pg_database`).Scan(&memoryUsage)
 	
 	if err != nil {
-		adapter.Logger().Errorf("Failed to get memory usage: %v", err)
-		return nil
+		// On error, try just the current database
+		adapter.Logger().Warnf("Failed to get full memory usage, falling back to current database: %v", err)
+		err = adapter.pgDriver.QueryRow(context.Background(), 
+			`SELECT pg_database_size(current_database())`).Scan(&memoryUsage)
+		
+		if err != nil {
+			adapter.Logger().Errorf("Failed to get memory usage: %v", err)
+			return nil
+		}
 	}
 
 	// Get connection count for CPU usage approximation
@@ -468,7 +475,7 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  collectors.AivenQueryRuntime(adapter), // Use Aiven-specific collector
+			Collector:  collectors.AivenQueryRuntime(adapter), 
 		},
 		{
 			Key:        "database_transactions_per_second",
@@ -483,7 +490,7 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 		{
 			Key:        "system_db_size",
 			MetricType: "int",
-			Collector:  collectors.DatabaseSize(adapter),
+			Collector:  collectors.DatabaseSize(adapter), 
 		},
 		{
 			Key:        "database_autovacuum_count",
@@ -547,8 +554,15 @@ func AivenHardwareInfo(adapter *AivenPostgreSQLAdapter) func(ctx context.Context
 			`SELECT COALESCE(sum(pg_database_size(datname)), 0) FROM pg_database`).Scan(&memoryUsed)
 		
 		if err != nil {
-			adapter.Logger().Warnf("Failed to get memory usage: %v", err)
-			memoryUsed = 0
+			// On error, try just the current database
+			adapter.Logger().Warnf("Failed to get full memory usage, falling back to current database: %v", err)
+			err = adapter.pgDriver.QueryRow(ctx, 
+				`SELECT pg_database_size(current_database())`).Scan(&memoryUsed)
+			
+			if err != nil {
+				adapter.Logger().Warnf("Failed to get memory usage: %v", err)
+				memoryUsed = 0
+			}
 		}
 		
 		memoryUsedMetric, _ := utils.NewMetric("node_memory_used", memoryUsed, utils.Int)

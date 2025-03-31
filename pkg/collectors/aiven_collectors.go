@@ -30,7 +30,7 @@ func AivenQueryRuntime(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx 
 		}
 		
 		if !extensionExists {
-			pgAdapter.Logger().Warn("pg_stat_statements extension is not installed, skipping query runtime collection")
+			pgAdapter.Logger().Error("pg_stat_statements extension is not installed, skipping query runtime collection. Please install the extension to collect query statistics.")
 			return nil // Continue with other collectors
 		}
 
