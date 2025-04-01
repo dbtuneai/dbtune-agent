@@ -153,7 +153,7 @@ const (
 	// NonCritical is a guardrail that is not critical
 	// to the operation of the database, but a new configuration
 	// is recommended to be applied.
-	NonCritical GuardrailType = "non_critical"
+	NonCritical GuardrailType = "non-critical"
 )
 
 type GuardrailSignal struct {
