@@ -11,6 +11,8 @@ services:
       POSTGRES_PASSWORD: password
       POSTGRES_USER: dbtune
       POSTGRES_DB: dbtune
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
     volumes:
       - ./volumes/DB_DATA_DIR:/var/lib/postgresql/data
       - ./templates/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -26,6 +28,9 @@ services:
           - postgres
 
   agent:
+    depends_on:
+      postgres:
+        condition: service_healthy
     build:
       context: .
       dockerfile: Dockerfile
