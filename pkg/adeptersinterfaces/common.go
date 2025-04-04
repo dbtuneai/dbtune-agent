@@ -78,11 +78,11 @@ type AivenHardwareState struct {
 }
 
 type AivenState struct {
-	Hardware               *AivenHardwareState
-	LastAppliedConfig      time.Time
-	LastGuardrailCheck     time.Time
-	LastMemoryUsageTime    time.Time
-	LastMemoryUsagePercent float64
+	Hardware                      *AivenHardwareState
+	LastAppliedConfig             time.Time
+	LastGuardrailCheck            time.Time
+	LastMemoryAvailableTime       time.Time
+	LastMemoryAvailablePercentage float64
 }
 
 type AivenConfig struct {

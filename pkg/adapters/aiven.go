@@ -491,9 +491,9 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
 
 	// NOTE: We use the latest obtained during HardwareInfo() if it's recent, otherwise,
 	// re-fetch the metrics.
-	lastMemoryUsagePercent := 0.0
-	if time.Since(adapter.state.LastMemoryUsageTime) < 30*time.Second {
-		lastMemoryUsagePercent = adapter.state.LastMemoryUsagePercent
+	var lastMemoryAvailablePercentage float64
+	if time.Since(adapter.state.LastMemoryAvailableTime) < 30*time.Second {
+		lastMemoryAvailablePercentage = adapter.state.LastMemoryAvailablePercentage
 	} else {
 		metrics, err := aivenutil.GetFetchedMetrics(
 			context.Background(),
@@ -510,43 +510,44 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
 			return nil
 		}
 		adapter.Logger().Infof("Fetched metrics: %+v", metrics)
-		memUsageMetric := metrics[aivenutil.MemUsage]
-		lastMemoryUsagePercent = memUsageMetric.Value.(float64)
-		adapter.state.LastMemoryUsageTime = memUsageMetric.Timestamp
+		memAvailableMetric := metrics[aivenutil.MemAvailable]
+		lastMemoryAvailablePercentage = memAvailableMetric.Value.(float64)
+		adapter.state.LastMemoryAvailableTime = memAvailableMetric.Timestamp
 	}
 
 	adapter.Logger().Info("Checking guardrails for Aiven PostgreSQL")
 	adapter.state.LastGuardrailCheck = time.Now()
 
-	memoryUsagePercent := lastMemoryUsagePercent
+	memoryAvailablePercentage := lastMemoryAvailablePercentage
 
 	var err error
 	var connectionCount int
-
-	err = adapter.pgDriver.QueryRow(context.Background(),
-		`SELECT count(*) FROM pg_stat_activity WHERE state <> 'idle'`).Scan(&connectionCount)
-	if err != nil {
-		adapter.Logger().Errorf("Failed to get connection count: %v", err)
-		connectionCount = 0
-	}
-
 	var maxConnections int
 	err = adapter.pgDriver.QueryRow(context.Background(),
-		`SELECT current_setting('max_connections')::int`).Scan(&maxConnections)
+		`SELECT 
+			(SELECT count(*) FROM pg_stat_activity WHERE state <> 'idle') as active_connections,
+			current_setting('max_connections')::int as max_connections
+		`).Scan(&connectionCount, &maxConnections)
 
 	if err != nil {
-		adapter.Logger().Errorf("Failed to get max connections: %v", err)
+		adapter.Logger().Errorf("Failed to get connection metrics: %v", err)
+		connectionCount = 0
 		maxConnections = 100 // Default
 	}
 
 	// Calculate usage percentages
 	connectionUsagePercent := (float64(connectionCount) / float64(maxConnections)) * 100
 
-	adapter.Logger().Infof("Memory usage: %.2f%%, Connection usage: %.2f%%", memoryUsagePercent, connectionUsagePercent)
+	adapter.Logger().Infof("Memory available : %.2f%%, Connection usage: %.2f%%", memoryAvailablePercentage, connectionUsagePercent)
 
-	// If memory usage is over 90% or connection usage is over 90%, trigger critical guardrail
-	if memoryUsagePercent > 90 || connectionUsagePercent > 90 {
-		adapter.Logger().Info("Memory or connection usage is over 90%, triggering critical guardrail")
+	if memoryAvailablePercentage < 10 {
+		adapter.Logger().Info("Memory available is under 10%, triggering critical guardrail")
+		critical := agent.Critical
+		return &critical
+	}
+
+	if connectionUsagePercent > 90 {
+		adapter.Logger().Info("Connection usage is over 90%, triggering critical guardrail")
 		critical := agent.Critical
 		return &critical
 	}
