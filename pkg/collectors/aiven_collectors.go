@@ -143,6 +143,8 @@ func AivenHardwareInfo(adapter adeptersinterfaces.AivenPostgreSQLAdapter) func(c
 		// The code will still work without this block.
 		memAvailable := fetchedMetrics[aivenutil.MemAvailable]
 		if memAvailable.Error != nil {
+			// NOTE: We don't need to return an error for this, it's not a critical issue,
+			// and the next call or Guardrails() will fetch the metrics again.
 			return nil
 		}
 

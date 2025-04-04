@@ -509,7 +509,6 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
 			adapter.Logger().Errorf("Failed to get fetched metric for gaurdrail: %v", err)
 			return nil
 		}
-		adapter.Logger().Infof("Fetched metrics: %+v", metrics)
 		memAvailableMetric := metrics[aivenutil.MemAvailable]
 		lastMemoryAvailablePercentage = memAvailableMetric.Value.(float64)
 		adapter.state.LastMemoryAvailableTime = memAvailableMetric.Timestamp
