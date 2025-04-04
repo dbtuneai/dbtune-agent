@@ -3,8 +3,10 @@ package collectors
 import (
 	"context"
 
+	"github.com/aiven/go-client-codegen/handler/service"
 	"github.com/dbtuneai/agent/pkg/adeptersinterfaces"
 	"github.com/dbtuneai/agent/pkg/agent"
+	aivenutil "github.com/dbtuneai/agent/pkg/aivenutil"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 )
 
@@ -22,13 +24,13 @@ func AivenQueryRuntime(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx 
 			WHERE extname = 'pg_stat_statements'
 		);
 		`
-		
+
 		err := pgAdapter.PGDriver().QueryRow(ctx, checkExtQuery).Scan(&extensionExists)
 		if err != nil {
 			pgAdapter.Logger().Warnf("Failed to check for pg_stat_statements extension: %v", err)
 			return nil // Continue with other collectors
 		}
-		
+
 		if !extensionExists {
 			pgAdapter.Logger().Error("pg_stat_statements extension is not installed, skipping query runtime collection. Please install the extension to collect query statistics.")
 			return nil // Continue with other collectors
@@ -61,13 +63,13 @@ func AivenQueryRuntime(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx 
 			var queryID string
 			var calls int64
 			var totalExecTime float64
-			
+
 			err := rows.Scan(&queryID, &calls, &totalExecTime)
 			if err != nil {
 				pgAdapter.Logger().Warnf("Error scanning query stat row: %v", err)
 				continue
 			}
-			
+
 			queryStats[queryID] = utils.CachedPGStatStatement{
 				Calls:         int(calls),
 				TotalExecTime: totalExecTime,
@@ -99,3 +101,59 @@ func AivenQueryRuntime(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx 
 		return nil
 	}
 }
+
+// AivenHardwareInfo collects hardware metrics for Aiven PostgreSQL
+func AivenHardwareInfo(adapter adeptersinterfaces.AivenPostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
+		fetchedMetrics, err := aivenutil.GetFetchedMetrics(ctx, aivenutil.FetchedMetricsIn{
+			Client:      adapter.GetAivenClient(),
+			ProjectName: adapter.GetAivenConfig().ProjectName,
+			ServiceName: adapter.GetAivenConfig().ServiceName,
+			Logger:      adapter.Logger(),
+			Period:      service.PeriodTypeHour,
+		})
+		if err != nil {
+			adapter.Logger().Errorf("Failed to get metrics: %v", err)
+			return nil
+		}
+
+		// Process each metric type
+		for _, maybeMetric := range fetchedMetrics {
+			if maybeMetric.Error != nil {
+				adapter.Logger().Debugf(
+					"Failed to get metric %s: %v",
+					maybeMetric.ParsedMetric.Name,
+					maybeMetric.Error,
+				)
+				continue
+			}
+
+			parsedMetric := maybeMetric.ParsedMetric
+			metric, _ := utils.NewMetric(
+				parsedMetric.RenameTo,
+				parsedMetric.Value,
+				parsedMetric.Type,
+			)
+			state.AddMetric(metric)
+		}
+
+		// NOTE: Caching. As we need to re-fetch metrics for gaurdrails, and this API call
+		// sends down a lot of data, we cache the results for the memory usage, which is
+		// used by the gaurdrails.
+		// The code will still work without this block.
+		memryUsage := fetchedMetrics[aivenutil.MemUsage]
+		if memryUsage.Error != nil {
+			return nil
+		}
+
+		aivenState := adapter.GetAivenState()
+		aivenState.LastMemoryUsagePercent = memryUsage.ParsedMetric.Value.(float64)
+		aivenState.LastMemoryUsageTime = memryUsage.ParsedMetric.Timestamp
+		return nil
+	}
+}
+
+// TODO: Implement this to use the default postgres version, but also get the percentage value
+// `shared_buffers_percentage` to pass to the backend.
+// func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
+// }

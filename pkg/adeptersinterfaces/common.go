@@ -3,6 +3,7 @@ package adeptersinterfaces
 import (
 	"time"
 
+	aiven "github.com/aiven/go-client-codegen"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -77,9 +78,11 @@ type AivenHardwareState struct {
 }
 
 type AivenState struct {
-	Hardware           *AivenHardwareState
-	LastAppliedConfig  time.Time
-	LastGuardrailCheck time.Time
+	Hardware               *AivenHardwareState
+	LastAppliedConfig      time.Time
+	LastGuardrailCheck     time.Time
+	LastMemoryUsageTime    time.Time
+	LastMemoryUsagePercent float64
 }
 
 type AivenConfig struct {
@@ -90,6 +93,7 @@ type AivenConfig struct {
 
 type AivenPostgreSQLAdapter interface {
 	PostgreSQLAdapter
-	GetAivenState() *AivenState
+	GetAivenClient() *aiven.Client
 	GetAivenConfig() *AivenConfig
+	GetAivenState() *AivenState
 }
