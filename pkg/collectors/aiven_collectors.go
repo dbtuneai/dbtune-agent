@@ -141,14 +141,14 @@ func AivenHardwareInfo(adapter adeptersinterfaces.AivenPostgreSQLAdapter) func(c
 		// sends down a lot of data, we cache the results for the memory usage, which is
 		// used by the gaurdrails.
 		// The code will still work without this block.
-		memryUsage := fetchedMetrics[aivenutil.MemUsage]
-		if memryUsage.Error != nil {
+		memAvailable := fetchedMetrics[aivenutil.MemAvailable]
+		if memAvailable.Error != nil {
 			return nil
 		}
 
 		aivenState := adapter.GetAivenState()
-		aivenState.LastMemoryUsagePercent = memryUsage.ParsedMetric.Value.(float64)
-		aivenState.LastMemoryUsageTime = memryUsage.ParsedMetric.Timestamp
+		aivenState.LastMemoryAvailablePercentage = memAvailable.ParsedMetric.Value.(float64)
+		aivenState.LastMemoryAvailableTime = memAvailable.ParsedMetric.Timestamp
 		return nil
 	}
 }
