@@ -2,6 +2,7 @@ package collectors
 
 import (
 	"context"
+	"time"
 
 	"github.com/aiven/go-client-codegen/handler/service"
 	"github.com/dbtuneai/agent/pkg/adeptersinterfaces"
@@ -105,6 +106,16 @@ func AivenQueryRuntime(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx 
 // AivenHardwareInfo collects hardware metrics for Aiven PostgreSQL
 func AivenHardwareInfo(adapter adeptersinterfaces.AivenPostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
+		aivenState := adapter.GetAivenState()
+		aivenConfig := adapter.GetAivenConfig()
+		if time.Since(aivenState.LastHardwareInfoTime) < aivenConfig.MetricResolutionSeconds {
+			adapter.Logger().Debugf(
+				"Hardware info already fetched in the last %s, skipping",
+				aivenConfig.MetricResolutionSeconds,
+			)
+			return nil
+		}
+		aivenState.LastHardwareInfoTime = time.Now()
 		fetchedMetrics, err := aivenutil.GetFetchedMetrics(ctx, aivenutil.FetchedMetricsIn{
 			Client:      adapter.GetAivenClient(),
 			ProjectName: adapter.GetAivenConfig().ProjectName,
@@ -148,7 +159,6 @@ func AivenHardwareInfo(adapter adeptersinterfaces.AivenPostgreSQLAdapter) func(c
 			return nil
 		}
 
-		aivenState := adapter.GetAivenState()
 		aivenState.LastMemoryAvailablePercentage = memAvailable.ParsedMetric.Value.(float64)
 		aivenState.LastMemoryAvailableTime = memAvailable.ParsedMetric.Timestamp
 		return nil

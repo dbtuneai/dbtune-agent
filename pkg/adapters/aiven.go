@@ -1,11 +1,9 @@
 package adapters
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"math"
-	"os"
 	"sync"
 	"time"
 
@@ -20,6 +18,12 @@ import (
 	"github.com/spf13/viper"
 
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	METRIC_RESOLUTION_SECONDS                       = 30
+	GUARDRAIL_MEMORY_AVAILABLE_PERCENTAGE_THRESHOLD = 10.0
+	GUARDRAIL_CONNECTION_USAGE_PERCENTAGE_THRESHOLD = 90.0
 )
 
 // AivenPostgreSQLAdapter represents an adapter for connecting to Aiven PostgreSQL services
@@ -79,11 +83,18 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		dbtuneConfig = viper.New()
 	}
 
+	// Set default values
+	dbtuneConfig.SetDefault("guardrail_memory_available_percentage_threshold", GUARDRAIL_MEMORY_AVAILABLE_PERCENTAGE_THRESHOLD)
+	dbtuneConfig.SetDefault("guardrail_connection_usage_percentage_threshold", GUARDRAIL_CONNECTION_USAGE_PERCENTAGE_THRESHOLD)
+	dbtuneConfig.SetDefault("metric_resolution_seconds", METRIC_RESOLUTION_SECONDS)
+
 	// Bind environment variables
 	dbtuneConfig.BindEnv("api_token", "DBT_AIVEN_API_TOKEN")
 	dbtuneConfig.BindEnv("project_name", "DBT_AIVEN_PROJECT_NAME")
 	dbtuneConfig.BindEnv("service_name", "DBT_AIVEN_SERVICE_NAME")
-
+	dbtuneConfig.BindEnv("guardrail_memory_available_percentage_threshold", "DBT_AIVEN_GUARDRAIL_MEMORY_AVAILABLE_PERCENTAGE_THRESHOLD")
+	dbtuneConfig.BindEnv("guardrail_connection_usage_percentage_threshold", "DBT_AIVEN_GUARDRAIL_CONNECTION_USAGE_PERCENTAGE_THRESHOLD")
+	dbtuneConfig.BindEnv("metric_resolution_seconds", "DBT_AIVEN_METRIC_RESOLUTION_SECONDS")
 	var aivenConfig adeptersinterfaces.AivenConfig
 	err := dbtuneConfig.Unmarshal(&aivenConfig)
 	if err != nil {
@@ -95,6 +106,10 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Since we are specifying in units of seconds, but a raw int such as 30
+	// is interpreted as nanoseconds, we need to convert it
+	aivenConfig.MetricResolutionSeconds = time.Duration(aivenConfig.MetricResolutionSeconds) * time.Second
 
 	// Create Aiven client
 	aivenClient, err := aiven.NewClient(aiven.TokenOpt(aivenConfig.APIToken))
@@ -114,7 +129,11 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		aivenConfig:              aivenConfig,
 		aivenClient:              aivenClient,
 		state: &adeptersinterfaces.AivenState{
-			LastAppliedConfig: time.Time{},
+			LastAppliedConfig:             time.Time{},
+			LastGuardrailCheck:            time.Time{},
+			LastMemoryAvailableTime:       time.Time{},
+			LastMemoryAvailablePercentage: 100.0,
+			LastHardwareInfoTime:          time.Time{},
 		},
 	}
 
@@ -139,16 +158,14 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error
 	var systemInfo []utils.FlatValue
 
 	// Get service information from Aiven API
-	ctx := context.Background()
 	service, err := adapter.aivenClient.ServiceGet(
-		ctx,
+		context.Background(),
 		adapter.aivenConfig.ProjectName,
 		adapter.aivenConfig.ServiceName,
 		[2]string{"include_secrets", "false"},
 	)
 
 	if err != nil {
-		adapter.Logger().Errorf("failed to get service info: %v", err)
 		return nil, fmt.Errorf("failed to get service info: %v", err)
 	}
 
@@ -193,43 +210,14 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error
 func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
 	adapter.Logger().Infof("Applying Config to Aiven PostgreSQL: %s", proposedConfig.KnobApplication)
 
-	// If the last applied config is less than 1 minute ago, return
-	if adapter.state.LastAppliedConfig.Add(1 * time.Minute).After(time.Now()) {
-		adapter.Logger().Info("Last applied config is less than 1 minute ago, skipping")
-		return nil
-	}
-
 	userConfig := make(map[string]any)
-
-	// Ensure pg configuration section exists
-	pgParams, ok := userConfig["pg"]
-	if !ok || pgParams == nil {
-		pgParams = make(map[string]interface{})
-	}
-
-	pgParamsMap, ok := pgParams.(map[string]any)
-	if !ok {
-		pgParamsMap = make(map[string]any)
-	}
-
-	// Log file for debugging parameter changes
-	var logWriter *bufio.Writer
-	logFile, err := os.OpenFile("/tmp/aiven_param_changes.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err == nil {
-		defer logFile.Close()
-		logWriter = bufio.NewWriter(logFile)
-		defer logWriter.Flush()
-		fmt.Fprintf(logWriter, "[%s] Applying config changes to Aiven PostgreSQL\n", time.Now().Format(time.RFC3339))
-	}
+	pgParamsMap := make(map[string]any)
 
 	// Track if any changes were made
 	changesMade := false
 
 	// Debug: Print the proposed configuration
 	adapter.Logger().Debugf("Proposed configuration: %+v", proposedConfig)
-	if logWriter != nil {
-		fmt.Fprintf(logWriter, "Proposed configuration: %+v\n", proposedConfig)
-	}
 
 	// Apply the proposed config changes
 	for _, knob := range proposedConfig.KnobsOverrides {
@@ -240,50 +228,48 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 
 		// Debug: Print each knob being processed
 		adapter.Logger().Debugf("Processing knob: %s = %v", knobConfig.Name, knobConfig.Setting)
-		if logWriter != nil {
-			fmt.Fprintf(logWriter, "Processing knob: %s = %v\n", knobConfig.Name, knobConfig.Setting)
-		}
 
 		paramName := knobConfig.Name
 
+		// TODO: We should just use their settings directly instead of converting or rounding
 		// Unfortunately, they require `work_mem` to be set in MB and not KB. The search space
 		// uses the KB units to be consistent with other database.
-		var workMemMB int64
+		var workMemMB int
 		if paramName == "work_mem" {
 			workMemKB := knobConfig.Setting.(float64)
 			// The searchspace should provide nicely divisible values, but just in case,
 			// we will round to the nearest MB
-			workMemMB = int64(math.Round(workMemKB / 1024.0))
-			adapter.Logger().Infof("Converting work_mem (%.2f KB) to work_mem (%d MB)", workMemKB, workMemMB)
-			if logFile != nil {
-				fmt.Fprintf(logFile, "Converting work_mem (%.2f KB) to work_mem (%d MB)", workMemKB, workMemMB)
-			}
+			workMemMB = int(math.Round(workMemKB / 1024.0))
+			adapter.Logger().Debugf("Converting work_mem (%.2f KB) to work_mem (%d MB)", workMemKB, workMemMB)
 			knobConfig.Setting = workMemMB
 		}
 
 		// Check if parameter is known to be modifiable
-		paramInfo, exists := aivenModifiableParams[paramName]
-		if !exists {
-			adapter.Logger().Warnf("Parameter %s has unknown modifiability status on Aiven, attempting anyway", paramName)
-			if logFile != nil {
-				fmt.Fprintf(logWriter, "Parameter %s has unknown status, attempting anyway\n", paramName)
-			}
-			// Default to applying under pg config
-			paramInfo = struct {
-				Modifiable   bool
-				ServiceLevel bool
-			}{true, false}
-		} else if !paramInfo.Modifiable {
-			adapter.Logger().Warnf("Parameter %s is known to be restricted by Aiven, skipping", paramName)
-			if logFile != nil {
-				fmt.Fprintf(logWriter, "Parameter %s is restricted, skipping\n", paramName)
-			}
-			continue
+		paramInfo, ok := aivenModifiableParams[paramName]
+		if !ok {
+			adapter.Logger().Warnf(
+				"Parameter %s has unknown modifiability status on Aiven. Skipping on applying the configuration.",
+				paramName,
+			)
+			return nil
+		}
+
+		if !paramInfo.Modifiable {
+			adapter.Logger().Warnf(
+				"Parameter %s is known to be restricted by Aiven. Skipping on applying the configuration.",
+				paramName,
+			)
+			return nil
 		}
 
 		// Convert setting to appropriate type
 		var settingValue any
 		switch v := knobConfig.Setting.(type) {
+		// Base types, all good
+		case string, int64, bool:
+			settingValue = v
+		case int:
+			settingValue = int64(v)
 		case float64:
 			// For numeric parameters that should be integer, convert to integer format
 			// Try to determine if this is an integer parameter based on the value
@@ -292,22 +278,9 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 			} else {
 				settingValue = v
 			}
-		case bool:
-			settingValue = v
-		case string:
-			settingValue = v
-		case int64:
-			settingValue = v
-		case int:
-			settingValue = int64(v)
 		default:
 			// For other types, convert to string
 			settingValue = fmt.Sprintf("%v", v)
-		}
-
-		adapter.Logger().Infof("Setting %s = %v (service level: %v)", paramName, settingValue, paramInfo.ServiceLevel)
-		if logWriter != nil {
-			fmt.Fprintf(logWriter, "Setting %s = %v (service level: %v)\n", paramName, settingValue, paramInfo.ServiceLevel)
 		}
 
 		// Apply the parameter at the correct level (service level or pg config)
@@ -318,6 +291,7 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 		}
 
 		changesMade = true
+
 	}
 
 	// Only update if changes were made
@@ -329,17 +303,10 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 	// Update the user_config with modified pg parameters
 	userConfig["pg"] = pgParamsMap
 
-	// Create the update request
-	updateReq := &service.ServiceUpdateIn{
-		UserConfig: &userConfig,
-		Powered:    boolPtr(true),
-	}
+	updateReq := &service.ServiceUpdateIn{UserConfig: &userConfig, Powered: boolPtr(true)}
 
 	// Debug: Print the final configuration being sent to Aiven
-	adapter.Logger().Infof("Final update request to be sent to Aiven: %+v", updateReq)
-	if logWriter != nil {
-		fmt.Fprintf(logWriter, "Final update request to be sent to Aiven: %+v\n", updateReq)
-	}
+	adapter.Logger().Debugf("Final update request to be sent to Aiven: %+v", updateReq)
 
 	// Apply the configuration update
 	response, err := adapter.aivenClient.ServiceUpdate(
@@ -352,7 +319,7 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 		},
 	)
 
-	adapter.Logger().Infof("Aiven response: %+v", response)
+	adapter.Logger().Debugf("Aiven response: %+v", response)
 
 	if err != nil {
 		return fmt.Errorf("failed to update PostgreSQL parameters: %v", err)
@@ -394,7 +361,7 @@ func (adapter *AivenPostgreSQLAdapter) waitForServiceState(state service.Service
 		case <-ctx.Done():
 			return fmt.Errorf("timeout waiting for service to reach state %s", state)
 		case <-time.After(10 * time.Second):
-			service, err := adapter.aivenClient.ServiceGet(
+			serviceResponse, err := adapter.aivenClient.ServiceGet(
 				context.Background(),
 				adapter.aivenConfig.ProjectName,
 				adapter.aivenConfig.ServiceName,
@@ -404,11 +371,11 @@ func (adapter *AivenPostgreSQLAdapter) waitForServiceState(state service.Service
 				continue
 			}
 
-			if service.State == state {
+			if serviceResponse.State == state {
 				adapter.Logger().Infof("Service reached state: %s", state)
 				return nil
 			}
-			adapter.Logger().Debugf("Service state: %s, waiting for: %s", service.State, state)
+			adapter.Logger().Debugf("Service state: %s, waiting for: %s", serviceResponse.State, state)
 		}
 	}
 }
@@ -417,16 +384,37 @@ func (adapter *AivenPostgreSQLAdapter) waitForServiceState(state service.Service
 // Aiven only provides 30 second resolution data for hardware info, which we
 // need for guardrails.
 func (adapter *AivenPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
-	if time.Since(adapter.state.LastGuardrailCheck) < 30*time.Second {
+	aivenState := adapter.GetAivenState()
+	aivenConfig := adapter.GetAivenConfig()
+
+	timeSinceLastGuardrailCheck := time.Since(aivenState.LastGuardrailCheck)
+	if timeSinceLastGuardrailCheck < aivenConfig.MetricResolutionSeconds {
+		adapter.Logger().Debugf(
+			"Guardrails checked %s ago, lower than the resolution of %s, skipping",
+			timeSinceLastGuardrailCheck,
+			aivenConfig.MetricResolutionSeconds,
+		)
 		return nil
 	}
 
 	// NOTE: We use the latest obtained during HardwareInfo() if it's recent, otherwise,
 	// re-fetch the metrics.
 	var lastMemoryAvailablePercentage float64
-	if time.Since(adapter.state.LastMemoryAvailableTime) < 30*time.Second {
-		lastMemoryAvailablePercentage = adapter.state.LastMemoryAvailablePercentage
+
+	timeSinceLastMemoryAvailable := time.Since(aivenState.LastMemoryAvailableTime)
+	if timeSinceLastMemoryAvailable < aivenConfig.MetricResolutionSeconds {
+		adapter.Logger().Debugf(
+			"Memory check %s ago, lower than the resolution of %s, using cached value",
+			timeSinceLastMemoryAvailable,
+			aivenConfig.MetricResolutionSeconds,
+		)
+		lastMemoryAvailablePercentage = aivenState.LastMemoryAvailablePercentage
 	} else {
+		adapter.Logger().Debugf(
+			"Memory check %s ago, higher than the resolution of %s, fetching new value",
+			timeSinceLastMemoryAvailable,
+			aivenConfig.MetricResolutionSeconds,
+		)
 		metrics, err := aivenutil.GetFetchedMetrics(
 			context.Background(),
 			aivenutil.FetchedMetricsIn{
@@ -443,13 +431,29 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
 		}
 		memAvailableMetric := metrics[aivenutil.MemAvailable]
 		lastMemoryAvailablePercentage = memAvailableMetric.Value.(float64)
-		adapter.state.LastMemoryAvailableTime = memAvailableMetric.Timestamp
+		aivenState.LastMemoryAvailableTime = memAvailableMetric.Timestamp
 	}
 
 	adapter.Logger().Info("Checking guardrails for Aiven PostgreSQL")
-	adapter.state.LastGuardrailCheck = time.Now()
+	aivenState.LastGuardrailCheck = time.Now()
 
 	memoryAvailablePercentage := lastMemoryAvailablePercentage
+
+	if memoryAvailablePercentage < aivenConfig.GuardrailMemoryAvailablePercentageThreshold {
+		adapter.Logger().Warnf(
+			"Memory available: %.2f%% is under threshold %.2f%%, triggering critical guardrail",
+			memoryAvailablePercentage,
+			aivenConfig.GuardrailMemoryAvailablePercentageThreshold,
+		)
+		critical := agent.Critical
+		return &critical
+	} else {
+		adapter.Logger().Infof(
+			"Memory available: %.2f%% larger than threshold %.2f%%, no guardrail triggered",
+			memoryAvailablePercentage,
+			aivenConfig.GuardrailMemoryAvailablePercentageThreshold,
+		)
+	}
 
 	var err error
 	var connectionCount int
@@ -462,25 +466,26 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
 
 	if err != nil {
 		adapter.Logger().Errorf("Failed to get connection metrics: %v", err)
-		connectionCount = 0
-		maxConnections = 100 // Default
+		return nil
 	}
 
 	// Calculate usage percentages
 	connectionUsagePercent := (float64(connectionCount) / float64(maxConnections)) * 100
 
-	adapter.Logger().Infof("Memory available : %.2f%%, Connection usage: %.2f%%", memoryAvailablePercentage, connectionUsagePercent)
-
-	if memoryAvailablePercentage < 10 {
-		adapter.Logger().Info("Memory available is under 10%, triggering critical guardrail")
+	if connectionUsagePercent > aivenConfig.GuardrailConnectionUsagePercentageThreshold {
+		adapter.Logger().Warnf(
+			"Connection usage: %.2f%% is over threshold %.2f%%, triggering critical guardrail",
+			connectionUsagePercent,
+			aivenConfig.GuardrailConnectionUsagePercentageThreshold,
+		)
 		critical := agent.Critical
 		return &critical
-	}
-
-	if connectionUsagePercent > 90 {
-		adapter.Logger().Info("Connection usage is over 90%, triggering critical guardrail")
-		critical := agent.Critical
-		return &critical
+	} else {
+		adapter.Logger().Infof(
+			"Connection usage: %.2f%% smaller than threshold %.2f%%, no guardrail triggered",
+			connectionUsagePercent,
+			aivenConfig.GuardrailConnectionUsagePercentageThreshold,
+		)
 	}
 
 	return nil
