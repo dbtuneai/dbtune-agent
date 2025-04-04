@@ -50,10 +50,10 @@ const (
 )
 
 // I'm not confident this will always be the only set of names, nor am I confident
-// they will always exist. Hence we type is just as a string
+// they will always exist.
 // ['cpu_usage', 'disk_usage', 'diskio_read', 'diskio_writes', 'load_average', 'mem_available', 'mem_usage', 'net_receive', 'net_send']
 // TODO(eddiebergman): I wasn't sure on the naming, as the units are missing from some
-// of these metrics, and I tried to match pre-existing onces.
+// of these metrics, and I tried to match pre-existing ones where possible.
 var MetricsKnown = map[MetricKnownName]struct {
 	RenameTo    string
 	EncodedType utils.MetricType
@@ -62,7 +62,7 @@ var MetricsKnown = map[MetricKnownName]struct {
 		RenameTo:    "node_cpu_usage",
 		EncodedType: utils.Percentage,
 	},
-	DiskUsage: {
+	DiskUsage: { // TODO : We don't display this
 		RenameTo:    "node_disk_usage_percentage",
 		EncodedType: utils.Percentage,
 	},
@@ -74,23 +74,23 @@ var MetricsKnown = map[MetricKnownName]struct {
 		RenameTo:    "node_disk_io_ops_write",
 		EncodedType: utils.Float,
 	},
-	LoadAverage: { // TODO: Wut is this even?
+	LoadAverage: { // TODO: Wut is this even? We also don't display this
 		RenameTo:    "node_load_average",
 		EncodedType: utils.Float,
 	},
-	MemAvailable: { // TODO: Should this be converted to bytes?
+	MemAvailable: { // TODO: Should this be converted to bytes? If so, modify frontend
 		RenameTo:    "node_memory_available_percentage",
 		EncodedType: utils.Percentage,
 	},
-	MemUsage: {
+	MemUsage: { // TODO: Should this be converted to bytes? If so, modify frontend
 		RenameTo:    "node_memory_used_percentage",
 		EncodedType: utils.Percentage,
 	},
-	NetReceive: {
+	NetReceive: { // TODO: We don't use this
 		RenameTo:    "node_net_receive", // I think this is some kind of average per second
 		EncodedType: utils.Float,
 	},
-	NetSend: {
+	NetSend: { // TODO: We don't use this
 		RenameTo:    "node_net_send", // I think this is some kind of average per second
 		EncodedType: utils.Float,
 	},
