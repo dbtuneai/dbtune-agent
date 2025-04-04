@@ -244,49 +244,7 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 			fmt.Fprintf(logWriter, "Processing knob: %s = %v\n", knobConfig.Name, knobConfig.Setting)
 		}
 
-		// Handle shared_buffers specially - convert to shared_buffers_percentage if needed
-		// This is a special case for Aiven
-		// TODO: This needs to be replaced by `shared_buffers_percentage` for the backend.
-		// We won't be using `"shared_buffers"` as originally thought, as the calculations
-		// we do locally don't correspond to what Aiven does with the percentage, cuasing
-		// a mismatch which halts the tuning session.
 		paramName := knobConfig.Name
-		if paramName == "shared_buffers" {
-			// Convert shared_buffers to shared_buffers_percentage
-			// Get total memory in bytes
-			if adapter.state.Hardware != nil && adapter.state.Hardware.TotalMemoryBytes > 0 {
-
-				var sharedBuffers8KB float64
-				switch v := knobConfig.Setting.(type) {
-				case float64:
-					sharedBuffers8KB = v
-				case int64:
-					sharedBuffers8KB = float64(v)
-				case int:
-					sharedBuffers8KB = float64(v)
-				default:
-					adapter.Logger().Errorf("Invalid shared_buffers value: %v", v)
-					continue
-				}
-				// Shared buffers in pg is in 8KB blocks, convert to bytes
-				sharedBuffersBytes := sharedBuffers8KB * 8 * 1024
-				// Calculate as percentage of total memory
-				percentage := sharedBuffersBytes / float64(adapter.state.Hardware.TotalMemoryBytes) * 100
-				// Ensure within valid range for Aiven (20-60%)
-				percentage = math.Max(20, math.Min(60, percentage))
-
-				// Convert this to the service setting name
-				paramName = "shared_buffers_percentage"
-				knobConfig.Setting = percentage
-				adapter.Logger().Infof("Converting shared_buffers to shared_buffers_percentage: %.2f%%", percentage)
-				if logFile != nil {
-					fmt.Fprintf(logWriter, "Converting shared_buffers to shared_buffers_percentage: %.2f%%\n", percentage)
-				}
-			} else {
-				adapter.Logger().Errorf("Cannot convert shared_buffers to percentage - hardware info not available")
-				continue
-			}
-		}
 
 		// Unfortunately, they require `work_mem` to be set in MB and not KB. The search space
 		// uses the KB units to be consistent with other database.
@@ -321,32 +279,6 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 				fmt.Fprintf(logWriter, "Parameter %s is restricted, skipping\n", paramName)
 			}
 			continue
-		}
-
-		// Special handling for max_worker_processes - can only be increased
-		// TODO: We don't tune this for now in the searchspace. The optimizer can't
-		// handle this kind of thing anywho.
-		if paramName == "max_worker_processes" {
-			// Get current value from service
-			var currentValue int
-			if pgCurrentValue, ok := pgParamsMap[paramName]; ok {
-				currentValue = int(pgCurrentValue.(float64))
-			} else {
-				// Try at service level
-				if svcCurrentValue, ok := userConfig[paramName]; ok {
-					currentValue = int(svcCurrentValue.(float64))
-				}
-			}
-
-			// Check if new value is lower than current
-			newValue := int(knobConfig.Setting.(float64))
-			if newValue < currentValue {
-				adapter.Logger().Warnf("Cannot decrease max_worker_processes from %d to %d on Aiven", currentValue, newValue)
-				if logWriter != nil {
-					fmt.Fprintf(logWriter, "Cannot decrease max_worker_processes from %d to %d\n", currentValue, newValue)
-				}
-				continue
-			}
 		}
 
 		// Convert setting to appropriate type
