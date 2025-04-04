@@ -121,9 +121,9 @@ func parseMetricForMasterNode(name MetricKnownName, data FetchMetricJSONData) (P
 
 	rows := data.Data.Rows
 	if len(rows) == 0 {
-		return ParsedMetric{}, fmt.Errorf("no rows found")
+		return ParsedMetric{}, fmt.Errorf("no rows found for metric %s", name)
 	} else if len(rows) == 1 {
-		return ParsedMetric{}, fmt.Errorf("only one row found, the schema")
+		return ParsedMetric{}, fmt.Errorf("only one row found, the schema is probably wrong for metric %s", name)
 	}
 
 	// Find which index to use for pulling out data
@@ -136,16 +136,16 @@ func parseMetricForMasterNode(name MetricKnownName, data FetchMetricJSONData) (P
 	}
 
 	if masterNodeIndex == -1 {
-		return ParsedMetric{}, fmt.Errorf("no master node found in schema %v", data.Data.Cols)
+		return ParsedMetric{}, fmt.Errorf("no master node found in schema %v for metric %s", data.Data.Cols, name)
 	}
 
 	latestData := rows[len(rows)-1]
 	if len(latestData) == 0 {
-		return ParsedMetric{}, fmt.Errorf("no data found in last row")
+		return ParsedMetric{}, fmt.Errorf("no data found in last row for metric %s", name)
 	}
 	latestValue := latestData[masterNodeIndex]
 	if latestValue == nil {
-		return ParsedMetric{}, fmt.Errorf("value for metric was nil")
+		return ParsedMetric{}, fmt.Errorf("value for metric %s was nil", name)
 	}
 
 	return ParsedMetric{
