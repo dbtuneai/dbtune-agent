@@ -164,8 +164,3 @@ func AivenHardwareInfo(adapter adeptersinterfaces.AivenPostgreSQLAdapter) func(c
 		return nil
 	}
 }
-
-// TODO: Implement this to use the default postgres version, but also get the percentage value
-// `shared_buffers_percentage` to pass to the backend.
-// func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
-// }
