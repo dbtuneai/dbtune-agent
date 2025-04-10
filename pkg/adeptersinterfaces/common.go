@@ -78,8 +78,13 @@ type AivenHardwareState struct {
 }
 
 type AivenState struct {
-	Hardware                      *AivenHardwareState
-	LastAppliedConfig             time.Time
+	Hardware                       *AivenHardwareState
+	InitialSharedBuffersPercentage float64
+	InitialWorkMem                 int64
+	LastAppliedConfig              time.Time
+	// HACK: Used to trigger restarts on ALTER DATABASE statements
+	LastKnownPGStatMonitorEnable bool
+	// Guardrails
 	LastGuardrailCheck            time.Time
 	LastMemoryAvailableTime       time.Time
 	LastMemoryAvailablePercentage float64
@@ -90,6 +95,7 @@ type AivenConfig struct {
 	APIToken                                    string        `mapstructure:"api_token" validate:"required"`
 	ProjectName                                 string        `mapstructure:"project_name" validate:"required"`
 	ServiceName                                 string        `mapstructure:"service_name" validate:"required"`
+	DatabaseName                                string        `mapstructure:"database_name" validate:"required"`
 	MetricResolutionSeconds                     time.Duration `mapstructure:"metric_resolution_seconds" validate:"required"`
 	GuardrailMemoryAvailablePercentageThreshold float64       `mapstructure:"guardrail_memory_available_percentage_threshold" validate:"required"`
 	GuardrailConnectionUsagePercentageThreshold float64       `mapstructure:"guardrail_connection_usage_percentage_threshold" validate:"required"`

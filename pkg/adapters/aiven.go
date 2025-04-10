@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"sync"
 	"time"
 
@@ -24,6 +25,8 @@ const (
 	METRIC_RESOLUTION_SECONDS                       = 30
 	GUARDRAIL_MEMORY_AVAILABLE_PERCENTAGE_THRESHOLD = 10.0
 	GUARDRAIL_CONNECTION_USAGE_PERCENTAGE_THRESHOLD = 90.0
+	DEFAULT_SHARED_BUFFERS_PERCENTAGE               = 0.20
+	DEFAULT_PG_STAT_MONITOR_ENABLE                  = false
 )
 
 // AivenPostgreSQLAdapter represents an adapter for connecting to Aiven PostgreSQL services
@@ -46,33 +49,34 @@ func (adapter *AivenPostgreSQLAdapter) GetAivenState() *adeptersinterfaces.Aiven
 	return adapter.state
 }
 
-// aivenModifiableParams defines which PostgreSQL parameters can be modified on Aiven
-// and how they should be applied (pg config or service-level config)
+type ModifyLevel string
+
+const (
+	NoModify           ModifyLevel = "no_modify"      // Can not modify at all, usually due to 'parameter "x" cannot be changed now'
+	ModifyAlterDB      ModifyLevel = "alter_db"       // Can modify with ALTER DATABASE <dbname> SET <param> = <value>
+	ModifyUserPGConfig ModifyLevel = "user_pg_config" // Can modify via user config Aiven API, prefer over ModifyAlterDB
+	ModifyServiceLevel ModifyLevel = "service_level"  // Can modify via user config Aiven API
+)
+
+// Ideally, we can remove the restart from most of these
 var aivenModifiableParams = map[string]struct {
-	Modifiable   bool
-	ServiceLevel bool // If true, apply at service level instead of under pg config
+	ModifyLevel     ModifyLevel
+	RequiresRestart bool
 }{
-	// Parameters confirmed modifiable through pg config
-	"bgwriter_lru_maxpages":           {true, false},
-	"bgwriter_delay":                  {true, false},
-	"max_parallel_workers_per_gather": {true, false},
-	"max_parallel_workers":            {true, false},
-
-	// Parameters that must be applied at service level
-	"work_mem":                  {true, true},
-	"shared_buffers_percentage": {true, true}, // Instead of shared_buffers
-
-	// max_worker_processes can only be increased, not decreased
-	"max_worker_processes": {true, true},
-
-	// Known to be restricted (for documentation)
-	"max_wal_size":                 {false, false},
-	"min_wal_size":                 {false, false},
-	"random_page_cost":             {false, false},
-	"seq_page_cost":                {false, false},
-	"checkpoint_completion_target": {false, false},
-	"effective_io_concurrency":     {false, false},
-	"shared_buffers":               {false, false}, // Use shared_buffers_percentage instead
+	"shared_buffers_percentage":       {ModifyServiceLevel, true},
+	"bgwriter_lru_maxpages":           {ModifyUserPGConfig, true},
+	"bgwriter_delay":                  {ModifyUserPGConfig, true},
+	"max_parallel_workers_per_gather": {ModifyUserPGConfig, true},
+	"max_parallel_workers":            {ModifyUserPGConfig, true},
+	"work_mem":                        {ModifyAlterDB, true},
+	"random_page_cost":                {ModifyAlterDB, true},
+	"seq_page_cost":                   {ModifyAlterDB, true},
+	"effective_io_concurrency":        {ModifyAlterDB, true},
+	"checkpoint_completion_target":    {NoModify, false},
+	"max_wal_size":                    {NoModify, true},
+	"min_wal_size":                    {NoModify, true},
+	"shared_buffers":                  {NoModify, true}, // Done through shared_buffers_percentage
+	"max_worker_processes":            {NoModify, true}, // BUG: Cannot decrease on Aiven's end
 }
 
 // CreateAivenPostgreSQLAdapter creates a new Aiven PostgreSQL adapter
@@ -92,6 +96,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 	dbtuneConfig.BindEnv("api_token", "DBT_AIVEN_API_TOKEN")
 	dbtuneConfig.BindEnv("project_name", "DBT_AIVEN_PROJECT_NAME")
 	dbtuneConfig.BindEnv("service_name", "DBT_AIVEN_SERVICE_NAME")
+	dbtuneConfig.BindEnv("database_name", "DBT_AIVEN_DATABASE_NAME")
 	dbtuneConfig.BindEnv("guardrail_memory_available_percentage_threshold", "DBT_AIVEN_GUARDRAIL_MEMORY_AVAILABLE_PERCENTAGE_THRESHOLD")
 	dbtuneConfig.BindEnv("guardrail_connection_usage_percentage_threshold", "DBT_AIVEN_GUARDRAIL_CONNECTION_USAGE_PERCENTAGE_THRESHOLD")
 	dbtuneConfig.BindEnv("metric_resolution_seconds", "DBT_AIVEN_METRIC_RESOLUTION_SECONDS")
@@ -123,18 +128,29 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		return nil, fmt.Errorf("failed to create base PostgreSQL adapter: %v", err)
 	}
 
+	initialServiceLevelParameters, err := getInitialServiceLevelParameters(
+		&aivenClient,
+		aivenConfig.ProjectName,
+		aivenConfig.ServiceName,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get initial values: %v", err)
+	}
+	state := &adeptersinterfaces.AivenState{
+		InitialSharedBuffersPercentage: initialServiceLevelParameters.InitialSharedBuffersPercentage,
+		LastKnownPGStatMonitorEnable:   initialServiceLevelParameters.InitialPGStatMonitorEnable,
+		LastAppliedConfig:              time.Time{},
+		LastGuardrailCheck:             time.Time{},
+		LastMemoryAvailableTime:        time.Time{},
+		LastMemoryAvailablePercentage:  100.0,
+		LastHardwareInfoTime:           time.Time{},
+	}
 	// Create adapter
 	adapter := &AivenPostgreSQLAdapter{
 		DefaultPostgreSQLAdapter: *defaultAdapter,
 		aivenConfig:              aivenConfig,
 		aivenClient:              aivenClient,
-		state: &adeptersinterfaces.AivenState{
-			LastAppliedConfig:             time.Time{},
-			LastGuardrailCheck:            time.Time{},
-			LastMemoryAvailableTime:       time.Time{},
-			LastMemoryAvailablePercentage: 100.0,
-			LastHardwareInfoTime:          time.Time{},
-		},
+		state:                    state,
 	}
 
 	// Initialize collectors
@@ -180,6 +196,12 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error
 		LastChecked:      time.Now(),
 	}
 
+	// Update the last known PGStatMonitorEnable state
+	pgStatMonitorEnable, ok := service.UserConfig["pg_stat_monitor_enable"]
+	if ok {
+		adapter.state.LastKnownPGStatMonitorEnable = pgStatMonitorEnable.(bool)
+	}
+
 	// Get PostgreSQL version and max connections from database
 	pgVersion, err := collectors.PGVersion(adapter)
 	if err != nil {
@@ -207,148 +229,93 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error
 }
 
 // ApplyConfig applies configuration changes to the Aiven PostgreSQL service
+// NOTE: This function does not handle restart knobs at the database level at the moment.
+// The only known Knobs that we work with right now, that would require a restart are:
+// - max_worker_processes (Bugged currently on Aiven's end)
+// - shared_buffers_percentage
+// Both of these can be set at the service level, which does the reload for us.
+// However, they also alter them system wide, as opposed to just the database.
+// This leads to an inconsistency if we were to tune multiple databases in the same cluster.
+// We will need to revisit this in the future.
 func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
-	adapter.Logger().Infof("Applying Config to Aiven PostgreSQL: %s", proposedConfig.KnobApplication)
+	adapter.Logger().Infof("Applying config")
 
+	// List of knobs to be applied
 	userConfig := make(map[string]any)
-	pgParamsMap := make(map[string]any)
+	pgSettings := make(map[string]any)
+	restartRequired := false
 
-	// Track if any changes were made
-	changesMade := false
-
-	// Debug: Print the proposed configuration
-	adapter.Logger().Debugf("Proposed configuration: %+v", proposedConfig)
-
-	// Apply the proposed config changes
+	// Sort the knobs into dbLevelKnobs and serviceLevelKnobs
 	for _, knob := range proposedConfig.KnobsOverrides {
 		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
 		if err != nil {
 			return fmt.Errorf("failed to find recommended knob: %v", err)
 		}
 
-		// Debug: Print each knob being processed
-		adapter.Logger().Debugf("Processing knob: %s = %v", knobConfig.Name, knobConfig.Setting)
-
-		paramName := knobConfig.Name
-
-		// TODO: We should just use their settings directly instead of converting or rounding
-		// Unfortunately, they require `work_mem` to be set in MB and not KB. The search space
-		// uses the KB units to be consistent with other database.
-		var workMemMB int
-		if paramName == "work_mem" {
-			workMemKB := knobConfig.Setting.(float64)
-			// The searchspace should provide nicely divisible values, but just in case,
-			// we will round to the nearest MB
-			workMemMB = int(math.Round(workMemKB / 1024.0))
-			adapter.Logger().Debugf("Converting work_mem (%.2f KB) to work_mem (%d MB)", workMemKB, workMemMB)
-			knobConfig.Setting = workMemMB
-		}
-
-		// Check if parameter is known to be modifiable
-		paramInfo, ok := aivenModifiableParams[paramName]
+		knobModifiability, ok := aivenModifiableParams[knobConfig.Name]
 		if !ok {
-			adapter.Logger().Warnf(
-				"Parameter %s has unknown modifiability status on Aiven. Skipping on applying the configuration.",
-				paramName,
+			return fmt.Errorf("parameter %s has unknown modifiability status on Aiven. Skipping on applying the configuration", knobConfig.Name)
+		}
+		switch knobModifiability.ModifyLevel {
+		case ModifyAlterDB:
+			query := fmt.Sprintf(
+				`ALTER DATABASE "%s" SET "%s" = %s;`,
+				adapter.aivenConfig.DatabaseName,
+				knobConfig.Name,
+				strconv.FormatFloat(knobConfig.Setting.(float64), 'f', -1, 64),
 			)
-			return nil
-		}
-
-		if !paramInfo.Modifiable {
-			adapter.Logger().Warnf(
-				"Parameter %s is known to be restricted by Aiven. Skipping on applying the configuration.",
-				paramName,
-			)
-			return nil
-		}
-
-		// Convert setting to appropriate type
-		var settingValue any
-		switch v := knobConfig.Setting.(type) {
-		// Base types, all good
-		case string, int64, bool:
-			settingValue = v
-		case int:
-			settingValue = int64(v)
-		case float64:
-			// For numeric parameters that should be integer, convert to integer format
-			// Try to determine if this is an integer parameter based on the value
-			if v == float64(int64(v)) {
-				settingValue = int64(v)
-			} else {
-				settingValue = v
+			adapter.Logger().Debugf("Applying ALTER DATABASE query: %s", query)
+			_, err := adapter.pgDriver.Exec(context.Background(), query)
+			if err != nil {
+				return err
 			}
-		default:
-			// For other types, convert to string
-			settingValue = fmt.Sprintf("%v", v)
-		}
 
-		// Apply the parameter at the correct level (service level or pg config)
-		if paramInfo.ServiceLevel {
-			userConfig[paramName] = settingValue
-		} else {
-			pgParamsMap[paramName] = settingValue
-		}
-
-		changesMade = true
-
-	}
-
-	// Only update if changes were made
-	if !changesMade {
-		adapter.Logger().Info("No applicable changes to apply")
-		return nil
-	}
-
-	// Update the user_config with modified pg parameters
-	userConfig["pg"] = pgParamsMap
-
-	updateReq := &service.ServiceUpdateIn{UserConfig: &userConfig, Powered: boolPtr(true)}
-
-	// Debug: Print the final configuration being sent to Aiven
-	adapter.Logger().Debugf("Final update request to be sent to Aiven: %+v", updateReq)
-
-	// Apply the configuration update
-	response, err := adapter.aivenClient.ServiceUpdate(
-		context.Background(),
-		adapter.aivenConfig.ProjectName,
-		adapter.aivenConfig.ServiceName,
-		&service.ServiceUpdateIn{
-			UserConfig: &userConfig,
-			Powered:    boolPtr(true),
-		},
-	)
-
-	adapter.Logger().Debugf("Aiven response: %+v", response)
-
-	if err != nil {
-		return fmt.Errorf("failed to update PostgreSQL parameters: %v", err)
-	}
-
-	// Wait for the service to be running again
-	err = adapter.waitForServiceState(service.ServiceStateTypeRunning)
-	if err != nil {
-		return err
-	}
-
-	// Verify PostgreSQL is responding
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for PostgreSQL to come back online")
-		case <-time.After(5 * time.Second):
-			_, err := adapter.pgDriver.Exec(ctx, "SELECT 1")
-			if err == nil {
-				adapter.Logger().Info("PostgreSQL is back online")
-				adapter.state.LastAppliedConfig = time.Now()
-				return nil
+			// HACK: Toggling this plugin forces the service to restart PG quickly, causing connections
+			// to reset and ALTER DATABASE queries to take effect for all new connections. If we have
+			// any ALTER DB statements, then we insert this into the Aiven API call.
+			userConfig["pg_stat_monitor_enable"] = !adapter.state.LastKnownPGStatMonitorEnable
+			restartRequired = true
+		case ModifyUserPGConfig:
+			pgSettings[knobConfig.Name] = knobConfig.Setting
+		case ModifyServiceLevel:
+			// If it requires a restart, it will be automatically handled.
+			userConfig[knobConfig.Name] = knobConfig.Setting
+			if knobModifiability.RequiresRestart {
+				restartRequired = true
 			}
-			adapter.Logger().Debug("PostgreSQL not ready yet, retrying...")
+		case NoModify:
+			return fmt.Errorf("parameter %s can not be modified on Aiven. Skipping on applying the configuration", knobConfig.Name)
 		}
 	}
+
+	if len(pgSettings) > 0 {
+		userConfig["pg"] = pgSettings
+	}
+	if len(userConfig) > 0 {
+		adapter.Logger().Debugf("User config to be sent to Aiven: %+v", userConfig)
+
+		// Apply the configuration update
+		_, err := adapter.aivenClient.ServiceUpdate(
+			context.Background(),
+			adapter.aivenConfig.ProjectName,
+			adapter.aivenConfig.ServiceName,
+			&service.ServiceUpdateIn{UserConfig: &userConfig, Powered: boolPtr(true)},
+		)
+		if err != nil {
+			return fmt.Errorf("failed to update PostgreSQL parameters: %v", err)
+		}
+	}
+
+	if restartRequired {
+		adapter.Logger().Info("Restart was required, checking if Aiven PostgreSQL service has restarted")
+		err := adapter.waitForServiceState(service.ServiceStateTypeRunning)
+		if err != nil {
+			return err
+		}
+	}
+
+	adapter.state.LastAppliedConfig = time.Now()
+	return nil
 }
 
 // waitForServiceState waits for the service to reach the specified state
@@ -544,4 +511,134 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+type InitialServiceLevelParameters struct {
+	InitialSharedBuffersPercentage float64
+	InitialPGStatMonitorEnable     bool
+}
+
+func getInitialServiceLevelParameters(client *aiven.Client, projectName string, serviceName string) (InitialServiceLevelParameters, error) {
+	aivenClient := *client
+	service, err := aivenClient.ServiceGet(
+		context.Background(),
+		projectName,
+		serviceName,
+		[2]string{"include_secrets", "false"},
+	)
+	if err != nil {
+		return InitialServiceLevelParameters{}, fmt.Errorf("failed to get service info: %v", err)
+	}
+
+	userConfig := service.UserConfig
+	initialSharedBuffersPercentage, ok := userConfig["shared_buffers_percentage"]
+	if !ok {
+		initialSharedBuffersPercentage = DEFAULT_SHARED_BUFFERS_PERCENTAGE
+	}
+	initialPGStatMonitorEnable, ok := userConfig["pg_stat_monitor_enable"]
+	if !ok {
+		initialPGStatMonitorEnable = DEFAULT_PG_STAT_MONITOR_ENABLE
+	}
+
+	return InitialServiceLevelParameters{
+		InitialSharedBuffersPercentage: initialSharedBuffersPercentage.(float64),
+		InitialPGStatMonitorEnable:     initialPGStatMonitorEnable.(bool),
+	}, nil
+}
+
+// GetActiveConfig returns the active configuration for the Aiven PostgreSQL service
+// Specifically, this version does so at the database level, and also gets the
+// `shared_buffers_percentage` parameter from the Aiven API.
+func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
+	logger := adapter.Logger()
+	logger.Debug("Getting active config for Aiven PostgreSQL")
+	// The primary changes in this function are to exclude
+	// the `shared_buffers` pgDriver query,
+	// and instead retrieve `shared_buffers_percentage` from Aiven.
+	var configRows agent.ConfigArraySchema
+	pgDriver := adapter.PGDriver()
+
+	numericRows, err := pgDriver.Query(context.Background(), `
+		SELECT name, setting::numeric as setting, unit, vartype, context 
+		FROM pg_settings 
+		WHERE vartype IN ('real', 'integer')
+		AND name NOT IN ('shared_buffers');`)
+
+	if err != nil {
+		return nil, err
+	}
+
+	for numericRows.Next() {
+		var row agent.PGConfigRow
+		err := numericRows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
+		if err != nil {
+			adapter.Logger().Error("Error scanning numeric row", err)
+			continue
+		}
+		configRows = append(configRows, row)
+	}
+
+	// Query for non-numeric types
+	nonNumericRows, err := pgDriver.Query(context.Background(), `
+		SELECT name, setting, unit, vartype, context 
+		FROM pg_settings 
+		WHERE vartype NOT IN ('real', 'integer')
+		AND name NOT IN ('shared_buffers');`)
+
+	if err != nil {
+		return nil, err
+	}
+
+	for nonNumericRows.Next() {
+		var row agent.PGConfigRow
+		err := nonNumericRows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
+		if err != nil {
+			adapter.Logger().Error("Error scanning non-numeric row", err)
+			continue
+		}
+		configRows = append(configRows, row)
+	}
+
+	// We further need to query Aiven's service for the `shared_buffers_percentage`
+	// and the `work_mem` parameters.
+	// The problem here is that until we modify the `shared_buffers_percentage`
+	// or `work_mem`, we don't get anything back from Aiven for this GET request for them.
+	// Hence we need to revert back to their default values.
+	// ... but first, let's try the API
+	client := *adapter.GetAivenClient()
+	config := adapter.GetAivenConfig()
+	state := adapter.GetAivenState()
+	service, err := client.ServiceGet(
+		context.Background(),
+		config.ProjectName,
+		config.ServiceName,
+		[2]string{"include_secrets", "false"},
+	)
+	if err != nil {
+		return nil, err
+	}
+	userConfig := service.UserConfig
+
+	// Update the last known PGStatMonitorEnable state if we have it.
+	pgStatMonitorEnable, ok := userConfig["pg_stat_monitor_enable"]
+	if ok {
+		state.LastKnownPGStatMonitorEnable = pgStatMonitorEnable.(bool)
+	}
+
+	// Try and get the `shared_buffers_percentage` from the user config
+	// If they don't exist, use the default values.
+	sharedBuffersPercentage, ok := userConfig["shared_buffers_percentage"]
+	if !ok {
+		sharedBuffersPercentage = state.InitialSharedBuffersPercentage
+	}
+	row := agent.PGConfigRow{
+		Name:    "shared_buffers_percentage",
+		Setting: sharedBuffersPercentage,
+		Unit:    "percentage",
+		Vartype: "real",
+		Context: "service",
+	}
+	configRows = append(configRows, row)
+
+	return configRows, nil
 }
