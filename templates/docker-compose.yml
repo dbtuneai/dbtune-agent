@@ -37,6 +37,7 @@ services:
       - DBT_DBTUNE_DATABASE_ID=DATABASE_UUID
       - DBT_ADAPTER=docker
       - DBT_DOCKER_CONTAINER_NAME=DB_NAME
+      - DBT_MEMORY_THRESHOLD=90
     networks:
       - DB_NETWORK
     extra_hosts:

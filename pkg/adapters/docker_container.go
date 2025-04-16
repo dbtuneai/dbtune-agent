@@ -218,8 +218,7 @@ func (d *DockerContainerAdapter) Guardrails() *agent.GuardrailType {
 
 		memoryUsagePercent := utils.CalculateDockerMemoryUsed(statsJSON.MemoryStats) / float64(memoryLimit) * 100
 		d.Logger().Debugf("guardrail: memory percentage is %f", memoryUsagePercent)
-
-		if memoryUsagePercent > 90 {
+		if memoryUsagePercent > d.tuningConfig.MemoryThreshold {
 			level := agent.GuardrailType("critical")
 			return &level
 		}

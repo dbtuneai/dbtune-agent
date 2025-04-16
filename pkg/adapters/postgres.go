@@ -29,10 +29,15 @@ type PostgreSQLConfig struct {
 	ServiceName   string `mapstructure:"service_name"`
 }
 
+type TuningSettings struct {
+	MemoryThreshold float64 `mapstructure:"memory_threshold" validate:"required"`
+}
+
 type DefaultPostgreSQLAdapter struct {
 	agent.CommonAgent
-	pgDriver *pgPool.Pool
-	pgConfig PostgreSQLConfig
+	pgDriver     *pgPool.Pool
+	pgConfig     PostgreSQLConfig
+	tuningConfig TuningSettings
 }
 
 func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
@@ -41,7 +46,7 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 		// If the section doesn't exist in the config file, create a new Viper instance
 		dbtuneConfig = viper.New()
 	}
-
+	println("I am here you bitch")
 	dbtuneConfig.BindEnv("connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
 	dbtuneConfig.BindEnv("service_name", "DBT_POSTGRESQL_SERVICE_NAME")
 
@@ -56,6 +61,25 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 		return nil, err
 	}
 
+	tuningSetting := viper.Sub("tuning_settings")
+	if tuningSetting == nil {
+		tuningSetting = viper.New()
+	}
+
+	tuningSetting.BindEnv("memory_threshold", "DBT_MEMORY_THRESHOLD")
+
+	var tuningConfig TuningSettings
+	tuningSetting.SetDefault("memory_threshold", 90)
+	err = tuningSetting.Unmarshal(&tuningConfig)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode into struct, %v", err)
+	}
+
+	err = utils.ValidateStruct(&tuningConfig)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("I am here %f\n", tuningConfig.MemoryThreshold)
 	dbpool, err := pgPool.New(context.Background(), pgConfig.ConnectionURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PG driver: %w", err)
@@ -67,6 +91,7 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 	c.CommonAgent = *commonAgent
 	c.pgDriver = dbpool
 	c.pgConfig = pgConfig
+	c.tuningConfig = tuningConfig
 
 	// Initialize collectors after the adapter is fully set up
 	c.MetricsState = agent.MetricsState{
@@ -394,8 +419,8 @@ func (adapter *DefaultPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
 
 	adapter.Logger().Debugf("Memory usage: %f%%", memoryUsagePercent)
 
-	// If memory usage is greater than 90%, trigger critical guardrail
-	if memoryUsagePercent > 90 {
+	// If memory usage is greater than 90% (default), trigger critical guardrail
+	if memoryUsagePercent > adapter.tuningConfig.MemoryThreshold {
 		level := agent.Critical
 		return &level
 	}

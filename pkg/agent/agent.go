@@ -549,7 +549,7 @@ func (a *CommonAgent) Guardrails() *GuardrailType {
 // SendGuardrailSignal sends a guardrail signal to the DBtune server
 // that something is heading towards a failure.
 func (a *CommonAgent) SendGuardrailSignal(level GuardrailType) error {
-	a.Logger().Warnf("🚨 Seding Guardrail, level: %s", level)
+	a.Logger().Warnf("🚨 Sending Guardrail, level: %s", level)
 
 	payload := GuardrailSignal{
 		GuardrailType: level,
