@@ -25,7 +25,7 @@ const (
 	METRIC_RESOLUTION_SECONDS                       = 30
 	GUARDRAIL_MEMORY_AVAILABLE_PERCENTAGE_THRESHOLD = 10.0
 	GUARDRAIL_CONNECTION_USAGE_PERCENTAGE_THRESHOLD = 90.0
-	DEFAULT_SHARED_BUFFERS_PERCENTAGE               = 0.20
+	DEFAULT_SHARED_BUFFERS_PERCENTAGE               = 20.0
 	DEFAULT_PG_STAT_MONITOR_ENABLE                  = false
 )
 
@@ -52,10 +52,10 @@ func (adapter *AivenPostgreSQLAdapter) GetAivenState() *adeptersinterfaces.Aiven
 type ModifyLevel string
 
 const (
-	NoModify           ModifyLevel = "no_modify"      // Can not modify at all, usually due to 'parameter "x" cannot be changed now'
-	ModifyAlterDB      ModifyLevel = "alter_db"       // Can modify with ALTER DATABASE <dbname> SET <param> = <value>
-	ModifyUserPGConfig ModifyLevel = "user_pg_config" // Can modify via user config Aiven API, prefer over ModifyAlterDB
 	ModifyServiceLevel ModifyLevel = "service_level"  // Can modify via user config Aiven API
+	ModifyUserPGConfig ModifyLevel = "user_pg_config" // Can modify via user config Aiven API, prefer over ModifyAlterDB, no restart
+	ModifyAlterDB      ModifyLevel = "alter_db"       // Can modify with ALTER DATABASE <dbname> SET <param> = <value>, requires restart
+	NoModify           ModifyLevel = "no_modify"      // Can not modify at all, usually due to 'parameter "x" cannot be changed now'
 )
 
 // Ideally, we can remove the restart from most of these
@@ -64,19 +64,20 @@ var aivenModifiableParams = map[string]struct {
 	RequiresRestart bool
 }{
 	"shared_buffers_percentage":       {ModifyServiceLevel, true},
-	"bgwriter_lru_maxpages":           {ModifyUserPGConfig, true},
-	"bgwriter_delay":                  {ModifyUserPGConfig, true},
-	"max_parallel_workers_per_gather": {ModifyUserPGConfig, true},
-	"max_parallel_workers":            {ModifyUserPGConfig, true},
-	"work_mem":                        {ModifyAlterDB, true},
+	"work_mem":                        {ModifyServiceLevel, true},
+	"bgwriter_lru_maxpages":           {ModifyUserPGConfig, false},
+	"bgwriter_delay":                  {ModifyUserPGConfig, false},
+	"max_parallel_workers_per_gather": {ModifyUserPGConfig, false},
+	"max_parallel_workers":            {ModifyUserPGConfig, false},
 	"random_page_cost":                {ModifyAlterDB, true},
 	"seq_page_cost":                   {ModifyAlterDB, true},
 	"effective_io_concurrency":        {ModifyAlterDB, true},
-	"checkpoint_completion_target":    {NoModify, false},
-	"max_wal_size":                    {NoModify, true},
-	"min_wal_size":                    {NoModify, true},
-	"shared_buffers":                  {NoModify, true}, // Done through shared_buffers_percentage
-	"max_worker_processes":            {NoModify, true}, // BUG: Cannot decrease on Aiven's end
+	// TODO: Get these to be modifiable?
+	"checkpoint_completion_target": {NoModify, false},
+	"max_wal_size":                 {NoModify, false},
+	"min_wal_size":                 {NoModify, false},
+	"shared_buffers":               {NoModify, false}, // Done through shared_buffers_percentage
+	"max_worker_processes":         {NoModify, false}, // BUG: Cannot decrease on Aiven's end
 }
 
 // CreateAivenPostgreSQLAdapter creates a new Aiven PostgreSQL adapter
@@ -550,12 +551,65 @@ func getInitialServiceLevelParameters(client *aiven.Client, projectName string, 
 // Specifically, this version does so at the database level, and also gets the
 // `shared_buffers_percentage` parameter from the Aiven API.
 func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
+	// Main differences from the PostgreSQL version:
+	// We need to query Aiven's service for the `shared_buffers_percentage`
+	// and the `work_mem` parameters.
+	// The problem here is that until we modify the `shared_buffers_percentage`
+	// or `work_mem`, we don't get anything back from Aiven
+	// In that case, we use a known default
+	// of 20% for `shared_buffers_percentage` and rely on conversion
+	// of `work_mem` from PostgreSQL kb units to MB to get the correct value.
 	logger := adapter.Logger()
 	logger.Debug("Getting active config for Aiven PostgreSQL")
-	// The primary changes in this function are to exclude
-	// the `shared_buffers` pgDriver query,
-	// and instead retrieve `shared_buffers_percentage` from Aiven.
 	var configRows agent.ConfigArraySchema
+	client := *adapter.GetAivenClient()
+	config := adapter.GetAivenConfig()
+	state := adapter.GetAivenState()
+	service, err := client.ServiceGet(
+		context.Background(),
+		config.ProjectName,
+		config.ServiceName,
+		[2]string{"include_secrets", "false"},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	userConfig := service.UserConfig
+
+	// Try and get `shared_buffers_percentage` and `work_mem` from the user config
+	// If they don't exist, it's likely it's unmodified from the defaults, and will be empty.
+	sharedBuffersPercentage, workMemOk := userConfig["shared_buffers_percentage"]
+	if !workMemOk {
+		sharedBuffersPercentage = state.InitialSharedBuffersPercentage
+	}
+	configRows = append(configRows, agent.PGConfigRow{
+		Name:    "shared_buffers_percentage",
+		Setting: sharedBuffersPercentage,
+		Unit:    "percentage",
+		Vartype: "real",
+		Context: "service",
+	})
+
+	// HACK: This isn't put into the configRows, it's purely to keep track of
+	// this parameter, which we toggle to trigger restarts.
+	pgStatMonitorEnable, workMemOk := userConfig["pg_stat_monitor_enable"]
+	if workMemOk {
+		state.LastKnownPGStatMonitorEnable = pgStatMonitorEnable.(bool)
+	}
+
+	workMemMB, workMemOk := userConfig["work_mem"]
+	if workMemOk {
+		logger.Debugf("work_mem: %v", workMemMB)
+		configRows = append(configRows, agent.PGConfigRow{
+			Name:    "work_mem",
+			Setting: workMemMB,
+			Unit:    "MB",
+			Vartype: "integer",
+			Context: "service",
+		})
+	}
+
 	pgDriver := adapter.PGDriver()
 
 	numericRows, err := pgDriver.Query(context.Background(), `
@@ -575,7 +629,31 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 			adapter.Logger().Error("Error scanning numeric row", err)
 			continue
 		}
-		configRows = append(configRows, row)
+
+		// `work_mem` is specialed cased, as we will not get a value
+		// back from Aiven if it's not been modified yet, and
+		// the default is dynamic w.r.t. the machine falvour.
+		// At any rate,
+		// we will either skip it if we already have added it,
+		// otherwise we parse out the row setting and convert it
+		// to MB.
+		if row.Name == "work_mem" {
+			if !workMemOk {
+				workMemKb := row.Setting.(float64)
+				// We shouldn't expect this to be off, but just in case
+				workMemMB = int(math.Round(workMemKb / 1024.0))
+				configRows = append(configRows, agent.PGConfigRow{
+					Name:    "work_mem",
+					Setting: workMemMB,
+					Unit:    "MB",
+					Vartype: "integer",
+					Context: "service",
+				})
+			}
+		} else {
+			configRows = append(configRows, row)
+		}
+
 	}
 
 	// Query for non-numeric types
@@ -598,47 +676,6 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 		}
 		configRows = append(configRows, row)
 	}
-
-	// We further need to query Aiven's service for the `shared_buffers_percentage`
-	// and the `work_mem` parameters.
-	// The problem here is that until we modify the `shared_buffers_percentage`
-	// or `work_mem`, we don't get anything back from Aiven for this GET request for them.
-	// Hence we need to revert back to their default values.
-	// ... but first, let's try the API
-	client := *adapter.GetAivenClient()
-	config := adapter.GetAivenConfig()
-	state := adapter.GetAivenState()
-	service, err := client.ServiceGet(
-		context.Background(),
-		config.ProjectName,
-		config.ServiceName,
-		[2]string{"include_secrets", "false"},
-	)
-	if err != nil {
-		return nil, err
-	}
-	userConfig := service.UserConfig
-
-	// Update the last known PGStatMonitorEnable state if we have it.
-	pgStatMonitorEnable, ok := userConfig["pg_stat_monitor_enable"]
-	if ok {
-		state.LastKnownPGStatMonitorEnable = pgStatMonitorEnable.(bool)
-	}
-
-	// Try and get the `shared_buffers_percentage` from the user config
-	// If they don't exist, use the default values.
-	sharedBuffersPercentage, ok := userConfig["shared_buffers_percentage"]
-	if !ok {
-		sharedBuffersPercentage = state.InitialSharedBuffersPercentage
-	}
-	row := agent.PGConfigRow{
-		Name:    "shared_buffers_percentage",
-		Setting: sharedBuffersPercentage,
-		Unit:    "percentage",
-		Vartype: "real",
-		Context: "service",
-	}
-	configRows = append(configRows, row)
 
 	return configRows, nil
 }
