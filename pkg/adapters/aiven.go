@@ -18,6 +18,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/spf13/viper"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -254,6 +255,8 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 			return fmt.Errorf("failed to find recommended knob: %v", err)
 		}
 
+		adapter.Logger().Debugf("Knob config: %+v", knobConfig)
+
 		knobModifiability, ok := aivenModifiableParams[knobConfig.Name]
 		if !ok {
 			return fmt.Errorf("parameter %s has unknown modifiability status on Aiven. Skipping on applying the configuration", knobConfig.Name)
@@ -318,6 +321,8 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 		if err != nil {
 			return fmt.Errorf("failed to update PostgreSQL parameters: %v", err)
 		}
+	} else {
+		adapter.Logger().Warnf("ApplyConfig was called with no changes to apply")
 	}
 
 	if restartRequired {
@@ -478,7 +483,7 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  collectors.AivenQueryRuntime(adapter), // Use Aiven-specific collector
+			Collector:  collectors.PGStatStatements(adapter),
 		},
 		{
 			Key:        "database_transactions_per_second",
@@ -653,8 +658,8 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 		// otherwise we parse out the row setting and convert it to MB.
 		if row.Name == "work_mem" {
 			if !workMemFromUserConfigOk {
-				workMemKb := row.Setting.(float64)
-				workMemMB = int(math.Round(workMemKb / 1024.0))
+				workMemKb := row.Setting.(pgtype.Numeric)
+				workMemMB = int(workMemKb.Int.Int64() / 1024)
 				configRows = append(configRows, agent.PGConfigRow{
 					Name:    "work_mem",
 					Setting: workMemMB,
