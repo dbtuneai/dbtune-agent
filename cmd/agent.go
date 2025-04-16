@@ -7,7 +7,6 @@ import (
 	"github.com/dbtuneai/agent/pkg/adapters"
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/runner"
-
 	"github.com/spf13/viper"
 )
 
@@ -15,6 +14,7 @@ func main() {
 	// Define flags
 	useDocker := flag.Bool("docker", false, "Use Docker adapter")
 	useAurora := flag.Bool("aurora", false, "Use Aurora adapter")
+	useAiven := flag.Bool("aiven", false, "Use Aiven PostgreSQL adapter")
 	flag.Parse()
 
 	// Set the file name of the configurations file
@@ -50,6 +50,11 @@ func main() {
 		adapter, err = adapters.CreateAuroraRDSAdapter()
 		if err != nil {
 			log.Fatalf("Failed to create Aurora RDS adapter: %v", err)
+		}
+	case *useAiven:
+		adapter, err = adapters.CreateAivenPostgreSQLAdapter()
+		if err != nil {
+			log.Fatalf("Failed to create Aiven PostgreSQL adapter: %v", err)
 		}
 	default:
 		adapter, err = adapters.CreateDefaultPostgreSQLAdapter()

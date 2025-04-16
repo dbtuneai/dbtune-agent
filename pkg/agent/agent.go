@@ -41,6 +41,10 @@ func (p PGConfigRow) GetSettingValue() (string, error) {
 		// Handle both string and number JSON representations
 		var val int64
 		switch v := p.Setting.(type) {
+		case int:
+			val = int64(v)
+		case int64:
+			val = v
 		case float64:
 			val = int64(v)
 		case string:
@@ -60,6 +64,10 @@ func (p PGConfigRow) GetSettingValue() (string, error) {
 		switch v := p.Setting.(type) {
 		case float64:
 			val = v
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
 		case string:
 			parsed, err := strconv.ParseFloat(v, 64)
 			if err != nil {
