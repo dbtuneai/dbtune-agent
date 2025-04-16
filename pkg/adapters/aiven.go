@@ -239,14 +239,6 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error
 }
 
 // ApplyConfig applies configuration changes to the Aiven PostgreSQL service
-// NOTE: This function does not handle restart knobs at the database level at the moment.
-// The only known Knobs that we work with right now, that would require a restart are:
-// - max_worker_processes (Bugged currently on Aiven's end)
-// - shared_buffers_percentage
-// Both of these can be set at the service level, which does the reload for us.
-// However, they also alter them system wide, as opposed to just the database.
-// This leads to an inconsistency if we were to tune multiple databases in the same cluster.
-// We will need to revisit this in the future.
 func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
 	adapter.Logger().Infof("Applying config")
 
@@ -568,18 +560,19 @@ func getInitialServiceLevelParameters(client *aiven.Client, projectName string, 
 	}, nil
 }
 
-// GetActiveConfig returns the active configuration for the Aiven PostgreSQL service
-// Specifically, this version does so at the database level, and also gets the
-// `shared_buffers_percentage` parameter from the Aiven API.
+// GetActiveConfig returns the active configuration for the Aiven API
+// as well as through PostgreSQL
 func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 	// Main differences from the PostgreSQL version:
-	// We need to query Aiven's service for the `shared_buffers_percentage`
-	// and the `work_mem` parameters.
+	// We need to query Aiven's service for the
+	// `shared_buffers_percentage` and the `work_mem` parameters.
 	// The problem here is that until we modify the `shared_buffers_percentage`
-	// or `work_mem`, we don't get anything back from Aiven
-	// In that case, we use a known default
-	// of 20% for `shared_buffers_percentage` and rely on conversion
-	// of `work_mem` from PostgreSQL kb units to MB to get the correct value.
+	// or `work_mem`, we don't get anything back from Aiven.
+	// In that case, we use a known default of 20% for `shared_buffers_percentage`
+	// and rely on converting `work_mem` from PostgreSQL kb
+	// units to MB to get the correct value.
+	// We always prefer to use AivenAPI as source of truth for these
+	// parameters as we do not know how they apply them.
 	logger := adapter.Logger()
 	logger.Debug("Getting active config for Aiven PostgreSQL")
 	var configRows agent.ConfigArraySchema
@@ -598,10 +591,19 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 
 	userConfig := service.UserConfig
 
+	// HACK: This isn't for configRows, it's purely to keep track of
+	// this parameter, which we use to trigger session restarts.
+	// There's no point re-querying the service for this information
+	// elsewhere so we do it here.
+	pgStatMonitorEnable, ok := userConfig["pg_stat_monitor_enable"]
+	if ok {
+		state.LastKnownPGStatMonitorEnable = pgStatMonitorEnable.(bool)
+	}
+
 	// Try and get `shared_buffers_percentage` and `work_mem` from the user config
 	// If they don't exist, it's likely it's unmodified from the defaults, and will be empty.
-	sharedBuffersPercentage, workMemOk := userConfig["shared_buffers_percentage"]
-	if !workMemOk {
+	sharedBuffersPercentage, ok := userConfig["shared_buffers_percentage"]
+	if !ok {
 		sharedBuffersPercentage = state.InitialSharedBuffersPercentage
 	}
 	configRows = append(configRows, agent.PGConfigRow{
@@ -612,16 +614,8 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 		Context: "service",
 	})
 
-	// HACK: This isn't put into the configRows, it's purely to keep track of
-	// this parameter, which we toggle to trigger restarts.
-	pgStatMonitorEnable, workMemOk := userConfig["pg_stat_monitor_enable"]
-	if workMemOk {
-		state.LastKnownPGStatMonitorEnable = pgStatMonitorEnable.(bool)
-	}
-
-	workMemMB, workMemOk := userConfig["work_mem"]
-	if workMemOk {
-		logger.Debugf("work_mem: %v", workMemMB)
+	workMemMB, workMemFromUserConfigOk := userConfig["work_mem"]
+	if workMemFromUserConfigOk {
 		configRows = append(configRows, agent.PGConfigRow{
 			Name:    "work_mem",
 			Setting: workMemMB,
@@ -656,12 +650,10 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 		// the default is dynamic w.r.t. the machine falvour.
 		// At any rate,
 		// we will either skip it if we already have added it,
-		// otherwise we parse out the row setting and convert it
-		// to MB.
+		// otherwise we parse out the row setting and convert it to MB.
 		if row.Name == "work_mem" {
-			if !workMemOk {
+			if !workMemFromUserConfigOk {
 				workMemKb := row.Setting.(float64)
-				// We shouldn't expect this to be off, but just in case
 				workMemMB = int(math.Round(workMemKb / 1024.0))
 				configRows = append(configRows, agent.PGConfigRow{
 					Name:    "work_mem",
@@ -681,8 +673,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 	nonNumericRows, err := pgDriver.Query(context.Background(), `
 		SELECT name, setting, unit, vartype, context 
 		FROM pg_settings 
-		WHERE vartype NOT IN ('real', 'integer')
-		AND name NOT IN ('shared_buffers');`)
+		WHERE vartype NOT IN ('real', 'integer')`)
 
 	if err != nil {
 		return nil, err
