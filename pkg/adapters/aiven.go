@@ -569,15 +569,12 @@ func getInitialServiceLevelParameters(client *aiven.Client, projectName string, 
 // as well as through PostgreSQL
 func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 	// Main differences from the PostgreSQL version:
-	// We need to query Aiven's service for the
-	// `shared_buffers_percentage` and the `work_mem` parameters.
-	// The problem here is that until we modify the `shared_buffers_percentage`
-	// or `work_mem`, we don't get anything back from Aiven.
-	// In that case, we use a known default of 20% for `shared_buffers_percentage`
-	// and rely on converting `work_mem` from PostgreSQL kb
-	// units to MB to get the correct value.
-	// We always prefer to use AivenAPI as source of truth for these
-	// parameters as we do not know how they apply them.
+	// * We need to query Aiven's service for the `shared_buffers_percentage` parameter.
+	// The problem here is that until we modify `shared_buffers_percentage`, we don't get
+	// anything back from Aiven.  In that case, we use a known default of 20%.
+	// * While we set `work_mem` through the Aiven API, it seems that querying for it
+	// does not always return the most recent value, causing us to get a mismatch. Hence
+	// we parse from PostgreSQL directly and convert to the MB, the units Aiven uses.
 	logger := adapter.Logger()
 	logger.Debug("Getting active config for Aiven PostgreSQL")
 	var configRows agent.ConfigArraySchema
@@ -619,17 +616,6 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 		Context: "service",
 	})
 
-	workMemMB, workMemFromUserConfigOk := userConfig["work_mem"]
-	if workMemFromUserConfigOk {
-		configRows = append(configRows, agent.PGConfigRow{
-			Name:    "work_mem",
-			Setting: workMemMB,
-			Unit:    "MB",
-			Vartype: "integer",
-			Context: "service",
-		})
-	}
-
 	pgDriver := adapter.PGDriver()
 
 	numericRows, err := pgDriver.Query(context.Background(), `
@@ -650,24 +636,22 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 			continue
 		}
 
-		// `work_mem` is specialed cased, as we will not get a value
-		// back from Aiven if it's not been modified yet, and
-		// the default is dynamic w.r.t. the machine falvour.
-		// At any rate,
-		// we will either skip it if we already have added it,
-		// otherwise we parse out the row setting and convert it to MB.
 		if row.Name == "work_mem" {
-			if !workMemFromUserConfigOk {
-				workMemKb := row.Setting.(pgtype.Numeric)
-				workMemMB = int(workMemKb.Int.Int64() / 1024)
-				configRows = append(configRows, agent.PGConfigRow{
-					Name:    "work_mem",
-					Setting: workMemMB,
-					Unit:    "MB",
-					Vartype: "integer",
-					Context: "service",
-				})
+			workMemKb := row.Setting.(pgtype.Numeric)
+			workMemKbInt, err := workMemKb.Int64Value()
+			if err != nil {
+				adapter.Logger().Error("Error converting work_mem to int64", err)
+				continue
 			}
+			// Convert KB to MB using integer division
+			workMemMB := int(workMemKbInt.Int64 / 1024)
+			configRows = append(configRows, agent.PGConfigRow{
+				Name:    "work_mem",
+				Setting: workMemMB,
+				Unit:    "MB",
+				Vartype: "integer",
+				Context: "service",
+			})
 		} else {
 			configRows = append(configRows, row)
 		}
