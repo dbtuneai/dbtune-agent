@@ -92,6 +92,12 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 	dbtuneConfig.BindEnv("AIVEN_API_TOKEN", "DBT_AIVEN_API_TOKEN")
 	dbtuneConfig.BindEnv("AIVEN_PROJECT_NAME", "DBT_AIVEN_PROJECT_NAME")
 	dbtuneConfig.BindEnv("AIVEN_SERVICE_NAME", "DBT_AIVEN_SERVICE_NAME")
+
+	// This parameter is required to activate our hack to
+	// force session restarts. We do not document this.
+	// Ideally we can remove this once we get more support from
+	// Aiven's API for `random_page_cost`, `seq_page_cost` and
+	// `effective_io_concurrency`.
 	dbtuneConfig.BindEnv("AIVEN_DATABASE_NAME", "DBT_AIVEN_DATABASE_NAME")
 
 	// These are some lower level configuration variables we do not document.
@@ -262,9 +268,21 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 		}
 		switch knobModifiability.ModifyLevel {
 		case ModifyAlterDB:
+			// NOTE: We may wish to have this, I'm not sure. In the
+			// meantime it's left here. However I believe this should
+			// really be a `panic()`, as if we hit this,
+			// no tuning will happen but this will manifest as the
+			// tuning session just stopping or hanging. To activate
+			// this hack, you need to set the `DBT_AIVEN_DATABASE_NAME` in the config file.
+			databaseName := adapter.aivenConfig.DatabaseName
+			if databaseName == "" {
+				return fmt.Errorf(
+					"the ALTER DATABASE technique for setting some parameters is not officially supported. If you unexpectedly encounter this error, please contact DBtune support",
+				)
+			}
 			query := fmt.Sprintf(
 				`ALTER DATABASE "%s" SET "%s" = %s;`,
-				adapter.aivenConfig.DatabaseName,
+				databaseName,
 				knobConfig.Name,
 				strconv.FormatFloat(knobConfig.Setting.(float64), 'f', -1, 64),
 			)
