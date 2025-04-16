@@ -52,10 +52,10 @@ func (adapter *AivenPostgreSQLAdapter) GetAivenState() *adeptersinterfaces.Aiven
 type ModifyLevel string
 
 const (
-	ModifyServiceLevel ModifyLevel = "service_level"  // Can modify via user config Aiven API
+	ModifyServiceLevel ModifyLevel = "service_level"  // Can modify via service level config Aiven API
 	ModifyUserPGConfig ModifyLevel = "user_pg_config" // Can modify via user config Aiven API, prefer over ModifyAlterDB, no restart
 	ModifyAlterDB      ModifyLevel = "alter_db"       // Can modify with ALTER DATABASE <dbname> SET <param> = <value>, requires restart
-	NoModify           ModifyLevel = "no_modify"      // Can not modify at all, usually due to 'parameter "x" cannot be changed now'
+	NoModify           ModifyLevel = "no_modify"      // Can not modify at all
 )
 
 // Ideally, we can remove the restart from most of these
@@ -64,7 +64,7 @@ var aivenModifiableParams = map[string]struct {
 	RequiresRestart bool
 }{
 	"shared_buffers_percentage":       {ModifyServiceLevel, true},
-	"work_mem":                        {ModifyServiceLevel, true},
+	"work_mem":                        {ModifyServiceLevel, false},
 	"bgwriter_lru_maxpages":           {ModifyUserPGConfig, false},
 	"bgwriter_delay":                  {ModifyUserPGConfig, false},
 	"max_parallel_workers_per_gather": {ModifyUserPGConfig, false},
