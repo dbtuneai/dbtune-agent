@@ -88,19 +88,22 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		dbtuneConfig = viper.New()
 	}
 
-	// Set default values
+	// Bind requirement variables
+	dbtuneConfig.BindEnv("AIVEN_API_TOKEN", "DBT_AIVEN_API_TOKEN")
+	dbtuneConfig.BindEnv("AIVEN_PROJECT_NAME", "DBT_AIVEN_PROJECT_NAME")
+	dbtuneConfig.BindEnv("AIVEN_SERVICE_NAME", "DBT_AIVEN_SERVICE_NAME")
+	dbtuneConfig.BindEnv("AIVEN_DATABASE_NAME", "DBT_AIVEN_DATABASE_NAME")
+
+	// These are some lower level configuration variables we do not document.
+	// They control some behaviours of the agent w.r.t guardrails and define
+	// the resolution at which Aiven will give us metrics. This resolution
+	// prevents us from spamming their API where we do not get any new information.
 	dbtuneConfig.SetDefault("guardrail_memory_available_percentage_threshold", GUARDRAIL_MEMORY_AVAILABLE_PERCENTAGE_THRESHOLD)
 	dbtuneConfig.SetDefault("guardrail_connection_usage_percentage_threshold", GUARDRAIL_CONNECTION_USAGE_PERCENTAGE_THRESHOLD)
 	dbtuneConfig.SetDefault("metric_resolution_seconds", METRIC_RESOLUTION_SECONDS)
-
-	// Bind environment variables
-	dbtuneConfig.BindEnv("api_token", "DBT_AIVEN_API_TOKEN")
-	dbtuneConfig.BindEnv("project_name", "DBT_AIVEN_PROJECT_NAME")
-	dbtuneConfig.BindEnv("service_name", "DBT_AIVEN_SERVICE_NAME")
-	dbtuneConfig.BindEnv("database_name", "DBT_AIVEN_DATABASE_NAME")
-	dbtuneConfig.BindEnv("guardrail_memory_available_percentage_threshold", "DBT_AIVEN_GUARDRAIL_MEMORY_AVAILABLE_PERCENTAGE_THRESHOLD")
-	dbtuneConfig.BindEnv("guardrail_connection_usage_percentage_threshold", "DBT_AIVEN_GUARDRAIL_CONNECTION_USAGE_PERCENTAGE_THRESHOLD")
-	dbtuneConfig.BindEnv("metric_resolution_seconds", "DBT_AIVEN_METRIC_RESOLUTION_SECONDS")
+	dbtuneConfig.BindEnv("AIVEN_GUARDRAIL_MEMORY_AVAILABLE_PERCENTAGE_THRESHOLD", "DBT_AIVEN_GUARDRAIL_MEMORY_AVAILABLE_PERCENTAGE_THRESHOLD")
+	dbtuneConfig.BindEnv("AIVEN_GUARDRAIL_CONNECTION_USAGE_PERCENTAGE_THRESHOLD", "DBT_AIVEN_GUARDRAIL_CONNECTION_USAGE_PERCENTAGE_THRESHOLD")
+	dbtuneConfig.BindEnv("AIVEN_METRIC_RESOLUTION_SECONDS", "DBT_AIVEN_METRIC_RESOLUTION_SECONDS")
 	var aivenConfig adeptersinterfaces.AivenConfig
 	err := dbtuneConfig.Unmarshal(&aivenConfig)
 	if err != nil {
