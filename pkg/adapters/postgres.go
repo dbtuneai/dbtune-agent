@@ -46,7 +46,6 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 		// If the section doesn't exist in the config file, create a new Viper instance
 		dbtuneConfig = viper.New()
 	}
-	println("I am here you bitch")
 	dbtuneConfig.BindEnv("connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
 	dbtuneConfig.BindEnv("service_name", "DBT_POSTGRESQL_SERVICE_NAME")
 
@@ -79,7 +78,6 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("I am here %f\n", tuningConfig.MemoryThreshold)
 	dbpool, err := pgPool.New(context.Background(), pgConfig.ConnectionURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PG driver: %w", err)
