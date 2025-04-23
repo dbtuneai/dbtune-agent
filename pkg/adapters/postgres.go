@@ -30,7 +30,7 @@ type PostgreSQLConfig struct {
 }
 
 type GuardrailSettings struct {
-	MemoryThreshold float64 `mapstructure:"memory_threshold" validate:"required"`
+	MemoryThreshold float64 `mapstructure:"memory_threshold" validate:"gte=1,lte=100"`
 }
 
 type DefaultPostgreSQLAdapter struct {

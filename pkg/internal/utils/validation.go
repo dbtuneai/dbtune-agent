@@ -35,7 +35,7 @@ func ValidateStruct(s interface{}) error {
 				fieldName = mapstructureTag
 			}
 
-			errMsgs = append(errMsgs, fmt.Sprintf("%s is required", fieldName))
+			errMsgs = append(errMsgs, fmt.Sprintf("%s is invalid. %v", fieldName, err.Error()))
 		}
 
 		return fmt.Errorf(strings.Join(errMsgs, ", "))
