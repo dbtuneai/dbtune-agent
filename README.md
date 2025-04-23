@@ -89,7 +89,7 @@ dbtune:
 # Optional settings
 debug: false # Enable debug logging
 
-tuning_settings:
+guardrail_settings:
   memory_threshold: 90  # percentage of total memory (90 is 90% of total memory).
 
 # Docker-specific settings (only needed for Docker deployments)

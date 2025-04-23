@@ -29,15 +29,15 @@ type PostgreSQLConfig struct {
 	ServiceName   string `mapstructure:"service_name"`
 }
 
-type TuningSettings struct {
+type GuardrailSettings struct {
 	MemoryThreshold float64 `mapstructure:"memory_threshold" validate:"required"`
 }
 
 type DefaultPostgreSQLAdapter struct {
 	agent.CommonAgent
-	pgDriver     *pgPool.Pool
-	pgConfig     PostgreSQLConfig
-	tuningConfig TuningSettings
+	pgDriver        *pgPool.Pool
+	pgConfig        PostgreSQLConfig
+	GuardrailConfig GuardrailSettings
 }
 
 func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
@@ -60,21 +60,21 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 		return nil, err
 	}
 
-	tuningSetting := viper.Sub("tuning_settings")
-	if tuningSetting == nil {
-		tuningSetting = viper.New()
+	GuardrailSetting := viper.Sub("guardrail_settings")
+	if GuardrailSetting == nil {
+		GuardrailSetting = viper.New()
 	}
 
-	tuningSetting.BindEnv("memory_threshold", "DBT_MEMORY_THRESHOLD")
+	GuardrailSetting.BindEnv("memory_threshold", "DBT_MEMORY_THRESHOLD")
 
-	var tuningConfig TuningSettings
-	tuningSetting.SetDefault("memory_threshold", 90)
-	err = tuningSetting.Unmarshal(&tuningConfig)
+	var GuardrailConfig GuardrailSettings
+	GuardrailSetting.SetDefault("memory_threshold", 90)
+	err = GuardrailSetting.Unmarshal(&GuardrailConfig)
 	if err != nil {
 		return nil, fmt.Errorf("unable to decode into struct, %v", err)
 	}
 
-	err = utils.ValidateStruct(&tuningConfig)
+	err = utils.ValidateStruct(&GuardrailConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 	c.CommonAgent = *commonAgent
 	c.pgDriver = dbpool
 	c.pgConfig = pgConfig
-	c.tuningConfig = tuningConfig
+	c.GuardrailConfig = GuardrailConfig
 
 	// Initialize collectors after the adapter is fully set up
 	c.MetricsState = agent.MetricsState{
@@ -418,7 +418,7 @@ func (adapter *DefaultPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
 	adapter.Logger().Debugf("Memory usage: %f%%", memoryUsagePercent)
 
 	// If memory usage is greater than 90% (default), trigger critical guardrail
-	if memoryUsagePercent > adapter.tuningConfig.MemoryThreshold {
+	if memoryUsagePercent > adapter.GuardrailConfig.MemoryThreshold {
 		level := agent.Critical
 		return &level
 	}

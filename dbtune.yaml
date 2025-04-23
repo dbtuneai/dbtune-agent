@@ -13,5 +13,5 @@ dbtune:
   api_key: "your-api-key"
   database_id: "your-database-id"
 
-tuning_settings:
+guardrail_settings:
   memory_threshold: 90 # percentage of total memory.
