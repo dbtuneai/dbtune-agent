@@ -12,3 +12,6 @@ dbtune:
   server_url: https://app.dbtune.com
   api_key: "your-api-key"
   database_id: "your-database-id"
+
+guardrail_settings:
+  memory_threshold: 90 # percentage of total memory.

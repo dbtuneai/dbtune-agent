@@ -486,7 +486,7 @@ func (adapter *AuroraRDSAdapter) Guardrails() *agent.GuardrailType {
 		memoryUsagePercent := (float64(memoryUsageBytes) / float64(adapter.state.Hardware.TotalMemoryBytes)) * 100
 
 		adapter.Logger().Warnf("Memory usage: %.2f%%", memoryUsagePercent)
-		if memoryUsagePercent > 90 {
+		if memoryUsagePercent > adapter.GuardrailConfig.MemoryThreshold {
 			critical := agent.Critical
 			return &critical
 		}
@@ -500,7 +500,7 @@ func (adapter *AuroraRDSAdapter) Guardrails() *agent.GuardrailType {
 		freeableMemoryPercent := (float64(freeableMemoryBytes) / float64(adapter.state.Hardware.TotalMemoryBytes)) * 100
 
 		adapter.Logger().Warnf("Freeable memory: %.2f%%", freeableMemoryPercent)
-		if freeableMemoryPercent < 10 {
+		if freeableMemoryPercent < (100 - adapter.GuardrailConfig.MemoryThreshold) {
 			critical := agent.Critical
 			return &critical
 		}
