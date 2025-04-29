@@ -161,7 +161,8 @@ type Type string
 
 const (
 	// Memory is a guardrail that is related to the memory of the database
-	Memory Type = "memory"
+	Memory         Type = "memory"
+	FreeableMemory Type = "freeable_memory"
 )
 
 type GuardrailSignal struct {

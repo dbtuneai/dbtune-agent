@@ -506,7 +506,7 @@ func (adapter *AuroraRDSAdapter) Guardrails() *agent.GuardrailSignal {
 		if freeableMemoryPercent < (100 - adapter.GuardrailConfig.MemoryThreshold) {
 			signal := &agent.GuardrailSignal{
 				Level: agent.Critical,
-				Type:  agent.Memory,
+				Type:  agent.FreeableMemory,
 			}
 			return signal
 		}
