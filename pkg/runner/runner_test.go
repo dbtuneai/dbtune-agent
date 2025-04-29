@@ -73,18 +73,16 @@ func (m *MockAgentLooper) ApplyConfig(config *agent.ProposedConfigResponse) erro
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) Guardrails() (*agent.GuardrailType, *agent.GuardrailMetric) {
+func (m *MockAgentLooper) Guardrails() *agent.GuardrailSignal {
 	args := m.Called()
-	if args.Get(0) == nil || args.Get(1) == nil {
-		return nil, nil
+	if args.Get(0) == nil {
+		return nil
 	}
-	level := args.Get(0).(agent.GuardrailType)
-	metric := args.Get(1).(agent.GuardrailMetric)
-	return &level, &metric
+	return args.Get(0).(*agent.GuardrailSignal)
 }
 
-func (m *MockAgentLooper) SendGuardrailSignal(level agent.GuardrailType, metric agent.GuardrailMetric) error {
-	args := m.Called(level, metric)
+func (m *MockAgentLooper) SendGuardrailSignal(signal agent.GuardrailSignal) error {
+	args := m.Called(signal)
 	return args.Error(0)
 }
 
@@ -165,7 +163,7 @@ func TestRunner(t *testing.T) {
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig").Return(nil, nil)
-	mockAgent.On("Guardrails").Return(nil, nil)
+	mockAgent.On("Guardrails").Return(nil)
 
 	// Run the Runner in a goroutine with a timeout
 	done := make(chan bool)
@@ -192,7 +190,7 @@ func TestRunnerWithErrors(t *testing.T) {
 	mockAgent.On("GetMetrics").Return([]utils.FlatValue{}, errors.New("metrics error"))
 	mockAgent.On("GetSystemInfo").Return([]utils.FlatValue{}, errors.New("system info error"))
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, errors.New("config error"))
-	mockAgent.On("Guardrails").Return(nil, nil)
+	mockAgent.On("Guardrails").Return(nil)
 
 	// Run the Runner in a goroutine with a timeout
 	done := make(chan bool)
@@ -252,7 +250,7 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 	mockAgent.On("SendMetrics", mock.Anything).Return(nil)
 	mockAgent.On("GetSystemInfo").Return([]utils.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything).Return(nil)
-	mockAgent.On("Guardrails").Return(nil, nil)
+	mockAgent.On("Guardrails").Return(nil)
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig").Return(nil, nil)
