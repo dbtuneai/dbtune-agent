@@ -219,7 +219,7 @@ func TestRunnerWhenGetProposedConfigReturnsAConfigThenApplyConfigShouldBeCalled(
 	mockAgent.On("SendMetrics", mock.Anything).Return(nil)
 	mockAgent.On("GetSystemInfo").Return([]utils.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything).Return(nil)
-	mockAgent.On("Guardrails").Return(nil, nil)
+	mockAgent.On("Guardrails").Return(nil)
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig").Return(mockRecommendation, nil)
