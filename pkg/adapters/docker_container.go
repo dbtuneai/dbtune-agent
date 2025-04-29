@@ -195,12 +195,12 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 	return systemInfo, nil
 }
 
-func (d *DockerContainerAdapter) Guardrails() *agent.GuardrailType {
+func (d *DockerContainerAdapter) Guardrails() (*agent.GuardrailType, *agent.GuardrailMetric) {
 	// Get container stats
 	stats, err := d.dockerClient.ContainerStats(context.Background(), d.ContainerName, false)
 	if err != nil {
 		d.Logger().Printf("guardrail: could not fetch docker stats: %v", err)
-		return nil
+		return nil, nil
 	}
 	defer stats.Body.Close()
 
@@ -209,7 +209,7 @@ func (d *DockerContainerAdapter) Guardrails() *agent.GuardrailType {
 	decoder := json.NewDecoder(stats.Body)
 	if err := decoder.Decode(&statsJSON); err != nil {
 		d.Logger().Printf("guardrail: could not decode docker stats: %v", err)
-		return nil
+		return nil, nil
 	}
 
 	// Check if there's a memory limit
@@ -220,13 +220,14 @@ func (d *DockerContainerAdapter) Guardrails() *agent.GuardrailType {
 		d.Logger().Debugf("guardrail: memory percentage is %f", memoryUsagePercent)
 		if memoryUsagePercent > d.GuardrailConfig.MemoryThreshold {
 			level := agent.GuardrailType("critical")
-			return &level
+			metric := agent.Memory
+			return &level, &metric
 		}
 	} else {
 		d.Logger().Debug("guardrail: could not fetch memory limit")
 	}
 
-	return nil
+	return nil, nil
 }
 
 func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {

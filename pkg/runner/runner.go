@@ -93,8 +93,9 @@ func Runner(adapter agent.AgentLooper) {
 		if lastCheck != nil && time.Since(*lastCheck) < 15*time.Second {
 			return nil
 		}
-		if level := adapter.Guardrails(); level != nil {
-			if err := adapter.SendGuardrailSignal(*level); err != nil {
+		level, metric := adapter.Guardrails()
+		if level != nil && metric != nil {
+			if err := adapter.SendGuardrailSignal(*level, *metric); err != nil {
 				now := time.Now()
 				lastCheck = &now
 				return err

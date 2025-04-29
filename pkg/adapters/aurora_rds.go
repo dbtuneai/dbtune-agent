@@ -458,21 +458,21 @@ func CreateAuroraRDSAdapter() (*AuroraRDSAdapter, error) {
 }
 
 // Guardrails checks memory utilization and returns Critical if thresholds are exceeded
-func (adapter *AuroraRDSAdapter) Guardrails() *agent.GuardrailType {
+func (adapter *AuroraRDSAdapter) Guardrails() (*agent.GuardrailType, *agent.GuardrailMetric) {
 	if time.Since(adapter.state.LastGuardrailCheck) < 5*time.Second {
-		return nil
+		return nil, nil
 	}
 	adapter.Logger().Info("Checking guardrails")
 
 	// Update Performance Insights status if needed
 	if err := adapter.updatePerformanceInsightsStatus(); err != nil {
 		adapter.Logger().Errorf("Failed to update Performance Insights status: %v", err)
-		return nil
+		return nil, nil
 	}
 
 	if adapter.state.Hardware == nil {
 		adapter.Logger().Warn("hardware information not available, skipping guardrails")
-		return nil
+		return nil, nil
 	}
 
 	adapter.state.LastGuardrailCheck = time.Now()
@@ -480,7 +480,7 @@ func (adapter *AuroraRDSAdapter) Guardrails() *agent.GuardrailType {
 		memoryUsageBytes, err := collectors.GetMemoryUsageFromPI(adapter)
 		if err != nil {
 			adapter.Logger().Errorf("Failed to get memory usage from PI: %v", err)
-			return nil
+			return nil, nil
 		}
 
 		memoryUsagePercent := (float64(memoryUsageBytes) / float64(adapter.state.Hardware.TotalMemoryBytes)) * 100
@@ -488,25 +488,27 @@ func (adapter *AuroraRDSAdapter) Guardrails() *agent.GuardrailType {
 		adapter.Logger().Warnf("Memory usage: %.2f%%", memoryUsagePercent)
 		if memoryUsagePercent > adapter.GuardrailConfig.MemoryThreshold {
 			critical := agent.Critical
-			return &critical
+			metric := agent.Memory
+			return &critical, &metric
 		}
 
 	} else {
 		freeableMemoryBytes, err := collectors.GetFreeableMemoryFromCW(adapter)
 		if err != nil {
 			adapter.Logger().Errorf("Failed to get memory usage from CloudWatch: %v", err)
-			return nil
+			return nil, nil
 		}
 		freeableMemoryPercent := (float64(freeableMemoryBytes) / float64(adapter.state.Hardware.TotalMemoryBytes)) * 100
 
 		adapter.Logger().Warnf("Freeable memory: %.2f%%", freeableMemoryPercent)
 		if freeableMemoryPercent < (100 - adapter.GuardrailConfig.MemoryThreshold) {
 			critical := agent.Critical
-			return &critical
+			metric := agent.Memory
+			return &critical, &metric
 		}
 	}
 
-	return nil
+	return nil, nil
 }
 
 // updatePerformanceInsightsStatus checks and updates the PI status in the state

@@ -3,11 +3,12 @@ package runner
 import (
 	"context"
 	"errors"
-	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/internal/utils"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -72,16 +73,18 @@ func (m *MockAgentLooper) ApplyConfig(config *agent.ProposedConfigResponse) erro
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) Guardrails() *agent.GuardrailType {
+func (m *MockAgentLooper) Guardrails() (*agent.GuardrailType, *agent.GuardrailMetric) {
 	args := m.Called()
-	if args.Get(0) == nil {
-		return nil
+	if args.Get(0) == nil || args.Get(1) == nil {
+		return nil, nil
 	}
-	return args.Get(0).(*agent.GuardrailType)
+	level := args.Get(0).(agent.GuardrailType)
+	metric := args.Get(1).(agent.GuardrailMetric)
+	return &level, &metric
 }
 
-func (m *MockAgentLooper) SendGuardrailSignal(level agent.GuardrailType) error {
-	args := m.Called(level)
+func (m *MockAgentLooper) SendGuardrailSignal(level agent.GuardrailType, metric agent.GuardrailMetric) error {
+	args := m.Called(level, metric)
 	return args.Error(0)
 }
 
@@ -162,7 +165,7 @@ func TestRunner(t *testing.T) {
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig").Return(nil, nil)
-	mockAgent.On("Guardrails").Return(nil)
+	mockAgent.On("Guardrails").Return(nil, nil)
 
 	// Run the Runner in a goroutine with a timeout
 	done := make(chan bool)
@@ -189,7 +192,7 @@ func TestRunnerWithErrors(t *testing.T) {
 	mockAgent.On("GetMetrics").Return([]utils.FlatValue{}, errors.New("metrics error"))
 	mockAgent.On("GetSystemInfo").Return([]utils.FlatValue{}, errors.New("system info error"))
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, errors.New("config error"))
-	mockAgent.On("Guardrails").Return(nil)
+	mockAgent.On("Guardrails").Return(nil, nil)
 
 	// Run the Runner in a goroutine with a timeout
 	done := make(chan bool)
@@ -218,7 +221,7 @@ func TestRunnerWhenGetProposedConfigReturnsAConfigThenApplyConfigShouldBeCalled(
 	mockAgent.On("SendMetrics", mock.Anything).Return(nil)
 	mockAgent.On("GetSystemInfo").Return([]utils.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything).Return(nil)
-	mockAgent.On("Guardrails").Return(nil)
+	mockAgent.On("Guardrails").Return(nil, nil)
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig").Return(mockRecommendation, nil)
@@ -249,7 +252,7 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 	mockAgent.On("SendMetrics", mock.Anything).Return(nil)
 	mockAgent.On("GetSystemInfo").Return([]utils.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything).Return(nil)
-	mockAgent.On("Guardrails").Return(nil)
+	mockAgent.On("Guardrails").Return(nil, nil)
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig").Return(nil, nil)

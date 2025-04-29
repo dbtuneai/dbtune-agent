@@ -128,10 +128,11 @@ type AgentLooper interface {
 	// An example failure could be memory above a certain threshold (90%)
 	// or a rate of disk growth that is more than usual and not acceptable.
 	// Returns nil if no guardrail is triggered, otherwise returns the type of guardrail
-	Guardrails() *GuardrailType
+	// and the metric that is monitored.
+	Guardrails() (*GuardrailType, *GuardrailMetric)
 	// SendGuardrailSignal sends a signal to the DBtune server that something is heading towards a failure.
 	// The signal will be send maximum once every 15 seconds.
-	SendGuardrailSignal(level GuardrailType) error
+	SendGuardrailSignal(level GuardrailType, metric GuardrailMetric) error
 
 	// GetLogger returns the logger for the agent
 	Logger() *log.Logger
@@ -156,8 +157,16 @@ const (
 	NonCritical GuardrailType = "non-critical"
 )
 
+type GuardrailMetric string
+
+const (
+	// Memory is a guardrail that is related to the memory of the database
+	Memory GuardrailMetric = "memory"
+)
+
 type GuardrailSignal struct {
-	GuardrailType GuardrailType `json:"level"`
+	GuardrailType GuardrailType   `json:"level"`
+	Metric        GuardrailMetric `json:"metric"`
 }
 
 type IOCounterStat struct {
@@ -542,17 +551,18 @@ func (a *CommonAgent) GetProposedConfig() (*ProposedConfigResponse, error) {
 
 }
 
-func (a *CommonAgent) Guardrails() *GuardrailType {
-	return nil
+func (a *CommonAgent) Guardrails() (*GuardrailType, *GuardrailMetric) {
+	return nil, nil
 }
 
 // SendGuardrailSignal sends a guardrail signal to the DBtune server
 // that something is heading towards a failure.
-func (a *CommonAgent) SendGuardrailSignal(level GuardrailType) error {
-	a.Logger().Warnf("🚨 Sending Guardrail, level: %s", level)
+func (a *CommonAgent) SendGuardrailSignal(level GuardrailType, metric GuardrailMetric) error {
+	a.Logger().Warnf("🚨 Sending Guardrail, level: %s, metric: %s", level, metric)
 
 	payload := GuardrailSignal{
 		GuardrailType: level,
+		Metric:        metric,
 	}
 
 	jsonData, err := json.Marshal(payload)
