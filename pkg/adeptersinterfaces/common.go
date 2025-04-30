@@ -92,12 +92,10 @@ type AivenState struct {
 }
 
 type AivenConfig struct {
-	APIToken                                    string        `mapstructure:"api_token" validate:"required"`
-	ProjectName                                 string        `mapstructure:"project_name" validate:"required"`
-	ServiceName                                 string        `mapstructure:"service_name" validate:"required"`
-	MetricResolutionSeconds                     time.Duration `mapstructure:"metric_resolution_seconds" validate:"required"`
-	GuardrailMemoryAvailablePercentageThreshold float64       `mapstructure:"guardrail_memory_available_percentage_threshold" validate:"required"`
-	GuardrailConnectionUsagePercentageThreshold float64       `mapstructure:"guardrail_connection_usage_percentage_threshold" validate:"required"`
+	APIToken                string        `mapstructure:"api_token" validate:"required"`
+	ProjectName             string        `mapstructure:"project_name" validate:"required"`
+	ServiceName             string        `mapstructure:"service_name" validate:"required"`
+	MetricResolutionSeconds time.Duration `mapstructure:"metric_resolution_seconds" validate:"required"`
 	// NOTE: If specified, we are able to use the
 	// session refresh hack. Not documented.
 	DatabaseName string `mapstructure:"database_name"`

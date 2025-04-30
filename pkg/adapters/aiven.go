@@ -24,7 +24,6 @@ import (
 
 const (
 	METRIC_RESOLUTION_SECONDS                       = 30
-	GUARDRAIL_MEMORY_AVAILABLE_PERCENTAGE_THRESHOLD = 10.0
 	GUARDRAIL_CONNECTION_USAGE_PERCENTAGE_THRESHOLD = 90.0
 	DEFAULT_SHARED_BUFFERS_PERCENTAGE               = 20.0
 	DEFAULT_PG_STAT_MONITOR_ENABLE                  = false
@@ -33,9 +32,10 @@ const (
 // AivenPostgreSQLAdapter represents an adapter for connecting to Aiven PostgreSQL services
 type AivenPostgreSQLAdapter struct {
 	DefaultPostgreSQLAdapter
-	aivenConfig adeptersinterfaces.AivenConfig
-	aivenClient aiven.Client
-	state       *adeptersinterfaces.AivenState
+	aivenConfig     adeptersinterfaces.AivenConfig
+	aivenClient     aiven.Client
+	state           *adeptersinterfaces.AivenState
+	GuardrailConfig GuardrailSettings
 }
 
 func (adapter *AivenPostgreSQLAdapter) GetAivenConfig() *adeptersinterfaces.AivenConfig {
@@ -105,11 +105,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 	// They control some behaviours of the agent w.r.t guardrails and define
 	// the resolution at which Aiven will give us metrics. This resolution
 	// prevents us from spamming their API where we do not get any new information.
-	dbtuneConfig.SetDefault("guardrail_memory_available_percentage_threshold", GUARDRAIL_MEMORY_AVAILABLE_PERCENTAGE_THRESHOLD)
-	dbtuneConfig.SetDefault("guardrail_connection_usage_percentage_threshold", GUARDRAIL_CONNECTION_USAGE_PERCENTAGE_THRESHOLD)
 	dbtuneConfig.SetDefault("metric_resolution_seconds", METRIC_RESOLUTION_SECONDS)
-	dbtuneConfig.BindEnv("AIVEN_GUARDRAIL_MEMORY_AVAILABLE_PERCENTAGE_THRESHOLD", "DBT_AIVEN_GUARDRAIL_MEMORY_AVAILABLE_PERCENTAGE_THRESHOLD")
-	dbtuneConfig.BindEnv("AIVEN_GUARDRAIL_CONNECTION_USAGE_PERCENTAGE_THRESHOLD", "DBT_AIVEN_GUARDRAIL_CONNECTION_USAGE_PERCENTAGE_THRESHOLD")
 	dbtuneConfig.BindEnv("AIVEN_METRIC_RESOLUTION_SECONDS", "DBT_AIVEN_METRIC_RESOLUTION_SECONDS")
 	var aivenConfig adeptersinterfaces.AivenConfig
 	err := dbtuneConfig.Unmarshal(&aivenConfig)
@@ -119,6 +115,25 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 
 	// Validate required configuration
 	err = utils.ValidateStruct(&aivenConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	GuardrailSetting := viper.Sub("guardrail_settings")
+	if GuardrailSetting == nil {
+		GuardrailSetting = viper.New()
+	}
+
+	GuardrailSetting.BindEnv("memory_threshold", "DBT_MEMORY_THRESHOLD")
+
+	var GuardrailConfig GuardrailSettings
+	GuardrailSetting.SetDefault("memory_threshold", 90)
+	err = GuardrailSetting.Unmarshal(&GuardrailConfig)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode into struct, %v", err)
+	}
+
+	err = utils.ValidateStruct(&GuardrailConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -162,6 +177,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		aivenConfig:              aivenConfig,
 		aivenClient:              aivenClient,
 		state:                    state,
+		GuardrailConfig:          GuardrailConfig,
 	}
 
 	// Initialize collectors
@@ -372,6 +388,7 @@ func (adapter *AivenPostgreSQLAdapter) waitForServiceState(state service.Service
 func (adapter *AivenPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
 	aivenState := adapter.GetAivenState()
 	aivenConfig := adapter.GetAivenConfig()
+	guardrailConfig := adapter.GuardrailConfig
 
 	timeSinceLastGuardrailCheck := time.Since(aivenState.LastGuardrailCheck)
 	if timeSinceLastGuardrailCheck < aivenConfig.MetricResolutionSeconds {
@@ -425,53 +442,14 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
 
 	memoryAvailablePercentage := lastMemoryAvailablePercentage
 
-	if memoryAvailablePercentage < aivenConfig.GuardrailMemoryAvailablePercentageThreshold {
+	if memoryAvailablePercentage > guardrailConfig.MemoryThreshold {
 		adapter.Logger().Warnf(
-			"Memory available: %.2f%% is under threshold %.2f%%, triggering critical guardrail",
+			"Memory usage: %.2f%% is over threshold %.2f%%, triggering critical guardrail",
 			memoryAvailablePercentage,
-			aivenConfig.GuardrailMemoryAvailablePercentageThreshold,
+			guardrailConfig.MemoryThreshold,
 		)
 		critical := agent.Critical
 		return &critical
-	} else {
-		adapter.Logger().Infof(
-			"Memory available: %.2f%% larger than threshold %.2f%%, no guardrail triggered",
-			memoryAvailablePercentage,
-			aivenConfig.GuardrailMemoryAvailablePercentageThreshold,
-		)
-	}
-
-	var err error
-	var connectionCount int
-	var maxConnections int
-	err = adapter.pgDriver.QueryRow(context.Background(),
-		`SELECT 
-			(SELECT count(*) FROM pg_stat_activity WHERE state <> 'idle') as active_connections,
-			current_setting('max_connections')::int as max_connections
-		`).Scan(&connectionCount, &maxConnections)
-
-	if err != nil {
-		adapter.Logger().Errorf("Failed to get connection metrics: %v", err)
-		return nil
-	}
-
-	// Calculate usage percentages
-	connectionUsagePercent := (float64(connectionCount) / float64(maxConnections)) * 100
-
-	if connectionUsagePercent > aivenConfig.GuardrailConnectionUsagePercentageThreshold {
-		adapter.Logger().Warnf(
-			"Connection usage: %.2f%% is over threshold %.2f%%, triggering critical guardrail",
-			connectionUsagePercent,
-			aivenConfig.GuardrailConnectionUsagePercentageThreshold,
-		)
-		critical := agent.Critical
-		return &critical
-	} else {
-		adapter.Logger().Infof(
-			"Connection usage: %.2f%% smaller than threshold %.2f%%, no guardrail triggered",
-			connectionUsagePercent,
-			aivenConfig.GuardrailConnectionUsagePercentageThreshold,
-		)
 	}
 
 	return nil
