@@ -404,7 +404,7 @@ func getDiskType(adapter *DefaultPostgreSQLAdapter) (string, error) {
 // 1. Checks if the total memory is set. If not fetches it from the system and sets it in cache.
 // 2. Fetches current memory usage
 // 3. If memory usage is greater than 90% of total memory, triggers a critical guardrail
-func (adapter *DefaultPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
+func (adapter *DefaultPostgreSQLAdapter) Guardrails() *agent.GuardrailSignal {
 	// Get memory info
 	memoryInfo, err := mem.VirtualMemory()
 	if err != nil {
@@ -419,8 +419,11 @@ func (adapter *DefaultPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
 
 	// If memory usage is greater than 90% (default), trigger critical guardrail
 	if memoryUsagePercent > adapter.GuardrailConfig.MemoryThreshold {
-		level := agent.Critical
-		return &level
+		signal := &agent.GuardrailSignal{
+			Level: agent.Critical,
+			Type:  agent.Memory,
+		}
+		return signal
 	}
 
 	return nil

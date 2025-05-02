@@ -458,7 +458,7 @@ func CreateAuroraRDSAdapter() (*AuroraRDSAdapter, error) {
 }
 
 // Guardrails checks memory utilization and returns Critical if thresholds are exceeded
-func (adapter *AuroraRDSAdapter) Guardrails() *agent.GuardrailType {
+func (adapter *AuroraRDSAdapter) Guardrails() *agent.GuardrailSignal {
 	if time.Since(adapter.state.LastGuardrailCheck) < 5*time.Second {
 		return nil
 	}
@@ -487,8 +487,11 @@ func (adapter *AuroraRDSAdapter) Guardrails() *agent.GuardrailType {
 
 		adapter.Logger().Warnf("Memory usage: %.2f%%", memoryUsagePercent)
 		if memoryUsagePercent > adapter.GuardrailConfig.MemoryThreshold {
-			critical := agent.Critical
-			return &critical
+			signal := &agent.GuardrailSignal{
+				Level: agent.Critical,
+				Type:  agent.Memory,
+			}
+			return signal
 		}
 
 	} else {
@@ -501,8 +504,11 @@ func (adapter *AuroraRDSAdapter) Guardrails() *agent.GuardrailType {
 
 		adapter.Logger().Warnf("Freeable memory: %.2f%%", freeableMemoryPercent)
 		if freeableMemoryPercent < (100 - adapter.GuardrailConfig.MemoryThreshold) {
-			critical := agent.Critical
-			return &critical
+			signal := &agent.GuardrailSignal{
+				Level: agent.Critical,
+				Type:  agent.FreeableMemory,
+			}
+			return signal
 		}
 	}
 

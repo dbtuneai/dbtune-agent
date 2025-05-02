@@ -195,7 +195,7 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 	return systemInfo, nil
 }
 
-func (d *DockerContainerAdapter) Guardrails() *agent.GuardrailType {
+func (d *DockerContainerAdapter) Guardrails() *agent.GuardrailSignal {
 	// Get container stats
 	stats, err := d.dockerClient.ContainerStats(context.Background(), d.ContainerName, false)
 	if err != nil {
@@ -219,8 +219,11 @@ func (d *DockerContainerAdapter) Guardrails() *agent.GuardrailType {
 		memoryUsagePercent := utils.CalculateDockerMemoryUsed(statsJSON.MemoryStats) / float64(memoryLimit) * 100
 		d.Logger().Debugf("guardrail: memory percentage is %f", memoryUsagePercent)
 		if memoryUsagePercent > d.GuardrailConfig.MemoryThreshold {
-			level := agent.GuardrailType("critical")
-			return &level
+			signal := &agent.GuardrailSignal{
+				Level: agent.Critical,
+				Type:  agent.Memory,
+			}
+			return signal
 		}
 	} else {
 		d.Logger().Debug("guardrail: could not fetch memory limit")

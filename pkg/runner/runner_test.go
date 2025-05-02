@@ -3,11 +3,12 @@ package runner
 import (
 	"context"
 	"errors"
-	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/internal/utils"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -72,16 +73,16 @@ func (m *MockAgentLooper) ApplyConfig(config *agent.ProposedConfigResponse) erro
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) Guardrails() *agent.GuardrailType {
+func (m *MockAgentLooper) Guardrails() *agent.GuardrailSignal {
 	args := m.Called()
 	if args.Get(0) == nil {
 		return nil
 	}
-	return args.Get(0).(*agent.GuardrailType)
+	return args.Get(0).(*agent.GuardrailSignal)
 }
 
-func (m *MockAgentLooper) SendGuardrailSignal(level agent.GuardrailType) error {
-	args := m.Called(level)
+func (m *MockAgentLooper) SendGuardrailSignal(signal agent.GuardrailSignal) error {
+	args := m.Called(signal)
 	return args.Error(0)
 }
 
