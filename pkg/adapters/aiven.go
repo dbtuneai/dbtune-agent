@@ -23,10 +23,9 @@ import (
 )
 
 const (
-	METRIC_RESOLUTION_SECONDS                       = 30
-	GUARDRAIL_CONNECTION_USAGE_PERCENTAGE_THRESHOLD = 90.0
-	DEFAULT_SHARED_BUFFERS_PERCENTAGE               = 20.0
-	DEFAULT_PG_STAT_MONITOR_ENABLE                  = false
+	METRIC_RESOLUTION_SECONDS         = 30
+	DEFAULT_SHARED_BUFFERS_PERCENTAGE = 20.0
+	DEFAULT_PG_STAT_MONITOR_ENABLE    = false
 )
 
 // AivenPostgreSQLAdapter represents an adapter for connecting to Aiven PostgreSQL services
