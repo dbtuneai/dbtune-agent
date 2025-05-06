@@ -384,7 +384,7 @@ func (adapter *AivenPostgreSQLAdapter) waitForServiceState(state service.Service
 // Guardrails implements resource usage guardrails
 // Aiven only provides 30 second resolution data for hardware info, which we
 // need for guardrails.
-func (adapter *AivenPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
+func (adapter *AivenPostgreSQLAdapter) Guardrails() *agent.GuardrailSignal {
 	aivenState := adapter.GetAivenState()
 	aivenConfig := adapter.GetAivenConfig()
 	guardrailConfig := adapter.GuardrailConfig
@@ -447,7 +447,10 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *agent.GuardrailType {
 			memoryAvailablePercentage,
 			guardrailConfig.MemoryThreshold,
 		)
-		critical := agent.Critical
+		critical := agent.GuardrailSignal{
+			Level: agent.Critical,
+			Type:  agent.Memory,
+		}
 		return &critical
 	}
 
