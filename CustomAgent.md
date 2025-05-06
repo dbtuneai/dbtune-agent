@@ -60,7 +60,7 @@ func (a *CustomAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
     // Custom system info implementation
 }
 
-func (a *CustomAdapter) Guardrails() *agent.GuardrailType {
+func (a *CustomAdapter) Guardrails() *agent.GuardrailSignal {
     // Custom guardrails implementation
 }
 ```
