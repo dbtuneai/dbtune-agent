@@ -3,6 +3,7 @@ package adeptersinterfaces
 import (
 	"time"
 
+	aiven "github.com/aiven/go-client-codegen"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -17,7 +18,6 @@ import (
 // Common interface for all PostgreSQL adapters
 // In the future if we support other databases, we can add
 // a common interface for all database adapters and attach the driver and anything shared
-
 // PostgreSQLAdapter is a struct that embeds the
 // CommonAgent and adds a PGDriver. This is used by all the PostgreSQL adapters.
 type PostgreSQLAdapter interface {
@@ -68,4 +68,42 @@ type AuroraRDSAdapter interface {
 	GetAuroraRDSConfig() *AuroraRDSConfig
 	GetEC2InstanceTypeInfo() (*ec2types.InstanceTypeInfo, error)
 	GetAuroraState() *AuroraRDSState
+}
+
+// Aiven interfaces
+type AivenHardwareState struct {
+	TotalMemoryBytes int64
+	NumCPUs          int
+	LastChecked      time.Time
+}
+
+type AivenState struct {
+	Hardware                       *AivenHardwareState
+	InitialSharedBuffersPercentage float64
+	InitialWorkMem                 int64
+	LastAppliedConfig              time.Time
+	// HACK: Used to trigger restarts on ALTER DATABASE statements
+	LastKnownPGStatMonitorEnable bool
+	// Guardrails
+	LastGuardrailCheck            time.Time
+	LastMemoryAvailableTime       time.Time
+	LastMemoryAvailablePercentage float64
+	LastHardwareInfoTime          time.Time
+}
+
+type AivenConfig struct {
+	APIToken                string        `mapstructure:"api_token" validate:"required"`
+	ProjectName             string        `mapstructure:"project_name" validate:"required"`
+	ServiceName             string        `mapstructure:"service_name" validate:"required"`
+	MetricResolutionSeconds time.Duration `mapstructure:"metric_resolution_seconds" validate:"required"`
+	// NOTE: If specified, we are able to use the
+	// session refresh hack. Not documented.
+	DatabaseName string `mapstructure:"database_name"`
+}
+
+type AivenPostgreSQLAdapter interface {
+	PostgreSQLAdapter
+	GetAivenClient() *aiven.Client
+	GetAivenConfig() *AivenConfig
+	GetAivenState() *AivenState
 }
