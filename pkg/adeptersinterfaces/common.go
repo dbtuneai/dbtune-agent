@@ -92,9 +92,9 @@ type AivenState struct {
 }
 
 type AivenConfig struct {
-	APIToken                string        `mapstructure:"api_token" validate:"required"`
-	ProjectName             string        `mapstructure:"project_name" validate:"required"`
-	ServiceName             string        `mapstructure:"service_name" validate:"required"`
+	APIToken                string        `mapstructure:"AIVEN_API_TOKEN" validate:"required"`
+	ProjectName             string        `mapstructure:"AIVEN_PROJECT_NAME" validate:"required"`
+	ServiceName             string        `mapstructure:"AIVEN_SERVICE_NAME" validate:"required"`
 	MetricResolutionSeconds time.Duration `mapstructure:"metric_resolution_seconds" validate:"required"`
 	// NOTE: If specified, we are able to use the
 	// session refresh hack. Not documented.
