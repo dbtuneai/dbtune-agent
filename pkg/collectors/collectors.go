@@ -8,34 +8,34 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/adeptersinterfaces"
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"
 )
 
-func PGStatStatements(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
-	return func(ctx context.Context, state *agent.MetricsState) error {
-		var query = `
-		/*dbtune*/
-		SELECT JSON_OBJECT_AGG(
-			CONCAT(queryid, '_', userid, '_', dbid), 
-			JSON_BUILD_OBJECT(
-				'calls',calls,
-				'total_exec_time',total_exec_time,
-				'query_id', CONCAT(queryid, '_', userid, '_', dbid)
-			)
-		)
-        AS qrt_stats
-        FROM (SELECT * FROM pg_stat_statements WHERE query NOT LIKE '%dbtune%' ORDER BY calls DESC)
-        AS f
-		`
+const PgStatStatementsQuery = `
+/*dbtune*/
+SELECT JSON_OBJECT_AGG(
+	CONCAT(queryid, '_', userid, '_', dbid), 
+	JSON_BUILD_OBJECT(
+		'calls',calls,
+		'total_exec_time',total_exec_time,
+		'query_id', CONCAT(queryid, '_', userid, '_', dbid)
+	)
+)
+AS qrt_stats
+FROM (SELECT * FROM pg_stat_statements WHERE query NOT LIKE '%dbtune%' ORDER BY calls DESC)
+AS f
+`
 
+func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
 		var jsonResult string
-		err := pgAdapter.PGDriver().QueryRow(ctx, query).Scan(&jsonResult)
+		err := pgPool.QueryRow(ctx, PgStatStatementsQuery).Scan(&jsonResult)
 		if err != nil {
 			return err
 		}
@@ -47,7 +47,6 @@ func PGStatStatements(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx c
 		}
 
 		if state.Cache.QueryRuntimeList == nil {
-			pgAdapter.Logger().Info("Cache miss, filling data")
 			state.Cache.QueryRuntimeList = queryStats
 		} else {
 			// Calculate the runtime of the queries (AQR)
@@ -75,17 +74,17 @@ func PGStatStatements(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx c
 	}
 }
 
-func ActiveConnections(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
-	return func(ctx context.Context, state *agent.MetricsState) error {
-		var query = `
-		/*dbtune*/
-		SELECT COUNT(*) AS active_connections
-		FROM pg_stat_activity
-		WHERE state = 'active'
-		`
+const ActiveConnectionsQuery = `
+/*dbtune*/
+SELECT COUNT(*) AS active_connections
+FROM pg_stat_activity
+WHERE state = 'active'
+`
 
+func ActiveConnections(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
 		var result int
-		err := pgAdapter.PGDriver().QueryRow(ctx, query).Scan(&result)
+		err := pgPool.QueryRow(ctx, ActiveConnectionsQuery).Scan(&result)
 		if err != nil {
 			return err
 		}
@@ -100,23 +99,22 @@ func ActiveConnections(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx 
 	}
 }
 
-func ArtificiallyFailingQueries(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+const SleepQuery = `
+/*dbtune*/
+SELECT pg_sleep(1000000);
+`
+
+func ArtificiallyFailingQueries(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	// Perform runtime reflection to make sure that the
 	// struct is embedding the default adapter
 	return func(ctx context.Context, state *agent.MetricsState) error {
-
-		var query = `
-		/*dbtune*/
-		SELECT pg_sleep(1000000);
-		`
-
 		var result int
-		err := pgAdapter.PGDriver().QueryRow(ctx, query).Scan(&result)
+		err := pgPool.QueryRow(ctx, SleepQuery).Scan(&result)
 		if err != nil {
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric("pg_active_connections", result, utils.Int)
+		metricEntry, err := utils.NewMetric("pg_sleep_result", result, utils.Int)
 		if err != nil {
 			return err
 		}
@@ -126,23 +124,22 @@ func ArtificiallyFailingQueries(pgAdapter adeptersinterfaces.PostgreSQLAdapter) 
 	}
 }
 
-func TransactionsPerSecond(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
-	return func(ctx context.Context, state *agent.MetricsState) error {
-		var query = `
-		/*dbtune*/
-	    SELECT SUM(xact_commit)::bigint
-		AS server_xact_commits
-		FROM pg_stat_database;
-		`
+const TransactionsPerSecondQuery = `
+/*dbtune*/
+SELECT SUM(xact_commit)::bigint
+AS server_xact_commits
+FROM pg_stat_database;
+`
 
+func TransactionsPerSecond(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
 		var serverXactCommits int64
-		err := pgAdapter.PGDriver().QueryRow(ctx, query).Scan(&serverXactCommits)
+		err := pgPool.QueryRow(ctx, TransactionsPerSecondQuery).Scan(&serverXactCommits)
 		if err != nil {
 			return err
 		}
 
 		if state.Cache.XactCommit.Count == 0 {
-			pgAdapter.Logger().Info("Cache miss, filling data")
 			state.Cache.XactCommit = agent.XactStat{
 				Count:     serverXactCommits,
 				Timestamp: time.Now(),
@@ -151,13 +148,10 @@ func TransactionsPerSecond(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(
 		}
 
 		if serverXactCommits == 0 {
-			pgAdapter.Logger().Warn("serverXactCommits is 0, will not calculate transactions per second")
 			return nil
 		}
 
 		if serverXactCommits < state.Cache.XactCommit.Count {
-			pgAdapter.Logger().Warnf("Will not calculate transactions per second, as the count is decreasing, serverXactCommits: %d, state.Cache.XactCommit.Count: %d", serverXactCommits, state.Cache.XactCommit.Count)
-			// Update the cache
 			state.Cache.XactCommit = agent.XactStat{
 				Count:     serverXactCommits,
 				Timestamp: time.Now(),
@@ -186,16 +180,16 @@ func TransactionsPerSecond(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(
 	}
 }
 
-// DatabaseSize returns the size of all the databases combined in bytes
-func DatabaseSize(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
-	return func(ctx context.Context, state *agent.MetricsState) error {
-		var query = `
-		/*dbtune*/
-		SELECT sum(pg_database_size(datname)) as total_size_bytes FROM pg_database;
-		`
+const DatabaseSizeQuery = `
+/*dbtune*/
+SELECT sum(pg_database_size(datname)) as total_size_bytes FROM pg_database;
+`
 
+// DatabaseSize returns the size of all the databases combined in bytes
+func DatabaseSize(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
 		var totalSizeBytes int64
-		err := pgAdapter.PGDriver().QueryRow(ctx, query).Scan(&totalSizeBytes)
+		err := pgPool.QueryRow(ctx, DatabaseSizeQuery).Scan(&totalSizeBytes)
 		if err != nil {
 			return err
 		}
@@ -210,17 +204,16 @@ func DatabaseSize(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx conte
 	}
 }
 
-func Autovacuum(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+// https://stackoverflow.com/a/25012622
+const AutovacuumQuery = `
+/*dbtune*/
+SELECT COUNT(*) FROM pg_stat_activity WHERE query LIKE 'autovacuum:%';
+`
+
+func Autovacuum(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-
-		// https://stackoverflow.com/a/25012622
-		var query = `
-		/*dbtune*/
-		SELECT COUNT(*) FROM pg_stat_activity WHERE query LIKE 'autovacuum:%';
-		`
-
 		var result int
-		err := pgAdapter.PGDriver().QueryRow(ctx, query).Scan(&result)
+		err := pgPool.QueryRow(ctx, AutovacuumQuery).Scan(&result)
 		if err != nil {
 			return err
 		}
@@ -235,16 +228,15 @@ func Autovacuum(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context
 	}
 }
 
-func Uptime(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+const UptimeQuery = `
+/*dbtune*/
+SELECT EXTRACT(EPOCH FROM (current_timestamp - pg_postmaster_start_time())) / 60 as uptime_minutes;
+`
+
+func Uptime(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-
-		var query = `
-		/*dbtune*/
-		SELECT EXTRACT(EPOCH FROM (current_timestamp - pg_postmaster_start_time())) / 60 as uptime_minutes;
-		`
-
 		var uptime float64
-		err := pgAdapter.PGDriver().QueryRow(ctx, query).Scan(&uptime)
+		err := pgPool.QueryRow(ctx, UptimeQuery).Scan(&uptime)
 		if err != nil {
 			return err
 		}
@@ -259,21 +251,21 @@ func Uptime(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Con
 	}
 }
 
+const BufferCacheHitRatioQuery = `
+/*dbtune*/
+SELECT ROUND(100.0 * blks_hit / (blks_hit + blks_read), 2) as cache_hit_ratio
+FROM pg_stat_database 
+WHERE datname = current_database();
+`
+
 // BufferCacheHitRatio returns the buffer cache hit ratio.
 // The current implementation gets only the hit ratio for the current database,
 // we intentionally avoid aggregating the hit ratio for all databases,
 // as this may add much noise from unused DBs.
-func BufferCacheHitRatio(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+func BufferCacheHitRatio(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-		var query = `
-		/*dbtune*/
-		SELECT ROUND(100.0 * blks_hit / (blks_hit + blks_read), 2) as cache_hit_ratio
-		FROM pg_stat_database 
-		WHERE datname = current_database();
-		`
-
 		var bufferCacheHitRatio float64
-		err := pgAdapter.PGDriver().QueryRow(ctx, query).Scan(&bufferCacheHitRatio)
+		err := pgPool.QueryRow(ctx, BufferCacheHitRatioQuery).Scan(&bufferCacheHitRatio)
 		if err != nil {
 			return err
 		}
@@ -288,51 +280,50 @@ func BufferCacheHitRatio(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ct
 	}
 }
 
-func WaitEvents(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+const WaitEventsQuery = `
+/*dbtune*/
+WITH RECURSIVE
+current_waits AS (
+	SELECT 
+		wait_event_type,
+		count(*) as count
+	FROM pg_stat_activity
+	WHERE wait_event_type IS NOT NULL
+	GROUP BY wait_event_type
+),
+all_wait_types AS (
+	VALUES 
+		('Activity'),
+		('BufferPin'),
+		('Client'),
+		('Extension'),
+		('IO'),
+		('IPC'),
+		('Lock'),
+		('LWLock'),
+		('Timeout')
+),
+wait_counts AS (
+	SELECT 
+		awt.column1 as wait_event_type,
+		COALESCE(cw.count, 0) as current_count
+	FROM all_wait_types awt
+	LEFT JOIN current_waits cw ON awt.column1 = cw.wait_event_type
+)
+SELECT 
+	wait_event_type,
+	current_count
+FROM wait_counts
+UNION ALL
+SELECT 
+	'TOTAL' as wait_event_type,
+	sum(current_count) as current_count
+FROM wait_counts;
+`
+
+func WaitEvents(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-
-		var query = `
-		/*dbtune*/
-		WITH RECURSIVE
-		current_waits AS (
-			SELECT 
-				wait_event_type,
-				count(*) as count
-			FROM pg_stat_activity
-			WHERE wait_event_type IS NOT NULL
-			GROUP BY wait_event_type
-		),
-		all_wait_types AS (
-			VALUES 
-				('Activity'),
-				('BufferPin'),
-				('Client'),
-				('Extension'),
-				('IO'),
-				('IPC'),
-				('Lock'),
-				('LWLock'),
-				('Timeout')
-		),
-		wait_counts AS (
-			SELECT 
-				awt.column1 as wait_event_type,
-				COALESCE(cw.count, 0) as current_count
-			FROM all_wait_types awt
-			LEFT JOIN current_waits cw ON awt.column1 = cw.wait_event_type
-		)
-		SELECT 
-			wait_event_type,
-			current_count
-		FROM wait_counts
-		UNION ALL
-		SELECT 
-			'TOTAL' as wait_event_type,
-			sum(current_count) as current_count
-		FROM wait_counts;
-		`
-
-		rows, err := pgAdapter.PGDriver().Query(ctx, query)
+		rows, err := pgPool.Query(ctx, WaitEventsQuery)
 		if err != nil {
 			return err
 		}
@@ -343,7 +334,7 @@ func WaitEvents(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context
 			var count int
 			err = rows.Scan(&event, &count)
 			if err != nil {
-				pgAdapter.Logger().Debug("Error scanning row", err)
+				return err
 			}
 
 			metricEntry, _ := utils.NewMetric(fmt.Sprintf("pg_wait_events_%s", strings.ToLower(event)), count, utils.Int)
@@ -354,9 +345,8 @@ func WaitEvents(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context
 	}
 }
 
-func HardwareInfoOnPremise(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+func HardwareInfoOnPremise() func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-
 		cpuPercentage, _ := cpu.Percent(time.Millisecond*100, false) // Report the average CPU usage over 100ms
 		cpuModelMetric, _ := utils.NewMetric("node_cpu_usage", cpuPercentage[0], utils.Float)
 		state.AddMetric(cpuModelMetric)
@@ -398,11 +388,16 @@ func HardwareInfoOnPremise(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(
 }
 
 // PGVersion returns the version of the PostgreSQL instance
+const PGVersionQuery = `
+/*dbtune*/
+SELECT version();
+`
+
 // Example: 16.4
-func PGVersion(pgAdapter adeptersinterfaces.PostgreSQLAdapter) (string, error) {
+func PGVersion(pgPool *pgxpool.Pool) (string, error) {
 	var pgVersion string
 	versionRegex := regexp.MustCompile(`PostgreSQL (\d+\.\d+)`)
-	err := pgAdapter.PGDriver().QueryRow(context.Background(), "SELECT version();").Scan(&pgVersion)
+	err := pgPool.QueryRow(context.Background(), PGVersionQuery).Scan(&pgVersion)
 	if err != nil {
 		return "", err
 	}
@@ -411,11 +406,14 @@ func PGVersion(pgAdapter adeptersinterfaces.PostgreSQLAdapter) (string, error) {
 	return matches[1], nil
 }
 
-func MaxConnections(pgAdapter adeptersinterfaces.PostgreSQLAdapter) (int, error) {
+const MaxConnectionsQuery = `
+/*dbtune*/
+SELECT setting::integer FROM pg_settings WHERE  name = 'max_connections';
+`
+
+func MaxConnections(pgPool *pgxpool.Pool) (int, error) {
 	var maxConnections int
-	err := pgAdapter.PGDriver().
-		QueryRow(context.Background(), "SELECT setting::integer FROM pg_settings WHERE  name = 'max_connections';").
-		Scan(&maxConnections)
+	err := pgPool.QueryRow(context.Background(), MaxConnectionsQuery).Scan(&maxConnections)
 	if err != nil {
 		return 0, fmt.Errorf("error getting max connections: %v", err)
 	}
