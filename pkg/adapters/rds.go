@@ -6,9 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	adapters "github.com/dbtuneai/agent/pkg/adeptersinterfaces"
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/collectors"
@@ -16,7 +13,6 @@ import (
 	"github.com/dbtuneai/agent/pkg/rdsutil"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/jackc/pgx/v5/pgxpool"
-	pgPool "github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/viper"
 )
 
@@ -28,18 +24,96 @@ type State struct {
 
 type RDSAdapter struct {
 	DefaultPostgreSQLAdapter
-	Config     adapters.RDSConfig
-	DBInfo     rdsutil.RDSDBInfo
-	State      State
-	AWSClients rdsutil.AWSClients
+	Config          adapters.RDSConfig
+	GuardrailConfig GuardrailSettings
+	DBInfo          rdsutil.DBInfo
+	State           State
+	AWSClients      rdsutil.AWSClients
 }
 
-func (adapter *RDSAdapter) PGDriver() *pgPool.Pool {
+func CreateRDSAdapter(rdsConfig *adapters.RDSConfig) (*RDSAdapter, error) {
+	var err error
+	if rdsConfig == nil {
+		rdsConfig, err = BindConfigRDS("rds")
+		if err != nil {
+			return nil, fmt.Errorf("failed to bind RDS config: %w", err)
+		}
+	} else {
+		err := utils.ValidateStruct(rdsConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to validate RDS config: %w", err)
+		}
+	}
+
+	GuardrailSetting := viper.Sub("guardrail_settings")
+	if GuardrailSetting == nil {
+		GuardrailSetting = viper.New()
+	}
+
+	GuardrailSetting.BindEnv("memory_threshold", "DBT_MEMORY_THRESHOLD")
+
+	var GuardrailConfig GuardrailSettings
+	GuardrailSetting.SetDefault("memory_threshold", 90)
+	err = GuardrailSetting.Unmarshal(&GuardrailConfig)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode into struct, %v", err)
+	}
+
+	err = utils.ValidateStruct(&GuardrailConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx := context.Background()
+
+	// Create AWS config
+	cfg, err := rdsutil.FetchAWSConfig(
+		rdsConfig.AWSAccessKey,
+		rdsConfig.AWSSecretAccessKey,
+		rdsConfig.AWSRegion,
+		ctx,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to load AWS config: %v", err)
+	}
+
+	defaultAdapter, err := CreateDefaultPostgreSQLAdapter()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create base PostgreSQL adapter: %w", err)
+	}
+
+	clients := rdsutil.NewAWSClients(cfg)
+
+	// Check if RDS client can fetch the database instance correctly and the tokens work
+	dbInfo, err := rdsutil.FetchDBInfo(rdsConfig.RDSDatabaseIdentifier, &clients, ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe database instance: %w", err)
+	}
+
+	c := &RDSAdapter{
+		DefaultPostgreSQLAdapter: *defaultAdapter,
+		Config:                   *rdsConfig,
+		DBInfo:                   dbInfo,
+		AWSClients:               clients,
+		GuardrailConfig:          GuardrailConfig,
+	}
+
+	// Initialize collectors with RDSCollectors instead of DefaultCollectors
+	c.MetricsState = agent.MetricsState{
+		Collectors: c.Collectors(),
+		Cache:      agent.Caches{},
+		Mutex:      &sync.Mutex{},
+	}
+
+	return c, nil
+}
+
+func (adapter *RDSAdapter) PGDriver() *pgxpool.Pool {
 	return adapter.pgDriver
 }
 
 func (adapter *RDSAdapter) APIClient() *retryablehttp.Client {
-	return adapter.APIClient()
+	return adapter.DefaultPostgreSQLAdapter.APIClient()
 }
 
 func (adapter *RDSAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
@@ -125,7 +199,7 @@ func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigRespo
 	return nil
 }
 
-func RDSCollectors(adapter *RDSAdapter) []agent.MetricCollector {
+func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
 	pool := adapter.PGDriver()
 
 	return []agent.MetricCollector{
@@ -182,9 +256,91 @@ func RDSCollectors(adapter *RDSAdapter) []agent.MetricCollector {
 	}
 }
 
-func CreateRDSAdapter() (*RDSAdapter, error) {
-	// Create a new Viper instance for RDS configuration if the sub-config doesn't exist
-	dbtuneConfig := viper.Sub("rds")
+// Guardrails checks memory utilization and returns Critical if thresholds are exceeded
+func (adapter *RDSAdapter) Guardrails() *agent.GuardrailSignal {
+	if time.Since(adapter.State.LastGuardrailCheck) < 5*time.Second {
+		return nil
+	}
+	adapter.Logger().Info("Checking guardrails")
+	adapter.State.LastGuardrailCheck = time.Now()
+
+	totalMemoryBytes, err := adapter.DBInfo.TotalMemoryBytes()
+	if err != nil {
+		adapter.Logger().Errorf("Failed to get total memory bytes: %v", err)
+		return nil
+	}
+
+	if adapter.DBInfo.PerformanceInsightsEnabled() {
+		resourceID, err := adapter.DBInfo.ResourceID()
+		if err != nil {
+			adapter.Logger().Errorf("Failed to get resource ID: %v", err)
+			return nil
+		}
+
+		memoryUsageBytes, err := rdsutil.GetMemoryUsageFromPI(
+			&adapter.AWSClients,
+			resourceID,
+			adapter.Logger(),
+		)
+		if err != nil {
+			adapter.Logger().Errorf("Failed to get memory usage from PI: %v", err)
+			return nil
+		}
+
+		memoryUsagePercent := (float64(memoryUsageBytes) / float64(totalMemoryBytes)) * 100
+
+		adapter.Logger().Warnf("Memory usage: %.2f%%", memoryUsagePercent)
+		if memoryUsagePercent > adapter.GuardrailConfig.MemoryThreshold {
+			return &agent.GuardrailSignal{
+				Level: agent.Critical,
+				Type:  agent.Memory,
+			}
+		}
+	} else {
+		freeableMemoryBytes, err := rdsutil.GetFreeableMemoryFromCW(
+			adapter.Config.RDSDatabaseIdentifier,
+			&adapter.AWSClients,
+		)
+		if err != nil {
+			adapter.Logger().Errorf("Failed to get memory usage from CloudWatch: %v", err)
+			return nil
+		}
+		freeableMemoryPercent := (float64(freeableMemoryBytes) / float64(totalMemoryBytes)) * 100
+
+		adapter.Logger().Warnf("Freeable memory: %.2f%%", freeableMemoryPercent)
+		if freeableMemoryPercent < (100 - adapter.GuardrailConfig.MemoryThreshold) {
+			return &agent.GuardrailSignal{
+				Level: agent.Critical,
+				Type:  agent.FreeableMemory,
+			}
+		}
+	}
+
+	return nil
+}
+
+// TODO: Could move out into it's own file
+func waitPostgresReady(pgPool *pgxpool.Pool, ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Minute)
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for PostgreSQL to come back online")
+		case <-time.After(1 * time.Second):
+			// Try to execute a simple query
+			_, err := pgPool.Exec(ctx, "SELECT 1")
+			if err == nil {
+				return nil
+			}
+		}
+	}
+}
+
+func BindConfigRDS(configKey string) (*adapters.RDSConfig, error) {
+	// Create a new Viper instance for Aurora configuration if the sub-config doesn't exist
+	dbtuneConfig := viper.Sub(configKey)
 	if dbtuneConfig == nil {
 		// If the section doesn't exist in the config file, create a new Viper instance
 		dbtuneConfig = viper.New()
@@ -225,144 +381,5 @@ func CreateRDSAdapter() (*RDSAdapter, error) {
 		return nil, fmt.Errorf("RDS_PARAMETER_GROUP_NAME is required")
 	}
 
-	// Create AWS config
-	var cfg aws.Config
-
-	if rdsConfig.AWSAccessKey != "" && rdsConfig.AWSSecretAccessKey != "" {
-		// Use static credentials if provided
-		cfg, err = config.LoadDefaultConfig(context.Background(),
-			config.WithRegion(rdsConfig.AWSRegion),
-			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-				rdsConfig.AWSAccessKey,
-				rdsConfig.AWSSecretAccessKey,
-				"",
-			)),
-		)
-	} else {
-		// Use default credential chain
-		// Includes by default WebIdentityToken:
-		// https://github.com/aws/aws-sdk-go-v2/blob/main/config/resolve_credentials.go#L119
-		cfg, err = config.LoadDefaultConfig(context.Background(),
-			config.WithRegion(rdsConfig.AWSRegion),
-		)
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("unable to load AWS config: %v", err)
-	}
-
-	defaultAdapter, err := CreateDefaultPostgreSQLAdapter()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create base PostgreSQL adapter: %w", err)
-	}
-
-	clients := rdsutil.NewAWSClients(cfg)
-
-	// Check if RDS client can fetch the database instance correctly and the tokens work
-	dbInfo, err := rdsutil.FetchDBInfo(
-		rdsConfig.RDSDatabaseIdentifier,
-		&clients,
-		context.Background(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to describe database instance: %w", err)
-	}
-
-	c := &RDSAdapter{
-		DefaultPostgreSQLAdapter: *defaultAdapter,
-		Config:                   rdsConfig,
-		DBInfo:                   dbInfo,
-		AWSClients:               clients,
-	}
-
-	// Initialize collectors with RDSCollectors instead of DefaultCollectors
-	c.MetricsState = agent.MetricsState{
-		Collectors: RDSCollectors(c),
-		Cache:      agent.Caches{},
-		Mutex:      &sync.Mutex{},
-	}
-
-	return c, nil
-}
-
-// Guardrails checks memory utilization and returns Critical if thresholds are exceeded
-func (adapter *RDSAdapter) Guardrails() *agent.GuardrailSignal {
-	if time.Since(adapter.State.LastGuardrailCheck) < 5*time.Second {
-		return nil
-	}
-	adapter.Logger().Info("Checking guardrails")
-	adapter.State.LastGuardrailCheck = time.Now()
-
-	totalMemoryBytes, err := adapter.DBInfo.TotalMemoryBytes()
-	if err != nil {
-		adapter.Logger().Errorf("Failed to get total memory bytes: %v", err)
-		return nil
-	}
-
-	if adapter.DBInfo.PerformanceInsightsEnabled() {
-		resourceID, err := adapter.DBInfo.ResourceID()
-		if err != nil {
-			adapter.Logger().Errorf("Failed to get resource ID: %v", err)
-			return nil
-		}
-
-		memoryUsageBytes, err := rdsutil.GetMemoryUsageFromPI(
-			&adapter.AWSClients,
-			resourceID,
-			adapter.Logger(),
-		)
-		if err != nil {
-			adapter.Logger().Errorf("Failed to get memory usage from PI: %v", err)
-			return nil
-		}
-
-		memoryUsagePercent := (float64(memoryUsageBytes) / float64(totalMemoryBytes)) * 100
-
-		adapter.Logger().Warnf("Memory usage: %.2f%%", memoryUsagePercent)
-		if memoryUsagePercent > 90 {
-			return &agent.GuardrailSignal{
-				Level: agent.Critical,
-				Type:  agent.Memory,
-			}
-		}
-	} else {
-		freeableMemoryBytes, err := rdsutil.GetFreeableMemoryFromCW(
-			adapter.Config.RDSDatabaseIdentifier,
-			&adapter.AWSClients,
-		)
-		if err != nil {
-			adapter.Logger().Errorf("Failed to get memory usage from CloudWatch: %v", err)
-			return nil
-		}
-		freeableMemoryPercent := (float64(freeableMemoryBytes) / float64(totalMemoryBytes)) * 100
-
-		adapter.Logger().Warnf("Freeable memory: %.2f%%", freeableMemoryPercent)
-		if freeableMemoryPercent < 10 {
-			return &agent.GuardrailSignal{
-				Level: agent.Critical,
-				Type:  agent.FreeableMemory,
-			}
-		}
-	}
-
-	return nil
-}
-
-// TODO: Could move out into it's own file
-func waitPostgresReady(pgPool *pgxpool.Pool, ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Minute)
-	defer cancel()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for PostgreSQL to come back online")
-		case <-time.After(1 * time.Second):
-			// Try to execute a simple query
-			_, err := pgPool.Exec(ctx, "SELECT 1")
-			if err == nil {
-				return nil
-			}
-		}
-	}
+	return &rdsConfig, nil
 }

@@ -71,46 +71,47 @@ func (d *DockerContainerAdapter) GetDockerClient() *client.Client {
 // DockerCollectors returns the list of collectors for Docker, replacing system metrics
 // with Docker-specific ones while keeping database-specific collectors
 func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
+	pgDriver := adapter.PGDriver()
 	return []agent.MetricCollector{
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  collectors.PGStatStatements(adapter),
+			Collector:  collectors.PGStatStatements(pgDriver),
 		},
 		{
 			Key:        "database_transactions_per_second",
 			MetricType: "int",
-			Collector:  collectors.TransactionsPerSecond(adapter),
+			Collector:  collectors.TransactionsPerSecond(pgDriver),
 		},
 		{
 			Key:        "database_active_connections",
 			MetricType: "int",
-			Collector:  collectors.ActiveConnections(adapter),
+			Collector:  collectors.ActiveConnections(pgDriver),
 		},
 		{
 			Key:        "system_db_size",
 			MetricType: "int",
-			Collector:  collectors.DatabaseSize(adapter),
+			Collector:  collectors.DatabaseSize(pgDriver),
 		},
 		{
 			Key:        "database_autovacuum_count",
 			MetricType: "int",
-			Collector:  collectors.Autovacuum(adapter),
+			Collector:  collectors.Autovacuum(pgDriver),
 		},
 		{
 			Key:        "server_uptime",
 			MetricType: "float",
-			Collector:  collectors.Uptime(adapter),
+			Collector:  collectors.Uptime(pgDriver),
 		},
 		{
 			Key:        "database_cache_hit_ratio",
 			MetricType: "float",
-			Collector:  collectors.BufferCacheHitRatio(adapter),
+			Collector:  collectors.BufferCacheHitRatio(pgDriver),
 		},
 		{
 			Key:        "database_wait_events",
 			MetricType: "int",
-			Collector:  collectors.WaitEvents(adapter),
+			Collector:  collectors.WaitEvents(pgDriver),
 		},
 		{
 			Key:        "hardware",
@@ -132,13 +133,14 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 	var systemInfo []utils.FlatValue
 
 	// Get PostgreSQL version using the existing collector
-	pgVersion, err := collectors.PGVersion(d)
+	pgDriver := d.PGDriver()
+	pgVersion, err := collectors.PGVersion(pgDriver)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get max connections from PostgreSQL
-	maxConnections, err := collectors.MaxConnections(d)
+	maxConnections, err := collectors.MaxConnections(pgDriver)
 	if err != nil {
 		return nil, err
 	}

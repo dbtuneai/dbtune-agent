@@ -229,12 +229,13 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error
 	}
 
 	// Get PostgreSQL version and max connections from database
-	pgVersion, err := collectors.PGVersion(adapter)
+	pgDriver := adapter.PGDriver()
+	pgVersion, err := collectors.PGVersion(pgDriver)
 	if err != nil {
 		return nil, err
 	}
 
-	maxConnections, err := collectors.MaxConnections(adapter)
+	maxConnections, err := collectors.MaxConnections(pgDriver)
 	if err != nil {
 		return nil, err
 	}
@@ -459,46 +460,47 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *agent.GuardrailSignal {
 
 // AivenCollectors returns the metrics collectors for Aiven PostgreSQL
 func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
+	pgDriver := adapter.PGDriver()
 	return []agent.MetricCollector{
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  collectors.PGStatStatements(adapter),
+			Collector:  collectors.PGStatStatements(pgDriver),
 		},
 		{
 			Key:        "database_transactions_per_second",
 			MetricType: "int",
-			Collector:  collectors.TransactionsPerSecond(adapter),
+			Collector:  collectors.TransactionsPerSecond(pgDriver),
 		},
 		{
 			Key:        "database_active_connections",
 			MetricType: "int",
-			Collector:  collectors.ActiveConnections(adapter),
+			Collector:  collectors.ActiveConnections(pgDriver),
 		},
 		{
 			Key:        "system_db_size",
 			MetricType: "int",
-			Collector:  collectors.DatabaseSize(adapter), // Use standard collector for consistency
+			Collector:  collectors.DatabaseSize(pgDriver), // Use standard collector for consistency
 		},
 		{
 			Key:        "database_autovacuum_count",
 			MetricType: "int",
-			Collector:  collectors.Autovacuum(adapter),
+			Collector:  collectors.Autovacuum(pgDriver),
 		},
 		{
 			Key:        "server_uptime",
 			MetricType: "float",
-			Collector:  collectors.Uptime(adapter),
+			Collector:  collectors.Uptime(pgDriver),
 		},
 		{
 			Key:        "database_cache_hit_ratio",
 			MetricType: "float",
-			Collector:  collectors.BufferCacheHitRatio(adapter),
+			Collector:  collectors.BufferCacheHitRatio(pgDriver),
 		},
 		{
 			Key:        "database_wait_events",
 			MetricType: "int",
-			Collector:  collectors.WaitEvents(adapter),
+			Collector:  collectors.WaitEvents(pgDriver),
 		},
 		{
 			Key:        "hardware",

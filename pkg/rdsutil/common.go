@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -41,7 +43,7 @@ func NewAWSClients(cfg aws.Config) AWSClients {
 	}
 }
 
-type RDSDBInfo struct {
+type DBInfo struct {
 	DBInstance          rdsTypes.DBInstance
 	EC2InstanceType     ec2types.InstanceType
 	EC2InstanceTypeInfo ec2types.InstanceTypeInfo
@@ -51,27 +53,27 @@ func FetchDBInfo(
 	databaseIdentifier string,
 	clients *AWSClients,
 	ctx context.Context,
-) (RDSDBInfo, error) {
+) (DBInfo, error) {
 	rdsInstanceInfo, err := fetchRDSDBInstance(databaseIdentifier, clients, ctx)
 	if err != nil {
-		return RDSDBInfo{}, fmt.Errorf("failed to fetch RDS instance info: %v", err)
+		return DBInfo{}, fmt.Errorf("failed to fetch RDS instance info: %v", err)
 	}
 
 	instanceClass := rdsInstanceInfo.DBInstanceClass
 	instanceType := strings.TrimPrefix(*instanceClass, "db.")
 	ec2InstanceTypeInfo, err := fetchEC2InstanceTypeInfo(ec2types.InstanceType(instanceType), clients, ctx)
 	if err != nil {
-		return RDSDBInfo{}, fmt.Errorf("failed to fetch EC2 instance info: %v", err)
+		return DBInfo{}, fmt.Errorf("failed to fetch EC2 instance info: %v", err)
 	}
 
-	return RDSDBInfo{
+	return DBInfo{
 		DBInstance:          *rdsInstanceInfo,
 		EC2InstanceType:     ec2types.InstanceType(instanceType),
 		EC2InstanceTypeInfo: *ec2InstanceTypeInfo,
 	}, nil
 }
 
-func (info *RDSDBInfo) VCPUs() (uint32, error) {
+func (info *DBInfo) VCPUs() (uint32, error) {
 	vcpuInfo := info.EC2InstanceTypeInfo.VCpuInfo
 	if vcpuInfo == nil {
 		return 0, fmt.Errorf("VCPU information not available")
@@ -86,7 +88,7 @@ func (info *RDSDBInfo) VCPUs() (uint32, error) {
 	return uint32(*vcpuCount), nil
 }
 
-func (info *RDSDBInfo) TotalMemoryBytes() (uint64, error) {
+func (info *DBInfo) TotalMemoryBytes() (uint64, error) {
 	memoryInfo := info.EC2InstanceTypeInfo.MemoryInfo
 	if memoryInfo == nil {
 		return 0, fmt.Errorf("memory information not available")
@@ -101,18 +103,18 @@ func (info *RDSDBInfo) TotalMemoryBytes() (uint64, error) {
 	return uint64(*memorySize) * 1024 * 1024, nil
 }
 
-func (info *RDSDBInfo) PerformanceInsightsEnabled() bool {
+func (info *DBInfo) PerformanceInsightsEnabled() bool {
 	return info.DBInstance.PerformanceInsightsEnabled != nil && *info.DBInstance.PerformanceInsightsEnabled
 }
 
-func (info *RDSDBInfo) ResourceID() (string, error) {
+func (info *DBInfo) ResourceID() (string, error) {
 	if info.DBInstance.DbiResourceId == nil {
 		return "", fmt.Errorf("DBI resource ID (ARN) not available")
 	}
 	return *info.DBInstance.DbiResourceId, nil
 }
 
-func (info *RDSDBInfo) ParameterGroupStatus(name string) *rdsTypes.DBParameterGroupStatus {
+func (info *DBInfo) ParameterGroupStatus(name string) *rdsTypes.DBParameterGroupStatus {
 	for _, pg := range info.DBInstance.DBParameterGroups {
 		if aws.ToString(pg.DBParameterGroupName) == name {
 			return &pg
@@ -121,7 +123,7 @@ func (info *RDSDBInfo) ParameterGroupStatus(name string) *rdsTypes.DBParameterGr
 	return nil
 }
 
-func (info *RDSDBInfo) TryIntoFlatValuesSlice() ([]utils.FlatValue, error) {
+func (info *DBInfo) TryIntoFlatValuesSlice() ([]utils.FlatValue, error) {
 	metrics := []utils.FlatValue{}
 
 	totalMemoryBytes, err := info.TotalMemoryBytes()
@@ -152,7 +154,7 @@ func (info *RDSDBInfo) TryIntoFlatValuesSlice() ([]utils.FlatValue, error) {
 
 func ApplyConfig(
 	proposedConfig *agent.ProposedConfigResponse,
-	rdsInfo *RDSDBInfo,
+	rdsInfo *DBInfo,
 	clients *AWSClients,
 	parameterGroupName string,
 	databaseIdentifier string,
@@ -545,4 +547,24 @@ func getLastDatapoint[T RDSDatapointConstraint](datapoints []T) (*T, error) {
 	}
 
 	return &datapoints[latestIdx], nil
+}
+
+func FetchAWSConfig(
+	AWSAccessKey string,
+	AWSSecretAccessKey string,
+	AWSRegion string,
+	ctx context.Context,
+) (aws.Config, error) {
+	region := config.WithRegion(AWSRegion)
+	if AWSAccessKey != "" && AWSSecretAccessKey != "" {
+		// Use static credentials if provided
+		creds := credentials.NewStaticCredentialsProvider(AWSAccessKey, AWSSecretAccessKey, "")
+		provider := config.WithCredentialsProvider(creds)
+		return config.LoadDefaultConfig(ctx, region, provider)
+	} else {
+		// Use default credential chain
+		// Includes by default WebIdentityToken:
+		// https://github.com/aws/aws-sdk-go-v2/blob/main/config/resolve_credentials.go#L119
+		return config.LoadDefaultConfig(ctx, region)
+	}
 }

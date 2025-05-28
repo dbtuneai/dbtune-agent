@@ -107,51 +107,52 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 	// TODO: Find a better way to re-use collectors between adapters, current method does
 	// not work nice, as the RemoveKey method is available on MetricsState,
 	// which is inconvenient to use
+	pgDriver := pgAdapter.PGDriver()
 	return []agent.MetricCollector{
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  collectors.PGStatStatements(pgAdapter),
+			Collector:  collectors.PGStatStatements(pgDriver),
 		},
 		{
 			Key:        "database_transactions_per_second",
 			MetricType: "int",
-			Collector:  collectors.TransactionsPerSecond(pgAdapter),
+			Collector:  collectors.TransactionsPerSecond(pgDriver),
 		},
 		{
 			Key:        "database_active_connections",
 			MetricType: "int",
-			Collector:  collectors.ActiveConnections(pgAdapter),
+			Collector:  collectors.ActiveConnections(pgDriver),
 		},
 		{
 			Key:        "system_db_size",
 			MetricType: "int",
-			Collector:  collectors.DatabaseSize(pgAdapter),
+			Collector:  collectors.DatabaseSize(pgDriver),
 		},
 		{
 			Key:        "database_autovacuum_count",
 			MetricType: "int",
-			Collector:  collectors.Autovacuum(pgAdapter),
+			Collector:  collectors.Autovacuum(pgDriver),
 		},
 		{
 			Key:        "server_uptime",
 			MetricType: "float",
-			Collector:  collectors.Uptime(pgAdapter),
+			Collector:  collectors.Uptime(pgDriver),
 		},
 		{
 			Key:        "database_cache_hit_ratio",
 			MetricType: "float",
-			Collector:  collectors.BufferCacheHitRatio(pgAdapter),
+			Collector:  collectors.BufferCacheHitRatio(pgDriver),
 		},
 		{
 			Key:        "database_wait_events",
 			MetricType: "int",
-			Collector:  collectors.WaitEvents(pgAdapter),
+			Collector:  collectors.WaitEvents(pgDriver),
 		},
 		{
 			Key:        "hardware",
 			MetricType: "int",
-			Collector:  collectors.HardwareInfoOnPremise(pgAdapter),
+			Collector:  collectors.HardwareInfoOnPremise(),
 		},
 		//{
 		//	Key:        "failing_slow_queries",
@@ -166,7 +167,7 @@ func (adapter *DefaultPostgreSQLAdapter) PGDriver() *pgPool.Pool {
 }
 
 func (adapter *DefaultPostgreSQLAdapter) APIClient() *retryablehttp.Client {
-	return adapter.APIClient()
+	return adapter.CommonAgent.APIClient
 }
 
 func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
@@ -174,12 +175,13 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 
 	var systemInfo []utils.FlatValue
 
-	pgVersion, err := collectors.PGVersion(adapter)
+	pgDriver := adapter.PGDriver()
+	pgVersion, err := collectors.PGVersion(pgDriver)
 	if err != nil {
 		return nil, err
 	}
 
-	maxConnections, err := collectors.MaxConnections(adapter)
+	maxConnections, err := collectors.MaxConnections(pgDriver)
 	if err != nil {
 		return nil, err
 	}

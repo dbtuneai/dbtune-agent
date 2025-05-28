@@ -12,7 +12,7 @@ import (
 // RDSHardwareInfo collects hardware metrics from RDS instance using the Performance Insights API or the CloudWatch API
 func RDSHardwareInfo(
 	databaseIdentifier string,
-	rdsDBInfo *rdsutil.RDSDBInfo,
+	rdsDBInfo *rdsutil.DBInfo,
 	clients *rdsutil.AWSClients,
 	logger *logrus.Logger,
 ) func(ctx context.Context, state *agent.MetricsState) error {
