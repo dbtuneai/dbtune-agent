@@ -411,8 +411,8 @@ const MaxConnectionsQuery = `
 SELECT setting::integer FROM pg_settings WHERE  name = 'max_connections';
 `
 
-func MaxConnections(pgPool *pgxpool.Pool) (int, error) {
-	var maxConnections int
+func MaxConnections(pgPool *pgxpool.Pool) (uint32, error) {
+	var maxConnections uint32
 	err := pgPool.QueryRow(context.Background(), MaxConnectionsQuery).Scan(&maxConnections)
 	if err != nil {
 		return 0, fmt.Errorf("error getting max connections: %v", err)

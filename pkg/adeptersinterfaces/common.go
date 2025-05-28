@@ -107,3 +107,11 @@ type AivenPostgreSQLAdapter interface {
 	GetAivenConfig() *AivenConfig
 	GetAivenState() *AivenState
 }
+
+type RDSConfig struct {
+	AWSAccessKey          string `mapstructure:"AWS_ACCESS_KEY_ID"`
+	AWSSecretAccessKey    string `mapstructure:"AWS_SECRET_ACCESS_KEY"`
+	AWSRegion             string `mapstructure:"AWS_REGION" validate:"required"`
+	RDSDatabaseIdentifier string `mapstructure:"RDS_DATABASE_IDENTIFIER" validate:"required"`
+	RDSParameterGroupName string `mapstructure:"RDS_PARAMETER_GROUP_NAME" validate:"required"`
+}

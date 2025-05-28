@@ -14,6 +14,7 @@ func main() {
 	// Define flags
 	useDocker := flag.Bool("docker", false, "Use Docker adapter")
 	useAurora := flag.Bool("aurora", false, "Use Aurora adapter")
+	useRDS := flag.Bool("rds", false, "Use RDS adapater")
 	useAiven := flag.Bool("aiven", false, "Use Aiven PostgreSQL adapter")
 	flag.Parse()
 
@@ -45,6 +46,11 @@ func main() {
 		adapter, err = adapters.CreateDockerContainerAdapter()
 		if err != nil {
 			log.Fatalf("Failed to create Docker adapter: %v", err)
+		}
+	case *useRDS:
+		adapter, err = adapters.CreateAuroraRDSAdapter()
+		if err != nil {
+			log.Fatalf("Failed to create Aurora RDS adapter: %v", err)
 		}
 	case *useAurora:
 		adapter, err = adapters.CreateAuroraRDSAdapter()
