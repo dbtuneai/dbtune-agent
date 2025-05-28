@@ -38,15 +38,15 @@ type Schema struct {
 type MetricKnownName string
 
 const (
-	CPUUsage     MetricKnownName = "cpu_usage"
-	DiskUsage    MetricKnownName = "disk_usage"
-	DiskIoRead   MetricKnownName = "diskio_read"
-	DiskIoWrites MetricKnownName = "diskio_writes"
-	LoadAverage  MetricKnownName = "load_average"
-	MemAvailable MetricKnownName = "mem_available"
-	MemUsage     MetricKnownName = "mem_usage"
-	NetReceive   MetricKnownName = "net_receive"
-	NetSend      MetricKnownName = "net_send"
+	CPU_USAGE_KEY      MetricKnownName = "cpu_usage"
+	DISK_USAGE_KEY     MetricKnownName = "disk_usage"
+	DISK_IO_READ_KEY   MetricKnownName = "diskio_read"
+	DISK_IO_WRITES_KEY MetricKnownName = "diskio_writes"
+	LOAD_AVERAGE_KEY   MetricKnownName = "load_average"
+	MEM_AVAILABLE_KEY  MetricKnownName = "mem_available"
+	MEM_USAGE_KEY      MetricKnownName = "mem_usage"
+	NET_RECEIVE_KEY    MetricKnownName = "net_receive"
+	NET_SEND_KEY       MetricKnownName = "net_send"
 )
 
 // I'm not confident this will always be the only set of names, nor am I confident
@@ -58,39 +58,39 @@ var MetricsKnown = map[MetricKnownName]struct {
 	RenameTo    string
 	EncodedType utils.MetricType
 }{
-	CPUUsage: {
+	CPU_USAGE_KEY: {
 		RenameTo:    "node_cpu_usage",
 		EncodedType: utils.Percentage,
 	},
-	DiskUsage: { // TODO : We don't display this
+	DISK_USAGE_KEY: { // TODO : We don't display this
 		RenameTo:    "node_disk_usage_percentage",
 		EncodedType: utils.Percentage,
 	},
-	DiskIoRead: { // TODO: This is an average, different name?
+	DISK_IO_READ_KEY: { // TODO: This is an average, different name?
 		RenameTo:    "node_disk_io_ops_read",
 		EncodedType: utils.Float,
 	},
-	DiskIoWrites: { // TODO: This is an average, different name?
+	DISK_IO_WRITES_KEY: { // TODO: This is an average, different name?
 		RenameTo:    "node_disk_io_ops_write",
 		EncodedType: utils.Float,
 	},
-	LoadAverage: { // TODO: Wut is this even? We also don't display this
+	LOAD_AVERAGE_KEY: { // TODO: Wut is this even? We also don't display this
 		RenameTo:    "node_load_average",
 		EncodedType: utils.Float,
 	},
-	MemAvailable: { // TODO: Should this be converted to bytes? If so, modify frontend
+	MEM_AVAILABLE_KEY: { // TODO: Should this be converted to bytes? If so, modify frontend
 		RenameTo:    "node_memory_available_percentage",
 		EncodedType: utils.Percentage,
 	},
-	MemUsage: { // TODO: Should this be converted to bytes? If so, modify frontend
+	MEM_USAGE_KEY: { // TODO: Should this be converted to bytes? If so, modify frontend
 		RenameTo:    "node_memory_used_percentage",
 		EncodedType: utils.Percentage,
 	},
-	NetReceive: { // TODO: We don't use this
+	NET_RECEIVE_KEY: { // TODO: We don't use this
 		RenameTo:    "node_net_receive", // I think this is some kind of average per second
 		EncodedType: utils.Float,
 	},
-	NetSend: { // TODO: We don't use this
+	NET_SEND_KEY: { // TODO: We don't use this
 		RenameTo:    "node_net_send", // I think this is some kind of average per second
 		EncodedType: utils.Float,
 	},

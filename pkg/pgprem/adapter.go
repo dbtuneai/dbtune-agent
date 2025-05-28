@@ -1,24 +1,20 @@
-package adapters
+package pgprem
 
 import (
 	"context"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/collectors"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/pg"
 
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jaypipes/ghw"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/host"
 	"github.com/shirou/gopsutil/v4/mem"
@@ -32,12 +28,12 @@ type DefaultPostgreSQLAdapter struct {
 }
 
 func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
-	guardrailSettings, err := guardrails.ConfigFromViper(guardrails.GUARDRAIL_SETTINGS_KEY)
+	guardrailSettings, err := guardrails.ConfigFromViper(nil)
 	if err != nil {
 		return nil, err
 	}
 
-	pgConfig, err := pg.ConfigFromViper(pg.POSTGRES_SETTINGS_KEY)
+	pgConfig, err := pg.ConfigFromViper(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -72,57 +68,57 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 	// TODO: Find a better way to re-use collectors between adapters, current method does
 	// not work nice, as the RemoveKey method is available on MetricsState,
 	// which is inconvenient to use
-	pgDriver := pgAdapter.PGDriver()
+	pgDriver := pgAdapter.pgDriver
 	return []agent.MetricCollector{
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  collectors.PGStatStatements(pgDriver),
+			Collector:  pg.PGStatStatements(pgDriver),
 		},
 		{
 			Key:        "database_transactions_per_second",
 			MetricType: "int",
-			Collector:  collectors.TransactionsPerSecond(pgDriver),
+			Collector:  pg.TransactionsPerSecond(pgDriver),
 		},
 		{
 			Key:        "database_active_connections",
 			MetricType: "int",
-			Collector:  collectors.ActiveConnections(pgDriver),
+			Collector:  pg.ActiveConnections(pgDriver),
 		},
 		{
 			Key:        "system_db_size",
 			MetricType: "int",
-			Collector:  collectors.DatabaseSize(pgDriver),
+			Collector:  pg.DatabaseSize(pgDriver),
 		},
 		{
 			Key:        "database_autovacuum_count",
 			MetricType: "int",
-			Collector:  collectors.Autovacuum(pgDriver),
+			Collector:  pg.Autovacuum(pgDriver),
 		},
 		{
 			Key:        "server_uptime",
 			MetricType: "float",
-			Collector:  collectors.Uptime(pgDriver),
+			Collector:  pg.Uptime(pgDriver),
 		},
 		{
 			Key:        "database_cache_hit_ratio",
 			MetricType: "float",
-			Collector:  collectors.BufferCacheHitRatio(pgDriver),
+			Collector:  pg.BufferCacheHitRatio(pgDriver),
 		},
 		{
 			Key:        "database_wait_events",
 			MetricType: "int",
-			Collector:  collectors.WaitEvents(pgDriver),
+			Collector:  pg.WaitEvents(pgDriver),
 		},
 		{
 			Key:        "hardware",
 			MetricType: "int",
-			Collector:  collectors.HardwareInfoOnPremise(),
+			Collector:  HardwareInfoOnPremise(),
 		},
 		//{
 		//	Key:        "failing_slow_queries",
 		//	MetricType: "int",
-		//	Collector:  collectors.ArtificiallyFailingQueries(pgAdapter),
+		//	Collector:  pg.ArtificiallyFailingQueries(pgAdapter),
 		//},
 	}
 }
@@ -133,12 +129,12 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 	var systemInfo []utils.FlatValue
 
 	pgDriver := adapter.pgDriver
-	pgVersion, err := collectors.PGVersion(pgDriver)
+	pgVersion, err := pg.PGVersion(pgDriver)
 	if err != nil {
 		return nil, err
 	}
 
-	maxConnections, err := collectors.MaxConnections(pgDriver)
+	maxConnections, err := pg.MaxConnections(pgDriver)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +168,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 
 	systemInfo = append(systemInfo, version, totalMemory, hostOS, platformVersion, platform, maxConnectionsMetric, noCPUsMetric)
 
-	diskType, err := getDiskType(adapter)
+	diskType, err := GetDiskType(adapter.pgDriver)
 	if err != nil {
 		adapter.Logger().Debug("Error getting disk type", err)
 	}
@@ -205,10 +201,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 		}
 
 		// We make the assumption every setting is a number parsed as float
-		query := fmt.Sprintf(`ALTER SYSTEM SET "%s" = %s;`, knobConfig.Name, strconv.FormatFloat(knobConfig.Setting.(float64), 'f', -1, 64))
-		adapter.Logger().Debugf(`Executing: %s`, query)
-
-		_, err = adapter.pgDriver.Exec(context.Background(), query)
+		err = pg.AlterSystem(adapter.pgDriver, knobConfig.Name, strconv.FormatFloat(knobConfig.Setting.(float64), 'f', -1, 64))
 		if err != nil {
 			return err
 		}
@@ -286,69 +279,4 @@ func (adapter *DefaultPostgreSQLAdapter) Guardrails() *guardrails.Signal {
 	}
 
 	return nil
-}
-
-// TODO: This was heavily influenced by Claude, need to revisit and test properly
-func getDiskType(adapter *DefaultPostgreSQLAdapter) (string, error) {
-	// First we query PostgreSQL to get data directory mount point
-	dataDir, err := pg.DataDirectory(adapter.pgDriver)
-	if err != nil {
-		return "UNKNOWN", err
-	}
-
-	// Resolve symlinks and get absolute path
-	realPath, err := filepath.EvalSymlinks(dataDir)
-	if err != nil {
-		return "UNKNOWN", err
-	}
-
-	// Get device name using df
-	cmd := exec.Command("df", realPath)
-	output, err := cmd.Output()
-	if err != nil {
-		return "UNKNOWN", err
-	}
-
-	// Parse df output - skip header line and get first field
-	var deviceName string
-	lines := strings.Split(string(output), "\n")
-	if len(lines) >= 2 {
-		fields := strings.Fields(lines[1])
-		if len(fields) > 0 {
-			deviceName = fields[0]
-		}
-	}
-
-	// Get block storage information using ghw
-	block, err := ghw.Block()
-	if err != nil {
-		return "UNKNOWN", err
-	}
-
-	// Find the disk type for the device
-	for _, disk := range block.Disks {
-		// Check if this disk matches our device
-		possiblePaths := []string{
-			deviceName,
-			"/dev/" + filepath.Base(deviceName),
-			disk.Name,
-			"/dev/" + disk.Name,
-		}
-
-		for _, p := range possiblePaths {
-			if p == deviceName {
-				// Check for NVMe drives
-				if disk.StorageController == ghw.STORAGE_CONTROLLER_NVME {
-					return "NVME", nil
-				}
-				// Check for SSDs vs HDDs
-				if disk.DriveType == ghw.DRIVE_TYPE_HDD {
-					return "HDD", nil
-				}
-				return "SSD", nil
-			}
-		}
-	}
-
-	return "UNKNOWN", nil
 }

@@ -1,45 +1,51 @@
-package collectors
+package aiven
 
 import (
 	"context"
 	"time"
 
+	aivenclient "github.com/aiven/go-client-codegen"
 	"github.com/aiven/go-client-codegen/handler/service"
-	"github.com/dbtuneai/agent/pkg/adeptersinterfaces"
 	"github.com/dbtuneai/agent/pkg/agent"
-	aivenutil "github.com/dbtuneai/agent/pkg/aivenutil"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/sirupsen/logrus"
 )
 
 // AivenHardwareInfo collects hardware metrics for Aiven PostgreSQL
-func AivenHardwareInfo(adapter adeptersinterfaces.AivenPostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
-	return func(ctx context.Context, state *agent.MetricsState) error {
-		aivenState := adapter.GetAivenState()
-		aivenConfig := adapter.GetAivenConfig()
-		if time.Since(aivenState.LastHardwareInfoTime) < aivenConfig.MetricResolutionSeconds {
-			adapter.Logger().Debugf(
+func AivenHardwareInfo(
+	client *aivenclient.Client,
+	projectName string,
+	serviceName string,
+	metricResolution time.Duration,
+	config Config,
+	State *State,
+	logger *logrus.Logger,
+) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, metricState *agent.MetricsState) error {
+		if time.Since(State.Hardware.LastChecked) < metricResolution {
+			logger.Debugf(
 				"Hardware info already fetched in the last %s, skipping",
-				aivenConfig.MetricResolutionSeconds,
+				metricResolution,
 			)
 			return nil
 		}
-		aivenState.LastHardwareInfoTime = time.Now()
-		fetchedMetrics, err := aivenutil.GetFetchedMetrics(ctx, aivenutil.FetchedMetricsIn{
-			Client:      adapter.GetAivenClient(),
-			ProjectName: adapter.GetAivenConfig().ProjectName,
-			ServiceName: adapter.GetAivenConfig().ServiceName,
-			Logger:      adapter.Logger(),
+		State.LastHardwareInfoTime = time.Now()
+		fetchedMetrics, err := GetFetchedMetrics(ctx, FetchedMetricsIn{
+			Client:      client,
+			ProjectName: projectName,
+			ServiceName: serviceName,
+			Logger:      logger,
 			Period:      service.PeriodTypeHour,
 		})
 		if err != nil {
-			adapter.Logger().Errorf("Failed to get metrics: %v", err)
+			logger.Errorf("Failed to get metrics: %v", err)
 			return nil
 		}
 
 		// Process each metric type
 		for _, maybeMetric := range fetchedMetrics {
 			if maybeMetric.Error != nil {
-				adapter.Logger().Debugf(
+				logger.Debugf(
 					"Failed to get metric %s: %v",
 					maybeMetric.ParsedMetric.Name,
 					maybeMetric.Error,
@@ -53,22 +59,22 @@ func AivenHardwareInfo(adapter adeptersinterfaces.AivenPostgreSQLAdapter) func(c
 				parsedMetric.Value,
 				parsedMetric.Type,
 			)
-			state.AddMetric(metric)
+			metricState.AddMetric(metric)
 		}
 
 		// NOTE: Caching. As we need to re-fetch metrics for gaurdrails, and this API call
 		// sends down a lot of data, we cache the results for the memory usage, which is
 		// used by the gaurdrails.
 		// The code will still work without this block.
-		memAvailable := fetchedMetrics[aivenutil.MemAvailable]
+		memAvailable := fetchedMetrics[MEM_AVAILABLE_KEY]
 		if memAvailable.Error != nil {
 			// NOTE: We don't need to return an error for this, it's not a critical issue,
 			// and the next call or Guardrails() will fetch the metrics again.
 			return nil
 		}
 
-		aivenState.LastMemoryAvailablePercentage = memAvailable.ParsedMetric.Value.(float64)
-		aivenState.LastMemoryAvailableTime = memAvailable.ParsedMetric.Timestamp
+		State.LastMemoryAvailablePercentage = memAvailable.ParsedMetric.Value.(float64)
+		State.LastMemoryAvailableTime = memAvailable.ParsedMetric.Timestamp
 		return nil
 	}
 }

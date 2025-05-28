@@ -10,12 +10,15 @@ import (
 	"net/http"
 	"path"
 	"runtime"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
 
+	"github.com/dbtuneai/agent/pkg/dbtune"
+	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 
 	"github.com/hashicorp/go-retryablehttp"
@@ -137,10 +140,10 @@ type AgentLooper interface {
 	// or a rate of disk growth that is more than usual and not acceptable.
 	// Returns nil if no guardrail is triggered, otherwise returns the type of guardrail
 	// and the metric that is monitored.
-	Guardrails() *GuardrailSignal
+	Guardrails() *guardrails.Signal
 	// SendGuardrailSignal sends a signal to the DBtune server that something is heading towards a failure.
 	// The signal will be send maximum once every 15 seconds.
-	SendGuardrailSignal(signal GuardrailSignal) error
+	SendGuardrailSignal(signal guardrails.Signal) error
 
 	// GetLogger returns the logger for the agent
 	Logger() *log.Logger
@@ -149,33 +152,6 @@ type AgentLooper interface {
 type AgentPayload struct {
 	AgentVersion   string `json:"agent_version"`
 	AgentStartTime string `json:"agent_start_time"`
-}
-
-type CriticalityLevel string
-
-const (
-	// Critical is a guardrail that is critical to the operation of the database
-	// and should be reverted immediately. This also means that the DBtune server
-	// will revert to the baseline configuration to stabilise the system before recommending
-	// a new configuration.
-	Critical CriticalityLevel = "critical"
-	// NonCritical is a guardrail that is not critical
-	// to the operation of the database, but a new configuration
-	// is recommended to be applied.
-	NonCritical CriticalityLevel = "non-critical"
-)
-
-type Type string
-
-const (
-	// Memory is a guardrail that is related to the memory of the database
-	Memory         Type = "memory"
-	FreeableMemory Type = "freeable_memory"
-)
-
-type GuardrailSignal struct {
-	Level CriticalityLevel `json:"level"`
-	Type  Type             `json:"type"`
 }
 
 type IOCounterStat struct {
@@ -264,7 +240,7 @@ func (state *MetricsState) RemoveKey(key MetricKey) error {
 	for i, mc := range state.Collectors {
 		if mc.Key == string(key) {
 			// Remove the MetricCollector by creating a new slice
-			state.Collectors = append((state.Collectors)[:i], (state.Collectors)[i+1:]...)
+			state.Collectors = slices.Delete(state.Collectors, i, i+1)
 			return nil // Successfully removed
 		}
 	}
@@ -273,7 +249,7 @@ func (state *MetricsState) RemoveKey(key MetricKey) error {
 }
 
 type CommonAgent struct {
-	utils.ServerURLs
+	dbtune.ServerURLs
 	logger    *log.Logger
 	APIClient *retryablehttp.Client
 	// Time the agent started
@@ -301,7 +277,7 @@ func CreateCommonAgent() *CommonAgent {
 		logger.SetLevel(log.InfoLevel)
 	}
 
-	serverUrl, err := utils.CreateServerURLs()
+	serverUrl, err := dbtune.CreateServerURLs()
 	if err != nil {
 		logger.Fatalf("Error creating server URLs: %s", err)
 	}
@@ -465,7 +441,7 @@ func (a *CommonAgent) SendMetrics(metrics []utils.FlatValue) error {
 	if resp.StatusCode != 204 {
 		body, _ := io.ReadAll(resp.Body)
 		a.Logger().Debug("Failed to send metrics. Response body: ", string(body))
-		return errors.New(fmt.Sprintf("Failed to send metrics, code: %d", resp.StatusCode))
+		return fmt.Errorf("failed to send metrics, code: %d", resp.StatusCode)
 	}
 
 	return nil
@@ -496,7 +472,7 @@ func (a *CommonAgent) SendSystemInfo(systemInfo []utils.FlatValue) error {
 	if resp.StatusCode != 204 && resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
 		a.Logger().Error("Failed to send system info. Response body: ", string(body))
-		return errors.New(fmt.Sprintf("Failed to send syste info, code: %d", resp.StatusCode))
+		return fmt.Errorf("failed to send system info, code: %d", resp.StatusCode)
 	}
 
 	return nil
@@ -514,9 +490,6 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 		return err
 	}
 
-	// a.Logger().Debug("Configuration info body payload")
-	// a.Logger().Debug(string(jsonData))
-
 	resp, err := a.APIClient.Post(a.ServerURLs.PostActiveConfig(), "application/json", jsonData)
 	if err != nil {
 		return err
@@ -526,7 +499,7 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 	if resp.StatusCode != 204 && resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
 		a.Logger().Error("Failed to send configuration info. Response body: ", string(body))
-		return fmt.Errorf("Failed to send config info, code: %d", resp.StatusCode)
+		return fmt.Errorf("failed to send config info, code: %d", resp.StatusCode)
 	}
 
 	return nil
@@ -560,21 +533,12 @@ func (a *CommonAgent) GetProposedConfig() (*ProposedConfigResponse, error) {
 
 }
 
-func (a *CommonAgent) Guardrails() *GuardrailSignal {
-	return nil
-}
-
 // SendGuardrailSignal sends a guardrail signal to the DBtune server
 // that something is heading towards a failure.
-func (a *CommonAgent) SendGuardrailSignal(signal GuardrailSignal) error {
+func (a *CommonAgent) SendGuardrailSignal(signal guardrails.Signal) error {
 	a.Logger().Warnf("🚨 Sending Guardrail, level: %s, type: %s", signal.Level, signal.Type)
 
-	payload := GuardrailSignal{
-		Level: signal.Level,
-		Type:  signal.Type,
-	}
-
-	jsonData, err := json.Marshal(payload)
+	jsonData, err := json.Marshal(signal)
 	if err != nil {
 		return err
 	}
