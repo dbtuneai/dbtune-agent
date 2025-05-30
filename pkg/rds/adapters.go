@@ -101,11 +101,6 @@ func (adapter *RDSAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 	if err != nil {
 		return nil, err
 	}
-	// NOTE: It's important we have the `*` here. We effectively want to replace
-	// whatever was at the memory address of the old `DBInfo` with the new one, such
-	// that anything holding onto a `*DBInfo` (and hence uses the memory address)
-	// will see the new value we replaced it with. Otherwise, they would never see the
-	// new value.
 	adapter.State.DBInfo = &dbInfo
 	adapter.State.LastDBInfoCheck = time.Now()
 
