@@ -33,3 +33,5 @@ docker-compose.testing-*.yml
 dist/
 .vscode/
 .idea/
+
+dbtune-agent

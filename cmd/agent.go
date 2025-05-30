@@ -19,6 +19,7 @@ func main() {
 	useAurora := flag.Bool("aurora", false, "Use Aurora adapter")
 	useRDS := flag.Bool("rds", false, "Use RDS adapater")
 	useAiven := flag.Bool("aiven", false, "Use Aiven PostgreSQL adapter")
+	useLocal := flag.Bool("local", false, "Use local PostgreSQL adapter")
 	flag.Parse()
 
 	// Set the file name of the configurations file
@@ -65,7 +66,14 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to create Aiven PostgreSQL adapter: %v", err)
 		}
+	case *useLocal:
+		adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
+		if err != nil {
+			log.Fatalf("Failed to create local PostgreSQL adapter: %v", err)
+		}
 	default:
+		// TODO(eddie): We should error out here.
+		// I figure it's an error if --<which> not specified.
 		adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
 		if err != nil {
 			log.Fatalf("Failed to create PostgreSQL adapter: %v", err)

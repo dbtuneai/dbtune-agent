@@ -8,6 +8,7 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
+	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/pg"
@@ -66,9 +67,8 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 		GuardrailSettings: guardrailSettings,
 		PGDriver:          dbpool,
 	}
-
-	// Override the metrics state to use Docker-specific collectors
-	dockerAdapter.MetricsState.Collectors = DockerCollectors(dockerAdapter)
+	collectors := DockerCollectors(dockerAdapter)
+	dockerAdapter.InitCollectors(collectors)
 
 	return dockerAdapter, nil
 }
@@ -171,21 +171,21 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 	}
 
 	// Create metrics
-	version, _ := utils.NewMetric("system_info_pg_version", pgVersion, utils.String)
-	maxConnectionsMetric, _ := utils.NewMetric("pg_max_connections", maxConnections, utils.Int)
+	version, _ := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
+	maxConnectionsMetric, _ := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
 
 	// Memory info
-	memLimitMetric, _ := utils.NewMetric("node_memory_total", statsJSON.MemoryStats.Limit, utils.Int)
+	memLimitMetric, _ := utils.NewMetric(keywords.NodeMemoryTotal, statsJSON.MemoryStats.Limit, utils.Int)
 
 	// CPU info
 	noCPUs := float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
 	if statsJSON.CPUStats.OnlineCPUs > 0 {
 		noCPUs = float64(statsJSON.CPUStats.OnlineCPUs)
 	}
-	cpuMetric, _ := utils.NewMetric("node_cpu_count", noCPUs, utils.Float)
+	cpuMetric, _ := utils.NewMetric(keywords.NodeCPUCount, noCPUs, utils.Float)
 
 	// Container info
-	containerOS, _ := utils.NewMetric("system_info_os", "linux", utils.String) // Docker containers are Linux-based
+	containerOS, _ := utils.NewMetric(keywords.NodeOSInfo, "linux", utils.String) // Docker containers are Linux-based
 	containerPlatform, _ := utils.NewMetric("system_info_platform", "docker", utils.String)
 	containerVersion, _ := utils.NewMetric("system_info_platform_version", containerInfo.Config.Image, utils.String)
 
@@ -206,7 +206,7 @@ func (d *DockerContainerAdapter) Guardrails() *guardrails.Signal {
 	// Get container stats
 	stats, err := d.dockerClient.ContainerStats(context.Background(), d.Config.ContainerName, false)
 	if err != nil {
-		d.Logger().Printf("guardrail: could not fetch docker stats: %v", err)
+		d.Logger().Warnf("guardrail: could not fetch docker stats: %v", err)
 		return nil
 	}
 	defer stats.Body.Close()
@@ -215,7 +215,7 @@ func (d *DockerContainerAdapter) Guardrails() *guardrails.Signal {
 	var statsJSON container.StatsResponse
 	decoder := json.NewDecoder(stats.Body)
 	if err := decoder.Decode(&statsJSON); err != nil {
-		d.Logger().Printf("guardrail: could not decode docker stats: %v", err)
+		d.Logger().Warnf("guardrail: could not decode docker stats: %v", err)
 		return nil
 	}
 
@@ -232,7 +232,7 @@ func (d *DockerContainerAdapter) Guardrails() *guardrails.Signal {
 			}
 		}
 	} else {
-		d.Logger().Debug("guardrail: could not fetch memory limit")
+		d.Logger().Warn("guardrail: could not fetch memory limit")
 	}
 
 	return nil

@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/pg"
 
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
@@ -51,23 +51,13 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 		pgConfig:        pgConfig,
 		GuardrailConfig: guardrailSettings,
 	}
-
-	// Initialize collectors after the adapter is fully set up
-	c.MetricsState = agent.MetricsState{
-		Collectors: DefaultCollectors(c),
-		Cache:      agent.Caches{},
-		Mutex:      &sync.Mutex{},
-	}
+	collectors := DefaultCollectors(c)
+	c.InitCollectors(collectors)
 
 	return c, nil
 }
 
 func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollector {
-	// TODO: Is the metric type needed here? Maybe this can be dropped,
-	// as collectors may collect multiple metrics
-	// TODO: Find a better way to re-use collectors between adapters, current method does
-	// not work nice, as the RemoveKey method is available on MetricsState,
-	// which is inconvenient to use
 	pgDriver := pgAdapter.pgDriver
 	return []agent.MetricCollector{
 		{
@@ -144,7 +134,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 		return nil, err
 	}
 
-	totalMemory, err := utils.NewMetric("node_memory_total", memoryInfo.Total, utils.Int)
+	totalMemory, err := utils.NewMetric(keywords.NodeMemoryTotal, memoryInfo.Total, utils.Int)
 	if err != nil {
 		return nil, err
 	}
@@ -159,21 +149,21 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 		return nil, err
 	}
 
-	version, _ := utils.NewMetric("system_info_pg_version", pgVersion, utils.String)
-	hostOS, _ := utils.NewMetric("system_info_os", hostInfo.OS, utils.String)
+	version, _ := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
+	hostOS, _ := utils.NewMetric(keywords.NodeOSInfo, hostInfo.OS, utils.String)
 	platform, _ := utils.NewMetric("system_info_platform", hostInfo.Platform, utils.String)
 	platformVersion, _ := utils.NewMetric("system_info_platform_version", hostInfo.PlatformVersion, utils.String)
-	maxConnectionsMetric, _ := utils.NewMetric("pg_max_connections", maxConnections, utils.Int)
-	noCPUsMetric, _ := utils.NewMetric("node_cpu_count", noCPUs, utils.Int)
+	maxConnectionsMetric, _ := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
+	noCPUsMetric, _ := utils.NewMetric(keywords.NodeCPUCount, noCPUs, utils.Int)
 
 	systemInfo = append(systemInfo, version, totalMemory, hostOS, platformVersion, platform, maxConnectionsMetric, noCPUsMetric)
 
 	diskType, err := GetDiskType(adapter.pgDriver)
 	if err != nil {
-		adapter.Logger().Debug("Error getting disk type", err)
+		adapter.Logger().Warnf("Error getting disk type: %v", err)
 	}
 
-	diskTypeMetric, _ := utils.NewMetric("node_disk_device_type", diskType, utils.String)
+	diskTypeMetric, _ := utils.NewMetric(keywords.NodeStorageType, diskType, utils.String)
 	systemInfo = append(systemInfo, diskTypeMetric)
 
 	return systemInfo, nil

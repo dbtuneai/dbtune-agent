@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 
 	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
+	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 )
 
@@ -109,8 +110,8 @@ func (info *DBInfo) TryIntoFlatValuesSlice() ([]utils.FlatValue, error) {
 	metrics := []utils.FlatValue{}
 
 	totalMemoryBytes, err := info.TotalMemoryBytes()
-	if err != nil {
-		totalMemoryBytesMetric, err := utils.NewMetric("node_memory_total", totalMemoryBytes, utils.Int)
+	if err == nil {
+		totalMemoryBytesMetric, err := utils.NewMetric(keywords.NodeMemoryTotal, totalMemoryBytes, utils.Int)
 		if err == nil {
 			metrics = append(metrics, totalMemoryBytesMetric)
 		}
@@ -118,7 +119,7 @@ func (info *DBInfo) TryIntoFlatValuesSlice() ([]utils.FlatValue, error) {
 
 	nVCPUs, err := info.VCPUs()
 	if err == nil {
-		noCPUsMetric, err := utils.NewMetric("node_cpu_count", nVCPUs, utils.Int)
+		noCPUsMetric, err := utils.NewMetric(keywords.NodeCPUCount, nVCPUs, utils.Int)
 		if err == nil {
 			metrics = append(metrics, noCPUsMetric)
 		}
@@ -126,7 +127,7 @@ func (info *DBInfo) TryIntoFlatValuesSlice() ([]utils.FlatValue, error) {
 
 	// TODO(eddie): Really? We should definitely find where to fetch this and add to system info.
 	// For RDS, disk type is always SSD
-	diskTypeMetric, err := utils.NewMetric("node_disk_device_type", "SSD", utils.String)
+	diskTypeMetric, err := utils.NewMetric(keywords.NodeStorageType, "SSD", utils.String)
 	if err == nil {
 		metrics = append(metrics, diskTypeMetric)
 	}

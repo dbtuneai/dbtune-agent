@@ -3,11 +3,11 @@ package rds
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
+	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -84,14 +84,8 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 		GuardrailSettings: guardrailSettings,
 		PGDriver:          dbpool,
 	}
-
-	// Initialize collectors with RDSCollectors instead of DefaultCollectors
-	c.MetricsState = agent.MetricsState{
-		Collectors: c.Collectors(),
-		Cache:      agent.Caches{},
-		Mutex:      &sync.Mutex{},
-	}
-
+	collectors := c.Collectors()
+	c.InitCollectors(collectors)
 	return c, nil
 }
 
@@ -124,16 +118,24 @@ func (adapter *RDSAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 	// Get the PostgreSQL specific info
 	pgVersion, err := pg.PGVersion(adapter.PGDriver)
 	if err != nil {
-		version, err := utils.NewMetric("system_info_pg_version", pgVersion, utils.String)
-		if err == nil {
+		adapter.Logger().Warnf("Failed to get PostgreSQL version: %v", err)
+	} else {
+		version, err := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
+		if err != nil {
+			adapter.Logger().Errorf("Failed to create PostgreSQL version metric: %v", err)
+		} else {
 			info = append(info, version)
 		}
 	}
 
 	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
-	if err == nil {
-		maxConnectionsMetric, err := utils.NewMetric("pg_max_connections", maxConnections, utils.Int)
-		if err == nil {
+	if err != nil {
+		adapter.Logger().Warnf("Failed to get PostgreSQL max connections: %v", err)
+	} else {
+		maxConnectionsMetric, err := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
+		if err != nil {
+			adapter.Logger().Errorf("Failed to create PostgreSQL max connections metric: %v", err)
+		} else {
 			info = append(info, maxConnectionsMetric)
 		}
 	}

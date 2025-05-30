@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"sync"
 	"time"
 
 	aivenclient "github.com/aiven/go-client-codegen"
 	"github.com/aiven/go-client-codegen/handler/service"
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
+	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/pg"
@@ -96,11 +96,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 	}
 
 	// Initialize collectors
-	adapter.MetricsState = agent.MetricsState{
-		Collectors: AivenCollectors(adapter),
-		Cache:      agent.Caches{},
-		Mutex:      &sync.Mutex{},
-	}
+	adapter.InitCollectors(AivenCollectors(adapter))
 
 	return adapter, nil
 }
@@ -152,14 +148,14 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error
 	}
 
 	// Create metrics
-	totalMemory, _ := utils.NewMetric("node_memory_total", totalMemoryBytes, utils.Int)
-	noCPUsMetric, _ := utils.NewMetric("node_cpu_count", numCPUs, utils.Int)
-	version, _ := utils.NewMetric("pg_version", pgVersion, utils.String)
-	maxConnectionsMetric, _ := utils.NewMetric("pg_max_connections", maxConnections, utils.Int)
+	totalMemory, _ := utils.NewMetric(keywords.NodeMemoryTotal, totalMemoryBytes, utils.Int)
+	noCPUsMetric, _ := utils.NewMetric(keywords.NodeCPUCount, numCPUs, utils.Int)
+	version, _ := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
+	maxConnectionsMetric, _ := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
 
 	// Aiven uses SSD storage
 	// TODO: Verify this? Can't find anything in their API or website that says this, but it's a reasonable assumption
-	diskTypeMetric, _ := utils.NewMetric("node_disk_device_type", "SSD", utils.String)
+	diskTypeMetric, _ := utils.NewMetric(keywords.NodeStorageType, "SSD", utils.String)
 
 	systemInfo = append(systemInfo, version, totalMemory, maxConnectionsMetric, noCPUsMetric, diskTypeMetric)
 

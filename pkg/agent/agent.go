@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"path"
 	"runtime"
-	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -229,25 +227,6 @@ const (
 	ActiveConnections MetricKey = "active_connections"
 )
 
-func (state *MetricsState) RemoveKey(key MetricKey) error {
-	// Remove the key from the collectors
-	// Check if the state is nil
-	if state.Collectors == nil {
-		return errors.New("state is nil")
-	}
-
-	// Iterate over the state to find the key
-	for i, mc := range state.Collectors {
-		if mc.Key == string(key) {
-			// Remove the MetricCollector by creating a new slice
-			state.Collectors = slices.Delete(state.Collectors, i, i+1)
-			return nil // Successfully removed
-		}
-	}
-
-	return nil
-}
-
 type CommonAgent struct {
 	dbtune.ServerURLs
 	logger    *log.Logger
@@ -300,6 +279,12 @@ func CreateCommonAgent() *CommonAgent {
 		APIClient:  client,
 		logger:     logger,
 		StartTime:  time.Now().UTC().Format(time.RFC3339),
+		MetricsState: MetricsState{
+			Collectors: []MetricCollector{},
+			Cache:      Caches{},
+			Mutex:      &sync.Mutex{},
+			Metrics:    []utils.FlatValue{},
+		},
 		// Default timeouts
 		CollectionTimeout: 20 * time.Second,
 		IndividualTimeout: 10 * time.Second,
@@ -339,6 +324,10 @@ func (a *CommonAgent) SendHeartbeat() error {
 	}
 
 	return nil
+}
+
+func (a *CommonAgent) InitCollectors(collectors []MetricCollector) {
+	a.MetricsState.Collectors = collectors
 }
 
 // GetMetrics will have a default implementation to handle gracefully
@@ -429,9 +418,6 @@ func (a *CommonAgent) SendMetrics(metrics []utils.FlatValue) error {
 		return err
 	}
 
-	a.Logger().Debug("Metrics body payload")
-	a.Logger().Debug(string(jsonData))
-
 	resp, err := a.APIClient.Post(a.ServerURLs.PostMetrics(), "application/json", jsonData)
 	if err != nil {
 		return err
@@ -440,7 +426,7 @@ func (a *CommonAgent) SendMetrics(metrics []utils.FlatValue) error {
 
 	if resp.StatusCode != 204 {
 		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Debug("Failed to send metrics. Response body: ", string(body))
+		a.Logger().Warnf("Failed to send metrics. Response body: %s", string(body))
 		return fmt.Errorf("failed to send metrics, code: %d", resp.StatusCode)
 	}
 
@@ -457,9 +443,6 @@ func (a *CommonAgent) SendSystemInfo(systemInfo []utils.FlatValue) error {
 		return err
 	}
 
-	// a.Logger().Debug("System info body payload")
-	// a.Logger().Debug(string(jsonData))
-
 	req, _ := retryablehttp.NewRequest("PUT", a.ServerURLs.PostSystemInfo(), bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -471,7 +454,7 @@ func (a *CommonAgent) SendSystemInfo(systemInfo []utils.FlatValue) error {
 
 	if resp.StatusCode != 204 && resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Error("Failed to send system info. Response body: ", string(body))
+		a.Logger().Errorf("Failed to send system info. Response body: %s", string(body))
 		return fmt.Errorf("failed to send system info, code: %d", resp.StatusCode)
 	}
 
@@ -498,7 +481,7 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 
 	if resp.StatusCode != 204 && resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Error("Failed to send configuration info. Response body: ", string(body))
+		a.Logger().Errorf("Failed to send configuration info. Response body: %s", string(body))
 		return fmt.Errorf("failed to send config info, code: %d", resp.StatusCode)
 	}
 
