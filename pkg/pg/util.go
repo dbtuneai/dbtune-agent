@@ -18,7 +18,7 @@ func WaitPostgresReady(pgPool *pgxpool.Pool, ctx context.Context) error {
 			return fmt.Errorf("timeout waiting for PostgreSQL to come back online")
 		case <-time.After(1 * time.Second):
 			// Try to execute a simple query
-			_, err := pgPool.Exec(ctx, "SELECT 1")
+			_, err := pgPool.Exec(ctx, Select1Query)
 			if err == nil {
 				return nil
 			}
