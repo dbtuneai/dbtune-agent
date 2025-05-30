@@ -175,7 +175,7 @@ func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigRespo
 
 	// Instance is online, we validate that PostgreSQL is back online also
 	adapter.Logger().Info("Waiting for PostgreSQL to come back online...")
-	err = pg.WaitPostgresReady(adapter.PGDriver, context.Background())
+	err = pg.WaitPostgresReady(adapter.PGDriver)
 	if err != nil {
 		return fmt.Errorf("error waiting for PostgreSQL to come back online: %v", err)
 	}

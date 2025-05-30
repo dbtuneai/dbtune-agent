@@ -8,8 +8,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func WaitPostgresReady(pgPool *pgxpool.Pool, ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Minute)
+func WaitPostgresReady(pgPool *pgxpool.Pool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer cancel()
 
 	for {

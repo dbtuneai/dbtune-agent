@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
-	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
+	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
-	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/pg"
 
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
@@ -207,23 +206,9 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 			return fmt.Errorf("failed to restart PostgreSQL service: %w", err)
 		}
 
-		// Wait for PostgreSQL to be back online with retries
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
-		defer cancel()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return fmt.Errorf("timeout waiting for PostgreSQL to come back online")
-			case <-time.After(1 * time.Second):
-				// Try to execute a simple query
-				err := pg.Select1(adapter.pgDriver)
-				if err == nil {
-					adapter.Logger().Info("PostgreSQL is back online")
-					return nil
-				}
-				adapter.Logger().Debug("PostgreSQL not ready yet, retrying...")
-			}
+		err := pg.WaitPostgresReady(adapter.pgDriver)
+		if err != nil {
+			return fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)
 		}
 	case "reload":
 		// Reload database when everything is applied
