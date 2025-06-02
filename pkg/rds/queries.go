@@ -63,6 +63,10 @@ func GetMemoryUsageFromPI(
 		return 0, err
 	}
 
+	if latestDatapoint.Value == nil {
+		return 0, fmt.Errorf("no value returned from Performance Insights")
+	}
+
 	activeMemoryBytes := *latestDatapoint.Value * 1024 // It is returned in KB
 
 	if activeMemoryBytes < 0 {
@@ -157,6 +161,10 @@ func GetCPUUtilization(
 	latestDatapoint, err := getLastDatapoint(output.Datapoints)
 	if err != nil {
 		return 0, err
+	}
+
+	if latestDatapoint.Average == nil {
+		return 0, fmt.Errorf("no value returned from CloudWatch")
 	}
 
 	// Calculate memory usage percentage from freeable memory
