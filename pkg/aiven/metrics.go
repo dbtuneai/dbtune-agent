@@ -9,6 +9,7 @@ import (
 
 	aiven "github.com/aiven/go-client-codegen"
 	"github.com/aiven/go-client-codegen/handler/service"
+	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	log "github.com/sirupsen/logrus"
 )
@@ -66,12 +67,12 @@ var MetricsKnown = map[MetricKnownName]struct {
 		RenameTo:    "node_disk_usage_percentage",
 		EncodedType: utils.Percentage,
 	},
-	DISK_IO_READ_KEY: { // TODO: This is an average, different name?
-		RenameTo:    "node_disk_io_ops_read",
+	DISK_IO_READ_KEY: {
+		RenameTo:    keywords.NodeDiskIOPSRead,
 		EncodedType: utils.Float,
 	},
-	DISK_IO_WRITES_KEY: { // TODO: This is an average, different name?
-		RenameTo:    "node_disk_io_ops_write",
+	DISK_IO_WRITES_KEY: {
+		RenameTo:    keywords.NodeDiskIOPSWrite,
 		EncodedType: utils.Float,
 	},
 	LOAD_AVERAGE_KEY: { // TODO: Wut is this even? We also don't display this

@@ -7,6 +7,7 @@ import (
 	aivenclient "github.com/aiven/go-client-codegen"
 	"github.com/aiven/go-client-codegen/handler/service"
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/sirupsen/logrus"
 )
@@ -60,6 +61,15 @@ func AivenHardwareInfo(
 				parsedMetric.Type,
 			)
 			metricState.AddMetric(metric)
+		}
+
+		// Calculate the total IOPS from the read and write IOPS if exist
+		readIOPS, okRead := fetchedMetrics[DISK_IO_READ_KEY]
+		writeIOPS, okWrite := fetchedMetrics[DISK_IO_WRITES_KEY]
+		if okRead && okWrite {
+			totalIOPS := readIOPS.Value.(float64) + writeIOPS.Value.(float64)
+			totalIOPSMetric, _ := utils.NewMetric(keywords.NodeDiskIOPSTotal, totalIOPS, utils.Float)
+			metricState.AddMetric(totalIOPSMetric)
 		}
 
 		// NOTE: Caching. As we need to re-fetch metrics for gaurdrails, and this API call

@@ -135,42 +135,48 @@ func GetCPUUtilization(
 	databaseIdentifier string,
 	clients *AWSClients,
 ) (float64, error) {
-	endTime := time.Now()
-	startTime := endTime.Add(-5 * time.Minute)
+	return getAverageMetricValue(clients, databaseIdentifier, "CPUUtilization", 5)
+}
 
-	input := &cloudwatch.GetMetricStatisticsInput{
-		Namespace:  aws.String("AWS/RDS"),
-		MetricName: aws.String("CPUUtilization"),
-		StartTime:  aws.Time(startTime),
-		EndTime:    aws.Time(endTime),
-		Period:     aws.Int32(300),
-		Statistics: []types.Statistic{types.Statistic("Average")},
-		Dimensions: []types.Dimension{
-			{
-				Name:  aws.String("DBInstanceIdentifier"),
-				Value: aws.String(databaseIdentifier),
-			},
-		},
-	}
+func GetReadIOPS(
+	databaseIdentifier string,
+	clients *AWSClients,
+) (float64, error) {
+	return getAverageMetricValue(clients, databaseIdentifier, "ReadIOPS", 5)
+}
 
-	output, err := clients.CloudwatchClient.GetMetricStatistics(context.Background(), input)
+func GetWriteIOPS(
+	databaseIdentifier string,
+	clients *AWSClients,
+) (float64, error) {
+	return getAverageMetricValue(clients, databaseIdentifier, "WriteIOPS", 5)
+}
+
+type IOPSResult struct {
+	ReadIOPS  float64
+	WriteIOPS float64
+	TotalIOPS float64
+}
+
+func GetIOPS(
+	databaseIdentifier string,
+	clients *AWSClients,
+) (IOPSResult, error) {
+	readIOPS, err := getAverageMetricValue(clients, databaseIdentifier, "ReadIOPS", 5)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get CloudWatch metrics: %v", err)
+		return IOPSResult{}, err
 	}
 
-	latestDatapoint, err := getLastDatapoint(output.Datapoints)
+	writeIOPS, err := getAverageMetricValue(clients, databaseIdentifier, "WriteIOPS", 5)
 	if err != nil {
-		return 0, err
+		return IOPSResult{}, err
 	}
 
-	if latestDatapoint.Average == nil {
-		return 0, fmt.Errorf("no value returned from CloudWatch")
-	}
-
-	// Calculate memory usage percentage from freeable memory
-	cpuUtilization := *latestDatapoint.Average
-
-	return cpuUtilization, nil
+	return IOPSResult{
+		ReadIOPS:  readIOPS,
+		WriteIOPS: writeIOPS,
+		TotalIOPS: readIOPS + writeIOPS,
+	}, nil
 }
 
 // RDSDatapointConstraint is a type constraint that allows either types.Datapoint or pi.DataPoint
@@ -402,4 +408,48 @@ func waitRDSInstanceAvailable(
 			}
 		}
 	}
+}
+
+func getAverageMetricValue(
+	clients *AWSClients,
+	databaseIdentifier string,
+	metricName string,
+	minutes uint16,
+) (float64, error) {
+	endTime := time.Now()
+	startTime := endTime.Add(-time.Duration(minutes) * time.Minute)
+
+	input := &cloudwatch.GetMetricStatisticsInput{
+		Namespace:  aws.String("AWS/RDS"),
+		MetricName: aws.String(metricName),
+		StartTime:  aws.Time(startTime),
+		EndTime:    aws.Time(endTime),
+		Period:     aws.Int32(int32(minutes * 60)), // Needs to be multiple of 60
+		Statistics: []types.Statistic{types.StatisticAverage},
+		Dimensions: []types.Dimension{
+			{
+				Name:  aws.String("DBInstanceIdentifier"),
+				Value: aws.String(databaseIdentifier),
+			},
+		},
+	}
+
+	output, err := clients.CloudwatchClient.GetMetricStatistics(context.Background(), input)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get CloudWatch metrics: %v", err)
+	}
+
+	latestDatapoint, err := getLastDatapoint(output.Datapoints)
+	if err != nil {
+		return 0, err
+	}
+
+	if latestDatapoint.Average == nil {
+		return 0, fmt.Errorf("no value returned from CloudWatch for %s", metricName)
+	}
+
+	// Calculate memory usage percentage from freeable memory
+	value := *latestDatapoint.Average
+
+	return value, nil
 }

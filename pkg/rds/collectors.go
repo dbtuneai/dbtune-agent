@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/sirupsen/logrus"
 )
@@ -51,6 +52,27 @@ func RDSHardwareInfo(
 		} else {
 			cpuUtilMetric, _ := utils.NewMetric("node_cpu_usage", cpuUtil, utils.Percentage)
 			metric_state.AddMetric(cpuUtilMetric)
+		}
+
+		// IOPS
+		iops, err := GetIOPS(databaseIdentifier, clients)
+		if err != nil {
+			logger.Errorf("failed to get IOPS: %v", err)
+			return nil
+		}
+		readIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSRead, iops.ReadIOPS, utils.Float)
+		if err == nil {
+			metric_state.AddMetric(readIOPSMetric)
+		}
+
+		writeIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSWrite, iops.WriteIOPS, utils.Float)
+		if err == nil {
+			metric_state.AddMetric(writeIOPSMetric)
+		}
+
+		totalIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSTotal, iops.TotalIOPS, utils.Float)
+		if err == nil {
+			metric_state.AddMetric(totalIOPSMetric)
 		}
 
 		return nil
