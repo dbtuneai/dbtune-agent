@@ -1,8 +1,9 @@
-package utils
+package dbtune
 
 import (
 	"fmt"
 
+	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/spf13/viper"
 )
 
@@ -38,7 +39,7 @@ func CreateServerURLs() (ServerURLs, error) {
 		return ServerURLs{}, fmt.Errorf("unable to decode into struct, %v", err)
 	}
 
-	err = ValidateStruct(&servTest)
+	err = utils.ValidateStruct(&servTest)
 	if err != nil {
 		return ServerURLs{}, err
 	}

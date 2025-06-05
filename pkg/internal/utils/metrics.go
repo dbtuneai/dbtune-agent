@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"time"
 )
@@ -73,6 +74,15 @@ func NewMetric(key string, value interface{}, typeStr MetricType) (FlatValue, er
 		if !(v.Kind() >= reflect.Int && v.Kind() <= reflect.Uint64) {
 			return FlatValue{}, fmt.Errorf("value is not of type int")
 		}
+		// If value is uint64, try to safely cast to int64
+		if v.Kind() == reflect.Uint64 {
+			u := v.Interface().(uint64)
+			intVal, err := TryUint64ToInt64(u)
+			if err != nil {
+				return FlatValue{}, err
+			}
+			value = intVal
+		}
 	case "float", "percentage":
 		if _, ok := value.(float64); !ok {
 			return FlatValue{}, fmt.Errorf("value is not of type float")
@@ -140,4 +150,11 @@ func FormatSystemInfo(metrics []FlatValue) FormattedSystemInfo {
 		SystemInfo: metricsMap,
 		Timestamp:  time.Now().Format(time.RFC3339Nano), // Current timestamp in RFC3339 format
 	}
+}
+
+func TryUint64ToInt64(value uint64) (int64, error) {
+	if value > math.MaxInt64 {
+		return 0, fmt.Errorf("value is too large to convert to int64")
+	}
+	return int64(value), nil
 }

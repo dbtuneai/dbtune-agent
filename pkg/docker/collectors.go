@@ -1,24 +1,23 @@
-package collectors
+package docker
 
 import (
 	"context"
 	"encoding/json"
 
-	adapters "github.com/dbtuneai/agent/pkg/adeptersinterfaces"
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/client"
 )
 
 // DockerHardwareInfo collects hardware metrics from a Docker container using the Docker API
-func DockerHardwareInfo(dockerAdapter adapters.DockerAdapter) func(ctx context.Context, state *agent.MetricsState) error {
+func DockerHardwareInfo(client *client.Client, containerName string) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-		cli := dockerAdapter.GetDockerClient()
 
 		// Get container stats
-		containerName := dockerAdapter.GetContainerName()
-		stats, err := cli.ContainerStats(ctx, containerName, false)
+		stats, err := client.ContainerStats(ctx, containerName, false)
 		if err != nil {
 			return err
 		}
@@ -34,7 +33,7 @@ func DockerHardwareInfo(dockerAdapter adapters.DockerAdapter) func(ctx context.C
 		}
 
 		// Calculate CPU percentage using the utility function
-		cpuPercent := utils.CalculateDockerCPUPercent(
+		cpuPercent := CalculateDockerCPUPercent(
 			statsJSON.PreCPUStats.CPUUsage.TotalUsage,
 			statsJSON.PreCPUStats.SystemUsage,
 			&statsJSON,
@@ -44,11 +43,11 @@ func DockerHardwareInfo(dockerAdapter adapters.DockerAdapter) func(ctx context.C
 		cpuMetric, _ := utils.NewMetric("node_cpu_usage", cpuPercent, utils.Float)
 		state.AddMetric(cpuMetric)
 
-		memoryUsed := utils.CalculateDockerMemoryUsed(statsJSON.MemoryStats)
+		memoryUsed := CalculateDockerMemoryUsed(statsJSON.MemoryStats)
 		memUsedMetric, _ := utils.NewMetric("node_memory_used", memoryUsed, utils.Float)
 		state.AddMetric(memUsedMetric)
 
-		memLimitMetric, _ := utils.NewMetric("node_memory_total", statsJSON.MemoryStats.Limit, utils.Int)
+		memLimitMetric, _ := utils.NewMetric(keywords.NodeMemoryTotal, statsJSON.MemoryStats.Limit, utils.Int)
 		state.AddMetric(memLimitMetric)
 
 		return nil

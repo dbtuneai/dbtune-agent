@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -14,7 +15,7 @@ import (
 func ValidateStruct(s interface{}) error {
 	// Check for nil input
 	if s == nil {
-		return fmt.Errorf("Invalid validation: input is nil")
+		return fmt.Errorf("invalid validation: input is nil")
 	}
 
 	validate := validator.New()
@@ -22,7 +23,7 @@ func ValidateStruct(s interface{}) error {
 	err := validate.Struct(s)
 	if err != nil {
 		if _, ok := err.(*validator.InvalidValidationError); ok {
-			return fmt.Errorf("Invalid validation: %v", err)
+			return fmt.Errorf("invalid validation: %v", err)
 		}
 
 		var errMsgs []string
@@ -38,7 +39,7 @@ func ValidateStruct(s interface{}) error {
 			errMsgs = append(errMsgs, fmt.Sprintf("%s is required or invalid. %v", fieldName, err.Error()))
 		}
 
-		return fmt.Errorf(strings.Join(errMsgs, ", "))
+		return errors.New(strings.Join(errMsgs, ", "))
 	}
 
 	return nil

@@ -1,45 +1,44 @@
-package adapters
+package docker
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/collectors"
+	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
+	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
-	"github.com/spf13/viper"
 )
 
 // DockerContainerAdapter works with the container name and by
 // communicating with the docker Unix socket to get stats like memory usage,
 // number of CPUs available and memory limit
 type DockerContainerAdapter struct {
-	DefaultPostgreSQLAdapter
-	ContainerName string
-	dockerClient  *client.Client
+	agent.CommonAgent
+	Config            Config
+	dockerClient      *client.Client
+	GuardrailSettings guardrails.Config
+	PGDriver          *pgxpool.Pool
 }
 
 func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
-	// Bind environment variables
-	viper.BindEnv("docker.container_name", "DBT_DOCKER_CONTAINER_NAME")
-	viper.BindEnv("dbtune.database_id", "DBT_DATABASE_ID")
-
 	// Get required configuration
-	containerName := viper.GetString("docker.container_name")
-	if containerName == "" {
-		return nil, fmt.Errorf("docker container name not configured (docker.container_name)")
+	dockerConfig, err := ConfigFromViper(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate settings for docker %w", err)
 	}
 
-	defaultAdapter, err := CreateDefaultPostgreSQLAdapter()
+	guardrailSettings, err := guardrails.ConfigFromViper(nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create base PostgreSQL adapter: %w", err)
+		return nil, fmt.Errorf("failed to validate settings for guardrails %w", err)
 	}
 
 	// Create Docker client
@@ -48,80 +47,86 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 		return nil, fmt.Errorf("failed to create Docker client: %w", err)
 	}
 
-	dockerAdapter := &DockerContainerAdapter{
-		DefaultPostgreSQLAdapter: *defaultAdapter,
-		ContainerName:            containerName,
-		dockerClient:             cli,
+	pgConfig, err := pg.ConfigFromViper(nil)
+	if err != nil {
+		return nil, err
 	}
 
-	// Override the metrics state to use Docker-specific collectors
-	dockerAdapter.MetricsState.Collectors = DockerCollectors(dockerAdapter)
+	dbpool, err := pgxpool.New(context.Background(), pgConfig.ConnectionURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create PG driver: %w", err)
+	}
+
+	commonAgent := agent.CreateCommonAgent()
+
+	dockerAdapter := &DockerContainerAdapter{
+		CommonAgent:       *commonAgent,
+		Config:            dockerConfig,
+		dockerClient:      cli,
+		GuardrailSettings: guardrailSettings,
+		PGDriver:          dbpool,
+	}
+	collectors := DockerCollectors(dockerAdapter)
+	dockerAdapter.InitCollectors(collectors)
 
 	return dockerAdapter, nil
-}
-
-func (d *DockerContainerAdapter) GetContainerName() string {
-	return d.ContainerName
-}
-
-func (d *DockerContainerAdapter) GetDockerClient() *client.Client {
-	return d.dockerClient
 }
 
 // DockerCollectors returns the list of collectors for Docker, replacing system metrics
 // with Docker-specific ones while keeping database-specific collectors
 func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
+	pgDriver := adapter.PGDriver
 	return []agent.MetricCollector{
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  collectors.PGStatStatements(adapter),
+			Collector:  pg.PGStatStatements(pgDriver),
 		},
 		{
 			Key:        "database_transactions_per_second",
 			MetricType: "int",
-			Collector:  collectors.TransactionsPerSecond(adapter),
+			Collector:  pg.TransactionsPerSecond(pgDriver),
 		},
 		{
 			Key:        "database_active_connections",
 			MetricType: "int",
-			Collector:  collectors.ActiveConnections(adapter),
+			Collector:  pg.ActiveConnections(pgDriver),
 		},
 		{
 			Key:        "system_db_size",
 			MetricType: "int",
-			Collector:  collectors.DatabaseSize(adapter),
+			Collector:  pg.DatabaseSize(pgDriver),
 		},
 		{
 			Key:        "database_autovacuum_count",
 			MetricType: "int",
-			Collector:  collectors.Autovacuum(adapter),
+			Collector:  pg.Autovacuum(pgDriver),
 		},
 		{
 			Key:        "server_uptime",
 			MetricType: "float",
-			Collector:  collectors.Uptime(adapter),
+			Collector:  pg.Uptime(pgDriver),
 		},
 		{
 			Key:        "database_cache_hit_ratio",
 			MetricType: "float",
-			Collector:  collectors.BufferCacheHitRatio(adapter),
+			Collector:  pg.BufferCacheHitRatio(pgDriver),
 		},
 		{
 			Key:        "database_wait_events",
 			MetricType: "int",
-			Collector:  collectors.WaitEvents(adapter),
+			Collector:  pg.WaitEvents(pgDriver),
 		},
 		{
 			Key:        "hardware",
 			MetricType: "int",
-			Collector:  collectors.DockerHardwareInfo(adapter),
+			Collector:  DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
 		},
 		// Use it for testing
 		//{
 		//	Key:        "failing_slow_queries",
 		//	MetricType: "int",
-		//	Collector:  collectors.ArtificiallyFailingQueries(pgAdapter),
+		//	Collector:  pg.ArtificiallyFailingQueries(pgAdapter),
 		//},
 	}
 }
@@ -132,19 +137,20 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 	var systemInfo []utils.FlatValue
 
 	// Get PostgreSQL version using the existing collector
-	pgVersion, err := collectors.PGVersion(d)
+	pgDriver := d.PGDriver
+	pgVersion, err := pg.PGVersion(pgDriver)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get max connections from PostgreSQL
-	maxConnections, err := collectors.MaxConnections(d)
+	maxConnections, err := pg.MaxConnections(pgDriver)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get container stats
-	stats, err := d.dockerClient.ContainerStats(context.Background(), d.ContainerName, false)
+	stats, err := d.dockerClient.ContainerStats(context.Background(), d.Config.ContainerName, false)
 	if err != nil {
 		return nil, err
 	}
@@ -158,27 +164,27 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 	}
 
 	// Get container info for additional details
-	containerInfo, err := d.dockerClient.ContainerInspect(context.Background(), d.ContainerName)
+	containerInfo, err := d.dockerClient.ContainerInspect(context.Background(), d.Config.ContainerName)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create metrics
-	version, _ := utils.NewMetric("system_info_pg_version", pgVersion, utils.String)
-	maxConnectionsMetric, _ := utils.NewMetric("pg_max_connections", maxConnections, utils.Int)
+	version, _ := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
+	maxConnectionsMetric, _ := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
 
 	// Memory info
-	memLimitMetric, _ := utils.NewMetric("node_memory_total", statsJSON.MemoryStats.Limit, utils.Int)
+	memLimitMetric, _ := utils.NewMetric(keywords.NodeMemoryTotal, statsJSON.MemoryStats.Limit, utils.Int)
 
 	// CPU info
 	noCPUs := float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
 	if statsJSON.CPUStats.OnlineCPUs > 0 {
 		noCPUs = float64(statsJSON.CPUStats.OnlineCPUs)
 	}
-	cpuMetric, _ := utils.NewMetric("node_cpu_count", noCPUs, utils.Float)
+	cpuMetric, _ := utils.NewMetric(keywords.NodeCPUCount, noCPUs, utils.Float)
 
 	// Container info
-	containerOS, _ := utils.NewMetric("system_info_os", "linux", utils.String) // Docker containers are Linux-based
+	containerOS, _ := utils.NewMetric(keywords.NodeOSInfo, "linux", utils.String) // Docker containers are Linux-based
 	containerPlatform, _ := utils.NewMetric("system_info_platform", "docker", utils.String)
 	containerVersion, _ := utils.NewMetric("system_info_platform_version", containerInfo.Config.Image, utils.String)
 
@@ -195,11 +201,11 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 	return systemInfo, nil
 }
 
-func (d *DockerContainerAdapter) Guardrails() *agent.GuardrailSignal {
+func (d *DockerContainerAdapter) Guardrails() *guardrails.Signal {
 	// Get container stats
-	stats, err := d.dockerClient.ContainerStats(context.Background(), d.ContainerName, false)
+	stats, err := d.dockerClient.ContainerStats(context.Background(), d.Config.ContainerName, false)
 	if err != nil {
-		d.Logger().Printf("guardrail: could not fetch docker stats: %v", err)
+		d.Logger().Warnf("guardrail: could not fetch docker stats: %v", err)
 		return nil
 	}
 	defer stats.Body.Close()
@@ -208,7 +214,7 @@ func (d *DockerContainerAdapter) Guardrails() *agent.GuardrailSignal {
 	var statsJSON container.StatsResponse
 	decoder := json.NewDecoder(stats.Body)
 	if err := decoder.Decode(&statsJSON); err != nil {
-		d.Logger().Printf("guardrail: could not decode docker stats: %v", err)
+		d.Logger().Warnf("guardrail: could not decode docker stats: %v", err)
 		return nil
 	}
 
@@ -216,25 +222,29 @@ func (d *DockerContainerAdapter) Guardrails() *agent.GuardrailSignal {
 	if statsJSON.MemoryStats.Limit > 0 {
 		memoryLimit := statsJSON.MemoryStats.Limit
 
-		memoryUsagePercent := utils.CalculateDockerMemoryUsed(statsJSON.MemoryStats) / float64(memoryLimit) * 100
+		memoryUsagePercent := CalculateDockerMemoryUsed(statsJSON.MemoryStats) / float64(memoryLimit) * 100
 		d.Logger().Debugf("guardrail: memory percentage is %f", memoryUsagePercent)
-		if memoryUsagePercent > d.GuardrailConfig.MemoryThreshold {
-			signal := &agent.GuardrailSignal{
-				Level: agent.Critical,
-				Type:  agent.Memory,
+		if memoryUsagePercent > d.GuardrailSettings.MemoryThreshold {
+			return &guardrails.Signal{
+				Level: guardrails.Critical,
+				Type:  guardrails.Memory,
 			}
-			return signal
 		}
 	} else {
-		d.Logger().Debug("guardrail: could not fetch memory limit")
+		d.Logger().Warn("guardrail: could not fetch memory limit")
 	}
 
 	return nil
 }
 
+func (d *DockerContainerAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
+	return pg.GetActiveConfig(d.PGDriver, context.Background(), d.Logger())
+}
+
 func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
 	d.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
+	ctx := context.Background()
 	// Apply the configuration with ALTER
 	for _, knob := range proposedConfig.KnobsOverrides {
 		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
@@ -243,12 +253,9 @@ func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfi
 		}
 
 		// We make the assumption every setting is a number parsed as float
-		query := fmt.Sprintf(`ALTER SYSTEM SET "%s" = %s;`, knobConfig.Name, strconv.FormatFloat(knobConfig.Setting.(float64), 'f', -1, 64))
-		d.Logger().Debugf(`Executing: %s`, query)
-
-		_, err = d.pgDriver.Exec(context.Background(), query)
+		err = pg.AlterSystem(d.PGDriver, knobConfig.Name, strconv.FormatFloat(knobConfig.Setting.(float64), 'f', -1, 64))
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to alter system: %w", err)
 		}
 	}
 
@@ -257,32 +264,18 @@ func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfi
 		d.Logger().Warn("Restarting service")
 
 		// Execute docker restart command
-		err := d.dockerClient.ContainerRestart(context.Background(), d.ContainerName, container.StopOptions{})
+		err := d.dockerClient.ContainerRestart(ctx, d.Config.ContainerName, container.StopOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to restart PostgreSQL service: %w", err)
 		}
 
-		// Wait for PostgreSQL to be back online with retries
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
-		defer cancel()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return fmt.Errorf("timeout waiting for PostgreSQL to come back online")
-			case <-time.After(1 * time.Second):
-				// Try to execute a simple query
-				_, err := d.pgDriver.Exec(ctx, "SELECT 1")
-				if err == nil {
-					d.Logger().Info("PostgreSQL is back online")
-					return nil
-				}
-				d.Logger().Debug("PostgreSQL not ready yet, retrying...")
-			}
+		err = pg.WaitPostgresReady(d.PGDriver)
+		if err != nil {
+			return fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)
 		}
 	} else {
 		// Reload database when everything is applied
-		_, err := d.pgDriver.Exec(context.Background(), "SELECT pg_reload_conf();")
+		err := pg.ReloadConfig(d.PGDriver)
 		if err != nil {
 			return err
 		}

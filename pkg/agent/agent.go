@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +15,8 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
+	"github.com/dbtuneai/agent/pkg/dbtune"
+	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 
 	"github.com/hashicorp/go-retryablehttp"
@@ -119,6 +120,11 @@ type AgentLooper interface {
 	//   "no_cpu": { "type": "int", "value": 4 },
 	//   "total_memory": { "type": "bytes", "value": 1024 },
 	// }
+	// Importantly, you should never return a partial view of the SystemInfo, that is
+	// if one step fails, you should abort and not return any metrics, just an error.
+	// This is because if only a partial amount of the SystemInfo can be observed, then
+	// it means that DBtune will detect this as the system information having been changed
+	// and potentially abort an inprogress tuning session.
 	GetSystemInfo() ([]utils.FlatValue, error)
 	SendSystemInfo([]utils.FlatValue) error
 
@@ -137,10 +143,10 @@ type AgentLooper interface {
 	// or a rate of disk growth that is more than usual and not acceptable.
 	// Returns nil if no guardrail is triggered, otherwise returns the type of guardrail
 	// and the metric that is monitored.
-	Guardrails() *GuardrailSignal
+	Guardrails() *guardrails.Signal
 	// SendGuardrailSignal sends a signal to the DBtune server that something is heading towards a failure.
 	// The signal will be send maximum once every 15 seconds.
-	SendGuardrailSignal(signal GuardrailSignal) error
+	SendGuardrailSignal(signal guardrails.Signal) error
 
 	// GetLogger returns the logger for the agent
 	Logger() *log.Logger
@@ -149,33 +155,6 @@ type AgentLooper interface {
 type AgentPayload struct {
 	AgentVersion   string `json:"agent_version"`
 	AgentStartTime string `json:"agent_start_time"`
-}
-
-type CriticalityLevel string
-
-const (
-	// Critical is a guardrail that is critical to the operation of the database
-	// and should be reverted immediately. This also means that the DBtune server
-	// will revert to the baseline configuration to stabilise the system before recommending
-	// a new configuration.
-	Critical CriticalityLevel = "critical"
-	// NonCritical is a guardrail that is not critical
-	// to the operation of the database, but a new configuration
-	// is recommended to be applied.
-	NonCritical CriticalityLevel = "non-critical"
-)
-
-type Type string
-
-const (
-	// Memory is a guardrail that is related to the memory of the database
-	Memory         Type = "memory"
-	FreeableMemory Type = "freeable_memory"
-)
-
-type GuardrailSignal struct {
-	Level CriticalityLevel `json:"level"`
-	Type  Type             `json:"type"`
 }
 
 type IOCounterStat struct {
@@ -253,27 +232,8 @@ const (
 	ActiveConnections MetricKey = "active_connections"
 )
 
-func (state *MetricsState) RemoveKey(key MetricKey) error {
-	// Remove the key from the collectors
-	// Check if the state is nil
-	if state.Collectors == nil {
-		return errors.New("state is nil")
-	}
-
-	// Iterate over the state to find the key
-	for i, mc := range state.Collectors {
-		if mc.Key == string(key) {
-			// Remove the MetricCollector by creating a new slice
-			state.Collectors = append((state.Collectors)[:i], (state.Collectors)[i+1:]...)
-			return nil // Successfully removed
-		}
-	}
-
-	return nil
-}
-
 type CommonAgent struct {
-	utils.ServerURLs
+	dbtune.ServerURLs
 	logger    *log.Logger
 	APIClient *retryablehttp.Client
 	// Time the agent started
@@ -301,7 +261,7 @@ func CreateCommonAgent() *CommonAgent {
 		logger.SetLevel(log.InfoLevel)
 	}
 
-	serverUrl, err := utils.CreateServerURLs()
+	serverUrl, err := dbtune.CreateServerURLs()
 	if err != nil {
 		logger.Fatalf("Error creating server URLs: %s", err)
 	}
@@ -324,6 +284,12 @@ func CreateCommonAgent() *CommonAgent {
 		APIClient:  client,
 		logger:     logger,
 		StartTime:  time.Now().UTC().Format(time.RFC3339),
+		MetricsState: MetricsState{
+			Collectors: []MetricCollector{},
+			Cache:      Caches{},
+			Mutex:      &sync.Mutex{},
+			Metrics:    []utils.FlatValue{},
+		},
 		// Default timeouts
 		CollectionTimeout: 20 * time.Second,
 		IndividualTimeout: 10 * time.Second,
@@ -363,6 +329,12 @@ func (a *CommonAgent) SendHeartbeat() error {
 	}
 
 	return nil
+}
+
+// Should be called after creating the common agent is created to attach the collectors.
+// You can also forgo this step if you create the common agent with the collectors already attached.
+func (a *CommonAgent) InitCollectors(collectors []MetricCollector) {
+	a.MetricsState.Collectors = collectors
 }
 
 // GetMetrics will have a default implementation to handle gracefully
@@ -453,9 +425,6 @@ func (a *CommonAgent) SendMetrics(metrics []utils.FlatValue) error {
 		return err
 	}
 
-	a.Logger().Debug("Metrics body payload")
-	a.Logger().Debug(string(jsonData))
-
 	resp, err := a.APIClient.Post(a.ServerURLs.PostMetrics(), "application/json", jsonData)
 	if err != nil {
 		return err
@@ -464,8 +433,8 @@ func (a *CommonAgent) SendMetrics(metrics []utils.FlatValue) error {
 
 	if resp.StatusCode != 204 {
 		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Debug("Failed to send metrics. Response body: ", string(body))
-		return errors.New(fmt.Sprintf("Failed to send metrics, code: %d", resp.StatusCode))
+		a.Logger().Warnf("Failed to send metrics. Response body: %s", string(body))
+		return fmt.Errorf("failed to send metrics, code: %d", resp.StatusCode)
 	}
 
 	return nil
@@ -481,9 +450,6 @@ func (a *CommonAgent) SendSystemInfo(systemInfo []utils.FlatValue) error {
 		return err
 	}
 
-	// a.Logger().Debug("System info body payload")
-	// a.Logger().Debug(string(jsonData))
-
 	req, _ := retryablehttp.NewRequest("PUT", a.ServerURLs.PostSystemInfo(), bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -495,8 +461,8 @@ func (a *CommonAgent) SendSystemInfo(systemInfo []utils.FlatValue) error {
 
 	if resp.StatusCode != 204 && resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Error("Failed to send system info. Response body: ", string(body))
-		return errors.New(fmt.Sprintf("Failed to send syste info, code: %d", resp.StatusCode))
+		a.Logger().Errorf("Failed to send system info. Response body: %s", string(body))
+		return fmt.Errorf("failed to send system info, code: %d", resp.StatusCode)
 	}
 
 	return nil
@@ -514,9 +480,6 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 		return err
 	}
 
-	// a.Logger().Debug("Configuration info body payload")
-	// a.Logger().Debug(string(jsonData))
-
 	resp, err := a.APIClient.Post(a.ServerURLs.PostActiveConfig(), "application/json", jsonData)
 	if err != nil {
 		return err
@@ -525,8 +488,8 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 
 	if resp.StatusCode != 204 && resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Error("Failed to send configuration info. Response body: ", string(body))
-		return fmt.Errorf("Failed to send config info, code: %d", resp.StatusCode)
+		a.Logger().Errorf("Failed to send configuration info. Response body: %s", string(body))
+		return fmt.Errorf("failed to send config info, code: %d", resp.StatusCode)
 	}
 
 	return nil
@@ -560,21 +523,12 @@ func (a *CommonAgent) GetProposedConfig() (*ProposedConfigResponse, error) {
 
 }
 
-func (a *CommonAgent) Guardrails() *GuardrailSignal {
-	return nil
-}
-
 // SendGuardrailSignal sends a guardrail signal to the DBtune server
 // that something is heading towards a failure.
-func (a *CommonAgent) SendGuardrailSignal(signal GuardrailSignal) error {
+func (a *CommonAgent) SendGuardrailSignal(signal guardrails.Signal) error {
 	a.Logger().Warnf("🚨 Sending Guardrail, level: %s, type: %s", signal.Level, signal.Type)
 
-	payload := GuardrailSignal{
-		Level: signal.Level,
-		Type:  signal.Type,
-	}
-
-	jsonData, err := json.Marshal(payload)
+	jsonData, err := json.Marshal(signal)
 	if err != nil {
 		return err
 	}

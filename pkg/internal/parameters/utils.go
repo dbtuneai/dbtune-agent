@@ -1,7 +1,6 @@
 package parameters
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -14,5 +13,5 @@ func FindRecommendedKnob(config []agent.PGConfigRow, knob string) (agent.PGConfi
 			return c, nil
 		}
 	}
-	return agent.PGConfigRow{}, errors.New(fmt.Sprintf("Knob %s not found in configuration", knob))
+	return agent.PGConfigRow{}, fmt.Errorf("knob %s not found in configuration", knob)
 }

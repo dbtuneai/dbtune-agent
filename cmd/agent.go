@@ -4,8 +4,11 @@ import (
 	"flag"
 	"log"
 
-	"github.com/dbtuneai/agent/pkg/adapters"
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/aiven"
+	"github.com/dbtuneai/agent/pkg/docker"
+	"github.com/dbtuneai/agent/pkg/pgprem"
+	"github.com/dbtuneai/agent/pkg/rds"
 	"github.com/dbtuneai/agent/pkg/runner"
 	"github.com/spf13/viper"
 )
@@ -14,7 +17,9 @@ func main() {
 	// Define flags
 	useDocker := flag.Bool("docker", false, "Use Docker adapter")
 	useAurora := flag.Bool("aurora", false, "Use Aurora adapter")
+	useRDS := flag.Bool("rds", false, "Use RDS adapater")
 	useAiven := flag.Bool("aiven", false, "Use Aiven PostgreSQL adapter")
+	useLocal := flag.Bool("local", false, "Use local PostgreSQL adapter")
 	flag.Parse()
 
 	// Set the file name of the configurations file
@@ -42,22 +47,34 @@ func main() {
 	// Create the appropriate adapter based on flags
 	switch {
 	case *useDocker:
-		adapter, err = adapters.CreateDockerContainerAdapter()
+		adapter, err = docker.CreateDockerContainerAdapter()
 		if err != nil {
 			log.Fatalf("Failed to create Docker adapter: %v", err)
 		}
+	case *useRDS:
+		adapter, err = rds.CreateRDSAdapter(nil)
+		if err != nil {
+			log.Fatalf("Failed to create Aurora RDS adapter: %v", err)
+		}
 	case *useAurora:
-		adapter, err = adapters.CreateAuroraRDSAdapter()
+		adapter, err = rds.CreateAuroraRDSAdapter()
 		if err != nil {
 			log.Fatalf("Failed to create Aurora RDS adapter: %v", err)
 		}
 	case *useAiven:
-		adapter, err = adapters.CreateAivenPostgreSQLAdapter()
+		adapter, err = aiven.CreateAivenPostgreSQLAdapter()
 		if err != nil {
 			log.Fatalf("Failed to create Aiven PostgreSQL adapter: %v", err)
 		}
+	case *useLocal:
+		adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
+		if err != nil {
+			log.Fatalf("Failed to create local PostgreSQL adapter: %v", err)
+		}
 	default:
-		adapter, err = adapters.CreateDefaultPostgreSQLAdapter()
+		// TODO(eddie): We should error out here.
+		// I figure it's an error if --<which> not specified.
+		adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
 		if err != nil {
 			log.Fatalf("Failed to create PostgreSQL adapter: %v", err)
 		}
