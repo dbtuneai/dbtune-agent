@@ -331,6 +331,8 @@ func (a *CommonAgent) SendHeartbeat() error {
 	return nil
 }
 
+// Should be called after creating the common agent is created to attach the collectors.
+// You can also forgo this step if you create the common agent with the collectors already attached.
 func (a *CommonAgent) InitCollectors(collectors []MetricCollector) {
 	a.MetricsState.Collectors = collectors
 }

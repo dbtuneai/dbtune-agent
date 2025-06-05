@@ -28,11 +28,11 @@ const (
 // AivenPostgreSQLAdapter represents an adapter for connecting to Aiven PostgreSQL services
 type AivenPostgreSQLAdapter struct {
 	agent.CommonAgent
-	Config     Config
-	Client     aivenclient.Client
-	State      *State
-	Gaurdrails guardrails.Config
-	PGDriver   *pgPool.Pool
+	Config            Config
+	Client            aivenclient.Client
+	State             *State
+	GuardrailSettings guardrails.Config
+	PGDriver          *pgPool.Pool
 }
 
 // CreateAivenPostgreSQLAdapter creates a new Aiven PostgreSQL adapter
@@ -45,7 +45,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 
 	guardrailSettings, err := guardrails.ConfigFromViper(nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to validate settings for gaurdrails %w", err)
+		return nil, fmt.Errorf("failed to validate settings for guardrails %w", err)
 	}
 
 	pgConfig, err := pg.ConfigFromViper(nil)
@@ -87,12 +87,12 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 
 	// Create adapter
 	adapter := &AivenPostgreSQLAdapter{
-		CommonAgent: *commonAgent,
-		Config:      aivenConfig,
-		Client:      aivenClient,
-		State:       state,
-		Gaurdrails:  guardrailSettings,
-		PGDriver:    pgPool,
+		CommonAgent:       *commonAgent,
+		Config:            aivenConfig,
+		Client:            aivenClient,
+		State:             state,
+		GuardrailSettings: guardrailSettings,
+		PGDriver:          pgPool,
 	}
 
 	// Initialize collectors
@@ -352,7 +352,7 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *guardrails.Signal {
 			},
 		)
 		if err != nil {
-			adapter.Logger().Errorf("Failed to get fetched metric for gaurdrail: %v", err)
+			adapter.Logger().Errorf("Failed to get fetched metric for guardrail: %v", err)
 			return nil
 		}
 		memAvailableMetric := metrics[MEM_AVAILABLE_KEY]
@@ -365,11 +365,11 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *guardrails.Signal {
 
 	memoryAvailablePercentage := lastMemoryAvailablePercentage
 
-	if memoryAvailablePercentage > adapter.Gaurdrails.MemoryThreshold {
+	if memoryAvailablePercentage > adapter.GuardrailSettings.MemoryThreshold {
 		adapter.Logger().Warnf(
 			"Memory usage: %.2f%% is over threshold %.2f%%, triggering critical guardrail",
 			memoryAvailablePercentage,
-			adapter.Gaurdrails.MemoryThreshold,
+			adapter.GuardrailSettings.MemoryThreshold,
 		)
 		return &guardrails.Signal{
 			Level: guardrails.Critical,

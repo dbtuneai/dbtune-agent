@@ -13,7 +13,6 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/jackc/pgx/v5/pgxpool"
-	pgPool "github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
@@ -39,7 +38,7 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 
 	guardrailSettings, err := guardrails.ConfigFromViper(nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to validate settings for gaurdrails %w", err)
+		return nil, fmt.Errorf("failed to validate settings for guardrails %w", err)
 	}
 
 	// Create Docker client
@@ -53,7 +52,7 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 		return nil, err
 	}
 
-	dbpool, err := pgPool.New(context.Background(), pgConfig.ConnectionURL)
+	dbpool, err := pgxpool.New(context.Background(), pgConfig.ConnectionURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PG driver: %w", err)
 	}

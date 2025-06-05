@@ -72,9 +72,9 @@ func AivenHardwareInfo(
 			metricState.AddMetric(totalIOPSMetric)
 		}
 
-		// NOTE: Caching. As we need to re-fetch metrics for gaurdrails, and this API call
+		// NOTE: Caching. As we need to re-fetch metrics for guardrails, and this API call
 		// sends down a lot of data, we cache the results for the memory usage, which is
-		// used by the gaurdrails.
+		// used by the guardrails.
 		// The code will still work without this block.
 		memAvailable := fetchedMetrics[MEM_AVAILABLE_KEY]
 		if memAvailable.Error != nil {

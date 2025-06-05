@@ -34,12 +34,12 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 	var config Config
 	config, err = ConfigFromViper(keyValue)
 	if err != nil {
-		return nil, fmt.Errorf("failed to bind RDS config: %w", err)
+		return nil, fmt.Errorf("failed to bind config from key %s: %w", keyValue, err)
 	}
 
 	guardrailSettings, err := guardrails.ConfigFromViper(nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to validate settings for gaurdrails %w", err)
+		return nil, fmt.Errorf("failed to validate settings for guardrails %w", err)
 	}
 
 	ctx := context.Background()
@@ -311,7 +311,7 @@ func CreateAuroraRDSAdapter() (*AuroraRDSAdapter, error) {
 	configKey := AURORA_CONFIG_KEY
 	rdsAdapter, err := CreateRDSAdapter(&configKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create RDS adapter: %w", err)
+		return nil, fmt.Errorf("failed to create AuroraRDS adapter: %w", err)
 	}
 	return &AuroraRDSAdapter{*rdsAdapter}, nil
 }
