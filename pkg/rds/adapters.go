@@ -271,7 +271,7 @@ func (adapter *RDSAdapter) Guardrails() *guardrails.Signal {
 
 		memoryUsagePercent := (float64(memoryUsageBytes) / float64(totalMemoryBytes)) * 100
 
-		adapter.Logger().Warnf("Memory usage: %.2f%%", memoryUsagePercent)
+		adapter.Logger().Debugf("Memory usage: %.2f%%", memoryUsagePercent)
 		if memoryUsagePercent > adapter.GuardrailSettings.MemoryThreshold {
 			return &guardrails.Signal{
 				Level: guardrails.Critical,
@@ -289,7 +289,7 @@ func (adapter *RDSAdapter) Guardrails() *guardrails.Signal {
 		}
 		freeableMemoryPercent := (float64(freeableMemoryBytes) / float64(totalMemoryBytes)) * 100
 
-		adapter.Logger().Warnf("Freeable memory: %.2f%%", freeableMemoryPercent)
+		adapter.Logger().Debugf("Freeable memory: %.2f%%", freeableMemoryPercent)
 		if freeableMemoryPercent < (100 - adapter.GuardrailSettings.MemoryThreshold) {
 			return &guardrails.Signal{
 				Level: guardrails.Critical,
