@@ -115,8 +115,6 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 	adapter.Logger().Println("Collecting system info")
 
-	var systemInfo []utils.FlatValue
-
 	pgDriver := adapter.pgDriver
 	pgVersion, err := pg.PGVersion(pgDriver)
 	if err != nil {
@@ -133,11 +131,6 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 		return nil, err
 	}
 
-	totalMemory, err := utils.NewMetric(keywords.NodeMemoryTotal, memoryInfo.Total, utils.Int)
-	if err != nil {
-		return nil, err
-	}
-
 	hostInfo, err := host.Info()
 	if err != nil {
 		return nil, err
@@ -148,22 +141,34 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 		return nil, err
 	}
 
+	diskType, err := GetDiskType(adapter.pgDriver)
+	if err != nil {
+		adapter.Logger().Warnf("Error getting disk type: %v", err)
+	}
+
+	// Convert into metrics
+	totalMemory, err := utils.NewMetric(keywords.NodeMemoryTotal, memoryInfo.Total, utils.Int)
+	if err != nil {
+		return nil, err
+	}
 	version, _ := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
 	hostOS, _ := utils.NewMetric(keywords.NodeOSInfo, hostInfo.OS, utils.String)
 	platform, _ := utils.NewMetric("system_info_platform", hostInfo.Platform, utils.String)
 	platformVersion, _ := utils.NewMetric("system_info_platform_version", hostInfo.PlatformVersion, utils.String)
 	maxConnectionsMetric, _ := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
 	noCPUsMetric, _ := utils.NewMetric(keywords.NodeCPUCount, noCPUs, utils.Int)
-
-	systemInfo = append(systemInfo, version, totalMemory, hostOS, platformVersion, platform, maxConnectionsMetric, noCPUsMetric)
-
-	diskType, err := GetDiskType(adapter.pgDriver)
-	if err != nil {
-		adapter.Logger().Warnf("Error getting disk type: %v", err)
-	}
-
 	diskTypeMetric, _ := utils.NewMetric(keywords.NodeStorageType, diskType, utils.String)
-	systemInfo = append(systemInfo, diskTypeMetric)
+
+	systemInfo := []utils.FlatValue{
+		version,
+		totalMemory,
+		hostOS,
+		platformVersion,
+		platform,
+		maxConnectionsMetric,
+		noCPUsMetric,
+		diskTypeMetric,
+	}
 
 	return systemInfo, nil
 }

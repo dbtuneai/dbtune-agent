@@ -110,30 +110,32 @@ func (adapter *RDSAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 		return nil, err
 	}
 
-	// Get the PostgreSQL specific info
+	// PGVersion
 	pgVersion, err := pg.PGVersion(adapter.PGDriver)
 	if err != nil {
-		adapter.Logger().Warnf("Failed to get PostgreSQL version: %v", err)
-	} else {
-		version, err := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
-		if err != nil {
-			adapter.Logger().Errorf("Failed to create PostgreSQL version metric: %v", err)
-		} else {
-			info = append(info, version)
-		}
+		return nil, err
 	}
 
+	version, err := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
+	if err != nil {
+		adapter.Logger().Errorf("Failed to create PostgreSQL version metric: %v", err)
+		return nil, err
+	}
+	info = append(info, version)
+
+	// MaxConnections
 	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
 	if err != nil {
-		adapter.Logger().Warnf("Failed to get PostgreSQL max connections: %v", err)
-	} else {
-		maxConnectionsMetric, err := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
-		if err != nil {
-			adapter.Logger().Errorf("Failed to create PostgreSQL max connections metric: %v", err)
-		} else {
-			info = append(info, maxConnectionsMetric)
-		}
+		return nil, err
 	}
+	maxConnectionsMetric, err := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
+
+	if err != nil {
+		adapter.Logger().Errorf("Failed to create PostgreSQL max connections metric: %v", err)
+		return nil, err
+	}
+	info = append(info, maxConnectionsMetric)
+
 	return info, nil
 }
 

@@ -9,7 +9,7 @@ import (
 
 const (
 	RDS_CONFIG_KEY    = "rds"
-	AURORA_CONFIG_KEY = "aurora-rds"
+	AURORA_CONFIG_KEY = "rds-aurora"
 )
 
 // For now, this suffices for both RDS and AuroraRDS.

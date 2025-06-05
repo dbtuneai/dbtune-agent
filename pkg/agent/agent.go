@@ -120,6 +120,11 @@ type AgentLooper interface {
 	//   "no_cpu": { "type": "int", "value": 4 },
 	//   "total_memory": { "type": "bytes", "value": 1024 },
 	// }
+	// Importantly, you should never return a partial view of the SystemInfo, that is
+	// if one step fails, you should abort and not return any metrics, just an error.
+	// This is because if only a partial amount of the SystemInfo can be observed, then
+	// it means that DBtune will detect this as the system information having been changed
+	// and potentially abort an inprogress tuning session.
 	GetSystemInfo() ([]utils.FlatValue, error)
 	SendSystemInfo([]utils.FlatValue) error
 

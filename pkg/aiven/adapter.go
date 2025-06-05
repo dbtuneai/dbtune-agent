@@ -105,8 +105,6 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 	adapter.Logger().Info("Collecting Aiven system info")
 
-	var systemInfo []utils.FlatValue
-
 	// Get service information from Aiven API
 	service, err := adapter.Client.ServiceGet(
 		context.Background(),
@@ -148,16 +146,44 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error
 	}
 
 	// Create metrics
-	totalMemory, _ := utils.NewMetric(keywords.NodeMemoryTotal, totalMemoryBytes, utils.Int)
-	noCPUsMetric, _ := utils.NewMetric(keywords.NodeCPUCount, numCPUs, utils.Int)
-	version, _ := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
-	maxConnectionsMetric, _ := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
+	totalMemory, err := utils.NewMetric(keywords.NodeMemoryTotal, totalMemoryBytes, utils.Int)
+	if err != nil {
+		adapter.Logger().Errorf("Error creating total memory metric: %v", err)
+		return nil, err
+	}
+
+	noCPUsMetric, err := utils.NewMetric(keywords.NodeCPUCount, numCPUs, utils.Int)
+	if err != nil {
+		adapter.Logger().Errorf("Error creating number of CPUs metric: %v", err)
+		return nil, err
+	}
+	version, err := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
+	if err != nil {
+		adapter.Logger().Errorf("Error creating PostgreSQL version metric: %v", err)
+		return nil, err
+	}
 
 	// Aiven uses SSD storage
 	// TODO: Verify this? Can't find anything in their API or website that says this, but it's a reasonable assumption
-	diskTypeMetric, _ := utils.NewMetric(keywords.NodeStorageType, "SSD", utils.String)
+	diskTypeMetric, err := utils.NewMetric(keywords.NodeStorageType, "SSD", utils.String)
+	if err != nil {
+		adapter.Logger().Errorf("Error creating disk type metric: %v", err)
+		return nil, err
+	}
 
-	systemInfo = append(systemInfo, version, totalMemory, maxConnectionsMetric, noCPUsMetric, diskTypeMetric)
+	maxConnectionsMetric, err := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
+	if err != nil {
+		adapter.Logger().Errorf("Error creating max connections metric: %v", err)
+		return nil, err
+	}
+
+	systemInfo := []utils.FlatValue{
+		version,
+		totalMemory,
+		maxConnectionsMetric,
+		noCPUsMetric,
+		diskTypeMetric,
+	}
 
 	return systemInfo, nil
 }
