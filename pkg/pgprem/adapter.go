@@ -153,8 +153,8 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 	}
 	version, _ := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
 	hostOS, _ := utils.NewMetric(keywords.NodeOSInfo, hostInfo.OS, utils.String)
-	platform, _ := utils.NewMetric("system_info_platform", hostInfo.Platform, utils.String)
-	platformVersion, _ := utils.NewMetric("system_info_platform_version", hostInfo.PlatformVersion, utils.String)
+	platform, _ := utils.NewMetric(keywords.NodeOSPlatform, hostInfo.Platform, utils.String)
+	platformVersion, _ := utils.NewMetric(keywords.NodeOSPlatformVer, hostInfo.PlatformVersion, utils.String)
 	maxConnectionsMetric, _ := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
 	noCPUsMetric, _ := utils.NewMetric(keywords.NodeCPUCount, noCPUs, utils.Int)
 	diskTypeMetric, _ := utils.NewMetric(keywords.NodeStorageType, diskType, utils.String)

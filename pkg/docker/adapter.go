@@ -185,8 +185,8 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 
 	// Container info
 	containerOS, _ := utils.NewMetric(keywords.NodeOSInfo, "linux", utils.String) // Docker containers are Linux-based
-	containerPlatform, _ := utils.NewMetric("system_info_platform", "docker", utils.String)
-	containerVersion, _ := utils.NewMetric("system_info_platform_version", containerInfo.Config.Image, utils.String)
+	containerPlatform, _ := utils.NewMetric(keywords.NodeOSPlatform, "docker", utils.String)
+	containerVersion, _ := utils.NewMetric(keywords.NodeOSPlatformVer, containerInfo.Config.Image, utils.String)
 
 	systemInfo = append(systemInfo,
 		version,

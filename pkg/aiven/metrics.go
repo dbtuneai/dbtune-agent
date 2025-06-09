@@ -60,11 +60,11 @@ var MetricsKnown = map[MetricKnownName]struct {
 	EncodedType utils.MetricType
 }{
 	CPU_USAGE_KEY: {
-		RenameTo:    "node_cpu_usage",
+		RenameTo:    keywords.NodeCPUUsage,
 		EncodedType: utils.Percentage,
 	},
 	DISK_USAGE_KEY: { // TODO : We don't display this
-		RenameTo:    "node_disk_usage_percentage",
+		RenameTo:    keywords.NodeDiskUsedPercentage,
 		EncodedType: utils.Percentage,
 	},
 	DISK_IO_READ_KEY: {
@@ -76,23 +76,23 @@ var MetricsKnown = map[MetricKnownName]struct {
 		EncodedType: utils.Float,
 	},
 	LOAD_AVERAGE_KEY: { // TODO: Wut is this even? We also don't display this
-		RenameTo:    "node_load_average",
+		RenameTo:    keywords.NodeLoadAverage,
 		EncodedType: utils.Float,
 	},
 	MEM_AVAILABLE_KEY: { // TODO: Should this be converted to bytes? If so, modify frontend
-		RenameTo:    "node_memory_available_percentage",
+		RenameTo:    keywords.NodeMemoryAvailablePercentage,
 		EncodedType: utils.Percentage,
 	},
 	MEM_USAGE_KEY: { // TODO: Should this be converted to bytes? If so, modify frontend
-		RenameTo:    "node_memory_used_percentage",
+		RenameTo:    keywords.NodeMemoryUsedPercentage,
 		EncodedType: utils.Percentage,
 	},
 	NET_RECEIVE_KEY: { // TODO: We don't use this
-		RenameTo:    "node_net_receive", // I think this is some kind of average per second
+		RenameTo:    keywords.NodeNetworkReceivePerSecond, // I think this is some kind of average per second
 		EncodedType: utils.Float,
 	},
 	NET_SEND_KEY: { // TODO: We don't use this
-		RenameTo:    "node_net_send", // I think this is some kind of average per second
+		RenameTo:    keywords.NodeNetworkSendPerSecond, // I think this is some kind of average per second
 		EncodedType: utils.Float,
 	},
 }
