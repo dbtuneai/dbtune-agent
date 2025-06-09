@@ -66,31 +66,24 @@ func AivenHardwareInfo(
 		// Calculate the total IOPS from the read and write IOPS if exist
 		var readIOPSValue *float64
 		readIOPS, okRead := fetchedMetrics[DISK_IO_READ_KEY]
-		if okRead && readIOPS.Error == nil && readIOPS.Value != nil {
+		if okRead && readIOPS.Value != nil && readIOPS.Error == nil {
 			v, ok := readIOPS.Value.(float64)
 			if ok {
-				logger.Warnf("readIOPS.Value is not a float64: %v", readIOPS.Value)
-				readIOPSMetric, _ := utils.NewMetric(keywords.NodeDiskIOPSRead, v, utils.Float)
-				metricState.AddMetric(readIOPSMetric)
 				readIOPSValue = &v
 			}
 		}
-
 		var writeIOPSValue *float64
 		writeIOPS, okWrite := fetchedMetrics[DISK_IO_WRITES_KEY]
-		if okWrite && writeIOPS.Error == nil && writeIOPS.Value != nil {
+		if okWrite && writeIOPS.Value != nil && writeIOPS.Error == nil {
 			v, ok := writeIOPS.Value.(float64)
 			if ok {
-				logger.Warnf("writeIOPS.Value is not a float64: %v", writeIOPS.Value)
-				writeIOPSMetric, _ := utils.NewMetric(keywords.NodeDiskIOPSWrite, v, utils.Float)
-				metricState.AddMetric(writeIOPSMetric)
 				writeIOPSValue = &v
 			}
 		}
 
 		if readIOPSValue != nil && writeIOPSValue != nil {
 			totalIOPS := *readIOPSValue + *writeIOPSValue
-			totalIOPSMetric, _ := utils.NewMetric(keywords.NodeDiskIOPSTotal, totalIOPS, utils.Float)
+			totalIOPSMetric, _ := utils.NewMetric(keywords.NodeDiskIOPSTotalPerSecond, totalIOPS, utils.Float)
 			metricState.AddMetric(totalIOPSMetric)
 		}
 

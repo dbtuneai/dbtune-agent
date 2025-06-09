@@ -68,11 +68,11 @@ var MetricsKnown = map[MetricKnownName]struct {
 		EncodedType: utils.Percentage,
 	},
 	DISK_IO_READ_KEY: {
-		RenameTo:    keywords.NodeDiskIOPSRead,
+		RenameTo:    keywords.NodeDiskIOPSReadPerSecond,
 		EncodedType: utils.Float,
 	},
 	DISK_IO_WRITES_KEY: {
-		RenameTo:    keywords.NodeDiskIOPSWrite,
+		RenameTo:    keywords.NodeDiskIOPSWritePerSecond,
 		EncodedType: utils.Float,
 	},
 	LOAD_AVERAGE_KEY: { // TODO: Wut is this even? We also don't display this

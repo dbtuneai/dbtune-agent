@@ -60,17 +60,17 @@ func RDSHardwareInfo(
 			logger.Errorf("failed to get IOPS: %v", err)
 			return nil
 		}
-		readIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSRead, iops.ReadIOPS, utils.Float)
+		readIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSReadPerSecond, iops.ReadIOPS, utils.Float)
 		if err == nil {
 			metric_state.AddMetric(readIOPSMetric)
 		}
 
-		writeIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSWrite, iops.WriteIOPS, utils.Float)
+		writeIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSWritePerSecond, iops.WriteIOPS, utils.Float)
 		if err == nil {
 			metric_state.AddMetric(writeIOPSMetric)
 		}
 
-		totalIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSTotal, iops.TotalIOPS, utils.Float)
+		totalIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSTotalPerSecond, iops.TotalIOPS, utils.Float)
 		if err == nil {
 			metric_state.AddMetric(totalIOPSMetric)
 		}
