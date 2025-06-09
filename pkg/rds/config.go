@@ -2,6 +2,7 @@ package rds
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/spf13/viper"
@@ -65,4 +66,41 @@ func ConfigFromViper(keyValue string) (Config, error) {
 	}
 
 	return rdsConfig, nil
+}
+
+type DetectedConfig string
+
+const (
+	// Aurora was detected from the configuration.
+	Aurora DetectedConfig = "aurora"
+	// RDS was detected from the configuration.
+	RDS DetectedConfig = "rds"
+	// Neither was detected, it's something else.
+	None DetectedConfig = "none"
+)
+
+func DetectConfigFromConfigFile() DetectedConfig {
+	if viper.Sub(RDS_CONFIG_KEY) != nil {
+		return RDS
+	}
+	if viper.Sub(AURORA_CONFIG_KEY) != nil {
+		return Aurora
+	}
+	return None
+}
+
+func DetectConfigFromEnv() bool {
+	envKeysToDetect := []string{
+		"DBT_RDS_PARAMETER_GROUP_NAME",
+		"DBT_RDS_DATABASE_IDENTIFIER",
+		"DBT_AWS_ACCESS_KEY_ID",
+		"DBT_AWS_SECRET_ACCESS_KEY",
+		"DBT_AWS_REGION",
+	}
+	for _, envKey := range envKeysToDetect {
+		if os.Getenv(envKey) != "" {
+			return true
+		}
+	}
+	return false
 }

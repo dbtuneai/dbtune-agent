@@ -2,8 +2,10 @@ package aiven
 
 import (
 	"fmt"
+	"os"
 	"time"
 
+	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/spf13/viper"
 )
 
@@ -59,8 +61,33 @@ func ConfigFromViper(key *string) (Config, error) {
 		return Config{}, fmt.Errorf("unable to decode into struct: %v", err)
 	}
 
+	err = utils.ValidateStruct(&config)
+	if err != nil {
+		return Config{}, err
+	}
+
 	// Since we are specifying in units of seconds, but a raw int such as 30
 	// is interpreted as nanoseconds, we need to convert it
 	config.MetricResolution = time.Duration(config.MetricResolution) * time.Second
 	return config, nil
+}
+
+func DetectConfigFromConfigFile() bool {
+	return viper.Sub(DEFAULT_CONFIG_KEY) != nil
+}
+
+func DetectConfigFromEnv() bool {
+	envKeysToDetect := []string{
+		"DBT_AIVEN_API_TOKEN",
+		"DBT_AIVEN_PROJECT_NAME",
+		"DBT_AIVEN_SERVICE_NAME",
+	}
+
+	for _, envKey := range envKeysToDetect {
+		if os.Getenv(envKey) != "" {
+			return true
+		}
+	}
+
+	return false
 }
