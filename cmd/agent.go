@@ -134,7 +134,6 @@ func detectProvider() (string, error) {
 	if err == nil {
 		return "aiven", nil
 	}
-	log.Printf("aiven adapter error: %v", err)
 
 	// NOTE: Important this goes last, as it normally always exists as we usually
 	// have the `postgres: in the config file`
