@@ -2,16 +2,20 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/aiven"
 	"github.com/dbtuneai/agent/pkg/docker"
+	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/dbtuneai/agent/pkg/pgprem"
 	"github.com/dbtuneai/agent/pkg/rds"
 	"github.com/dbtuneai/agent/pkg/runner"
 	"github.com/spf13/viper"
 )
+
+const AVAILABLE_FLAGS = "--docker, --aurora, --rds, --aiven, --local"
 
 func main() {
 	// Define flags
@@ -72,13 +76,72 @@ func main() {
 			log.Fatalf("Failed to create local PostgreSQL adapter: %v", err)
 		}
 	default:
-		// TODO(eddie): We should error out here.
-		// I figure it's an error if --<which> not specified.
-		adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
+		provider, err := detectProvider()
 		if err != nil {
-			log.Fatalf("Failed to create PostgreSQL adapter: %v", err)
+			log.Fatal(
+				"No provider detected, please check your environemnt variables or specify one of the following flags: " + AVAILABLE_FLAGS,
+			)
+		}
+		log.Printf("Detected config for %s adapter", provider)
+		switch provider {
+		case "docker":
+			adapter, err = docker.CreateDockerContainerAdapter()
+		case "rds":
+			adapter, err = rds.CreateRDSAdapter(nil)
+		case "aurora":
+			adapter, err = rds.CreateAuroraRDSAdapter()
+		case "aiven":
+			adapter, err = aiven.CreateAivenPostgreSQLAdapter()
+		case "local":
+			adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
+		default:
+			log.Fatal("No provider detected, please check your environemnt variables or specify one of the following flags: " + AVAILABLE_FLAGS)
+		}
+		if err != nil {
+			log.Fatalf(
+				"Failed to create %s adapter. If you meant for a different adapter, please check your config and/or environment variables or specify one of the following flags: "+AVAILABLE_FLAGS+". Error: %v",
+				provider,
+				err,
+			)
 		}
 	}
-
 	runner.Runner(adapter)
+}
+
+// If no explicit provider is specified, we go through the list of available adapters
+// and see if we can initiate a successful configuration for any of them. With how we
+// have things structured, this is almost always going to be one of them as 'local'
+// matches off just the `postgres:` in the config file.
+func detectProvider() (string, error) {
+	var err error
+
+	_, err = docker.ConfigFromViper(nil)
+	if err == nil {
+		return "docker", nil
+	}
+
+	_, err = rds.ConfigFromViper(rds.RDS_CONFIG_KEY)
+	if err == nil {
+		return "rds", nil
+	}
+
+	_, err = rds.ConfigFromViper(rds.AURORA_CONFIG_KEY)
+	if err == nil {
+		return "aurora", nil
+	}
+
+	_, err = aiven.ConfigFromViper(nil)
+	if err == nil {
+		return "aiven", nil
+	}
+	log.Printf("aiven adapter error: %v", err)
+
+	// NOTE: Important this goes last, as it normally always exists as we usually
+	// have the `postgres: in the config file`
+	_, err = pg.ConfigFromViper(nil)
+	if err == nil {
+		return "local", nil
+	}
+
+	return "", fmt.Errorf("no provider detected")
 }
