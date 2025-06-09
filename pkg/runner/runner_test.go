@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
-
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -73,15 +73,15 @@ func (m *MockAgentLooper) ApplyConfig(config *agent.ProposedConfigResponse) erro
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) Guardrails() *agent.GuardrailSignal {
+func (m *MockAgentLooper) Guardrails() *guardrails.Signal {
 	args := m.Called()
 	if args.Get(0) == nil {
 		return nil
 	}
-	return args.Get(0).(*agent.GuardrailSignal)
+	return args.Get(0).(*guardrails.Signal)
 }
 
-func (m *MockAgentLooper) SendGuardrailSignal(signal agent.GuardrailSignal) error {
+func (m *MockAgentLooper) SendGuardrailSignal(signal guardrails.Signal) error {
 	args := m.Called(signal)
 	return args.Error(0)
 }
