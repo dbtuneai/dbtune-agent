@@ -98,7 +98,7 @@ func main() {
 
 		} else if aiven.DetectConfigFromConfigFile() {
 			log.Println("Aiven PostgreSQL configuration detected in config file")
-			adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
+			adapter, err = aiven.CreateAivenPostgreSQLAdapter()
 
 		} else if docker.DetectConfigFromConfigFile() {
 			log.Println("Docker container configuration detected in config file")
