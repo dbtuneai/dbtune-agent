@@ -66,7 +66,7 @@ func AivenHardwareInfo(
 		// Calculate the total IOPS from the read and write IOPS if exist
 		readIOPS, okRead := fetchedMetrics[DISK_IO_READ_KEY]
 		writeIOPS, okWrite := fetchedMetrics[DISK_IO_WRITES_KEY]
-		if okRead && okWrite {
+		if okRead && okWrite && readIOPS.Value != nil && writeIOPS.Value != nil {
 			totalIOPS := readIOPS.Value.(float64) + writeIOPS.Value.(float64)
 			totalIOPSMetric, _ := utils.NewMetric(keywords.NodeDiskIOPSTotal, totalIOPS, utils.Float)
 			metricState.AddMetric(totalIOPSMetric)
@@ -76,15 +76,16 @@ func AivenHardwareInfo(
 		// sends down a lot of data, we cache the results for the memory usage, which is
 		// used by the guardrails.
 		// The code will still work without this block.
-		memAvailable := fetchedMetrics[MEM_AVAILABLE_KEY]
-		if memAvailable.Error != nil {
+		memAvailable, okMem := fetchedMetrics[MEM_AVAILABLE_KEY]
+		if okMem && memAvailable.Value != nil && memAvailable.Error == nil {
 			// NOTE: We don't need to return an error for this, it's not a critical issue,
 			// and the next call or Guardrails() will fetch the metrics again.
-			return nil
+			State.LastMemoryAvailablePercentage = memAvailable.ParsedMetric.Value.(float64)
+			State.LastMemoryAvailableTime = memAvailable.ParsedMetric.Timestamp
+		} else {
+			logger.Warnf("Failed to get memory available metric: %v", memAvailable.Error)
 		}
 
-		State.LastMemoryAvailablePercentage = memAvailable.ParsedMetric.Value.(float64)
-		State.LastMemoryAvailableTime = memAvailable.ParsedMetric.Timestamp
 		return nil
 	}
 }

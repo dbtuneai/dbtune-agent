@@ -356,8 +356,18 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *guardrails.Signal {
 			return nil
 		}
 		memAvailableMetric := metrics[MEM_AVAILABLE_KEY]
-		lastMemoryAvailablePercentage = memAvailableMetric.Value.(float64)
-		adapter.State.LastMemoryAvailableTime = memAvailableMetric.Timestamp
+		if memAvailableMetric.Value != nil {
+			if perc, ok := memAvailableMetric.Value.(float64); ok {
+				lastMemoryAvailablePercentage = perc
+				adapter.State.LastMemoryAvailableTime = memAvailableMetric.Timestamp
+			} else {
+				adapter.Logger().Warnf("memAvailableMetric.Value is not a float64: %v", memAvailableMetric.Value)
+				return nil
+			}
+		} else {
+			adapter.Logger().Warn("memAvailableMetric.Value is nil")
+			return nil
+		}
 	}
 
 	adapter.Logger().Info("Checking guardrails for Aiven PostgreSQL")
@@ -462,18 +472,32 @@ func getInitialServiceLevelParameters(client *aivenclient.Client, projectName st
 	}
 
 	userConfig := service.UserConfig
-	initialSharedBuffersPercentage, ok := userConfig["shared_buffers_percentage"]
-	if !ok {
-		initialSharedBuffersPercentage = DEFAULT_SHARED_BUFFERS_PERCENTAGE
+
+	var sharedBuffers float64
+	if val, ok := userConfig["shared_buffers_percentage"]; ok && val != nil {
+		if f, ok := val.(float64); ok {
+			sharedBuffers = f
+		} else {
+			sharedBuffers = DEFAULT_SHARED_BUFFERS_PERCENTAGE
+		}
+	} else {
+		sharedBuffers = DEFAULT_SHARED_BUFFERS_PERCENTAGE
 	}
-	initialPGStatMonitorEnable, ok := userConfig["pg_stat_monitor_enable"]
-	if !ok {
-		initialPGStatMonitorEnable = DEFAULT_PG_STAT_MONITOR_ENABLE
+
+	var pgStatMonitorEnable bool
+	if val, ok := userConfig["pg_stat_monitor_enable"]; ok && val != nil {
+		if b, ok := val.(bool); ok {
+			pgStatMonitorEnable = b
+		} else {
+			pgStatMonitorEnable = DEFAULT_PG_STAT_MONITOR_ENABLE
+		}
+	} else {
+		pgStatMonitorEnable = DEFAULT_PG_STAT_MONITOR_ENABLE
 	}
 
 	return InitialServiceLevelParameters{
-		InitialSharedBuffersPercentage: initialSharedBuffersPercentage.(float64),
-		InitialPGStatMonitorEnable:     initialPGStatMonitorEnable.(bool),
+		InitialSharedBuffersPercentage: sharedBuffers,
+		InitialPGStatMonitorEnable:     pgStatMonitorEnable,
 	}, nil
 }
 
@@ -506,17 +530,25 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 	// this parameter, which we use to trigger session restarts.
 	// There's no point re-querying the service for this information
 	// elsewhere so we do it here.
-	pgStatMonitorEnable, ok := userConfig["pg_stat_monitor_enable"]
-	if ok {
-		adapter.State.LastKnownPGStatMonitorEnable = pgStatMonitorEnable.(bool)
+	if val, ok := userConfig["pg_stat_monitor_enable"]; ok && val != nil {
+		if b, ok := val.(bool); ok {
+			adapter.State.LastKnownPGStatMonitorEnable = b
+		}
 	}
 
 	// Try and get `shared_buffers_percentage` and `work_mem` from the user config
 	// If they don't exist, it's likely it's unmodified from the defaults, and will be empty.
-	sharedBuffersPercentage, ok := userConfig["shared_buffers_percentage"]
-	if !ok {
-		sharedBuffersPercentage = adapter.State.InitialSharedBuffersPercentage
+	var sharedBuffersPercentage float64
+	if val, ok := userConfig["shared_buffers_percentage"]; ok && val != nil {
+		if f, ok := val.(float64); ok {
+			sharedBuffersPercentage = f
+		} else {
+			return nil, fmt.Errorf("shared_buffers_percentage is not convertable to float64! %v", val)
+		}
+	} else {
+		sharedBuffersPercentage = DEFAULT_SHARED_BUFFERS_PERCENTAGE
 	}
+
 	configRows = append(configRows, agent.PGConfigRow{
 		Name:    "shared_buffers_percentage",
 		Setting: sharedBuffersPercentage,
