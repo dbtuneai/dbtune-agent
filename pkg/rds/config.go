@@ -75,11 +75,6 @@ const (
 	Aurora DetectedConfig = "aurora"
 	// RDS was detected from the configuration.
 	RDS DetectedConfig = "rds"
-	// If we detect the environment variables are set, these are re-used for both
-	// RDS and Aurora, hence it's ambiguous and we require the user to specify.
-	// This does not happen for the config file as the sub-heading in the config file is
-	// different.
-	Ambiguous DetectedConfig = "ambiguous"
 	// Neither was detected, it's something else.
 	None DetectedConfig = "none"
 )
