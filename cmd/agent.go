@@ -83,7 +83,7 @@ func main() {
 			adapter, err = aiven.CreateAivenPostgreSQLAdapter()
 
 		} else if docker.DetectConfigFromEnv() {
-			log.Println("Docker container adapter detected")
+			log.Println("Docker container adapter detected from environment variables")
 			adapter, err = docker.CreateDockerContainerAdapter()
 
 		} else if rds.DetectConfigFromEnv() {
