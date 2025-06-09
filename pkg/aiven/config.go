@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/spf13/viper"
 )
 
@@ -57,6 +58,11 @@ func ConfigFromViper(key *string) (Config, error) {
 	err := dbtuneConfig.Unmarshal(&config)
 	if err != nil {
 		return Config{}, fmt.Errorf("unable to decode into struct: %v", err)
+	}
+
+	err = utils.ValidateStruct(&config)
+	if err != nil {
+		return Config{}, err
 	}
 
 	// Since we are specifying in units of seconds, but a raw int such as 30
