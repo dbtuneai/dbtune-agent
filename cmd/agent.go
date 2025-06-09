@@ -2,13 +2,11 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/aiven"
 	"github.com/dbtuneai/agent/pkg/docker"
-	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/dbtuneai/agent/pkg/pgprem"
 	"github.com/dbtuneai/agent/pkg/rds"
 	"github.com/dbtuneai/agent/pkg/runner"
@@ -76,71 +74,52 @@ func main() {
 			log.Fatalf("Failed to create local PostgreSQL adapter: %v", err)
 		}
 	default:
-		provider, err := detectProvider()
-		if err != nil {
-			log.Fatal(
-				"No provider detected, please check your environemnt variables or specify one of the following flags: " + AVAILABLE_FLAGS,
-			)
-		}
-		log.Printf("Detected config for %s adapter", provider)
-		switch provider {
-		case "docker":
-			adapter, err = docker.CreateDockerContainerAdapter()
-		case "rds":
-			adapter, err = rds.CreateRDSAdapter(nil)
-		case "aurora":
-			adapter, err = rds.CreateAuroraRDSAdapter()
-		case "aiven":
+		log.Println("No explicit provider specified, detecting config present...")
+		log.Println("To explicitly specify a provider, please use one of the following flags: " + AVAILABLE_FLAGS)
+
+		// We first check for environment variables as they should take precedence over a config file.
+		if aiven.DetectConfigFromEnv() {
+			log.Println("Aiven PostgreSQL adapter detected from environment variables")
 			adapter, err = aiven.CreateAivenPostgreSQLAdapter()
-		case "local":
+
+		} else if docker.DetectConfigFromEnv() {
+			log.Println("Docker container adapter detected")
+			adapter, err = docker.CreateDockerContainerAdapter()
+
+		} else if rds.DetectConfigFromEnv() {
+			log.Println("RDS or Aurora configuration detected")
+			log.Fatal(
+				"Ambiguous configuration detected. This can happen if using environment variables, as they" +
+					" are used for both RDS and Aurora. Please specify which using `--rds` or `--aurora`.",
+			)
+
+		} else if aiven.DetectConfigFromConfigFile() {
+			log.Println("Aiven PostgreSQL configuration detected in config file")
 			adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
-		default:
-			log.Fatal("No provider detected, please check your environemnt variables or specify one of the following flags: " + AVAILABLE_FLAGS)
+
+		} else if docker.DetectConfigFromConfigFile() {
+			log.Println("Docker container configuration detected in config file")
+			adapter, err = docker.CreateDockerContainerAdapter()
+
+		} else if configType := rds.DetectConfigFromConfigFile(); configType == rds.RDS || configType == rds.Aurora {
+			switch configType {
+			case rds.RDS:
+				log.Println("RDS configuration detected in config file")
+				adapter, err = rds.CreateRDSAdapter(nil)
+			case rds.Aurora:
+				log.Println("Aurora configuration detected in config file")
+				adapter, err = rds.CreateAuroraRDSAdapter()
+			}
+		} else {
+			// NOTE: This was the previous behavior, which is consistent with our configuration.
+			// All config files have the `postgres:` subheader, which is all the local Postgres
+			// adapter requires. I would rather error out but alas.
+			log.Println("Defaulting to local PostgreSQL adapter as no other adapater was detected.")
+			adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
 		}
 		if err != nil {
-			log.Fatalf(
-				"Failed to create %s adapter. If you meant for a different adapter, please check your config and/or environment variables or specify one of the following flags: "+AVAILABLE_FLAGS+". Error: %v",
-				provider,
-				err,
-			)
+			log.Fatalf("Failed to create adapter: %v", err)
 		}
 	}
 	runner.Runner(adapter)
-}
-
-// If no explicit provider is specified, we go through the list of available adapters
-// and see if we can initiate a successful configuration for any of them. With how we
-// have things structured, this is almost always going to be one of them as 'local'
-// matches off just the `postgres:` in the config file.
-func detectProvider() (string, error) {
-	var err error
-
-	_, err = docker.ConfigFromViper(nil)
-	if err == nil {
-		return "docker", nil
-	}
-
-	_, err = rds.ConfigFromViper(rds.RDS_CONFIG_KEY)
-	if err == nil {
-		return "rds", nil
-	}
-
-	_, err = rds.ConfigFromViper(rds.AURORA_CONFIG_KEY)
-	if err == nil {
-		return "aurora", nil
-	}
-
-	_, err = aiven.ConfigFromViper(nil)
-	if err == nil {
-		return "aiven", nil
-	}
-
-	// NOTE: Important this goes last, as it normally always exists as we usually
-	// have the `postgres: in the config file`
-	_, err = pg.ConfigFromViper(nil)
-	if err == nil {
-		return "local", nil
-	}
-
-	return "", fmt.Errorf("no provider detected")
 }

@@ -2,6 +2,7 @@ package docker
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/spf13/viper"
@@ -41,4 +42,21 @@ func ConfigFromViper(key *string) (Config, error) {
 		return Config{}, err
 	}
 	return dockerConfig, nil
+}
+
+func DetectConfigFromConfigFile() bool {
+	return viper.Sub(DEFAULT_CONFIG_KEY) != nil
+}
+
+func DetectConfigFromEnv() bool {
+	envKeysToDetect := []string{
+		"DBT_DOCKER_CONTAINER_NAME",
+	}
+
+	for _, envKey := range envKeysToDetect {
+		if os.Getenv(envKey) != "" {
+			return true
+		}
+	}
+	return false
 }

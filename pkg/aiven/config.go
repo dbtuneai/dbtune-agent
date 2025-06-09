@@ -2,6 +2,7 @@ package aiven
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/internal/utils"
@@ -69,4 +70,24 @@ func ConfigFromViper(key *string) (Config, error) {
 	// is interpreted as nanoseconds, we need to convert it
 	config.MetricResolution = time.Duration(config.MetricResolution) * time.Second
 	return config, nil
+}
+
+func DetectConfigFromConfigFile() bool {
+	return viper.Sub(DEFAULT_CONFIG_KEY) != nil
+}
+
+func DetectConfigFromEnv() bool {
+	envKeysToDetect := []string{
+		"DBT_AIVEN_API_TOKEN",
+		"DBT_AIVEN_PROJECT_NAME",
+		"DBT_AIVEN_SERVICE_NAME",
+	}
+
+	for _, envKey := range envKeysToDetect {
+		if os.Getenv(envKey) != "" {
+			return true
+		}
+	}
+
+	return false
 }
