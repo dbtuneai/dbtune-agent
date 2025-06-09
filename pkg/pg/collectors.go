@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -47,7 +48,7 @@ func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *age
 			// Calculate the runtime of the queries (AQR)
 			runtime := utils.CalculateQueryRuntime(state.Cache.QueryRuntimeList, queryStats)
 
-			metricEntry, err := utils.NewMetric("perf_average_query_runtime", runtime, utils.Float)
+			metricEntry, err := utils.NewMetric(keywords.PerfAverageQueryRuntime, runtime, utils.Float)
 			if err != nil {
 				return err
 			}
@@ -56,10 +57,10 @@ func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *age
 			// Calculate the pg_stat_statements delta to send to the server
 			pgStatStatementsDelta, totalDiffs := utils.CalculateQueryRuntimeDelta(state.Cache.QueryRuntimeList, queryStats)
 
-			totalDiffsMetric, _ := utils.NewMetric("pg_stat_statements_delta_count", totalDiffs, utils.Int)
+			totalDiffsMetric, _ := utils.NewMetric(keywords.PGStatStatementsDeltaCount, totalDiffs, utils.Int)
 			state.AddMetric(totalDiffsMetric)
 
-			pgStatStatementsDeltaMetric, _ := utils.NewMetric("pg_stat_statements_delta", pgStatStatementsDelta, utils.PgssDelta)
+			pgStatStatementsDeltaMetric, _ := utils.NewMetric(keywords.PGStatStatementsDelta, pgStatStatementsDelta, utils.PgssDelta)
 			state.AddMetric(pgStatStatementsDeltaMetric)
 
 			state.Cache.QueryRuntimeList = queryStats
@@ -84,7 +85,7 @@ func ActiveConnections(pgPool *pgxpool.Pool) func(ctx context.Context, state *ag
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric("pg_active_connections", result, utils.Int)
+		metricEntry, err := utils.NewMetric(keywords.PGActiveConnections, result, utils.Int)
 		if err != nil {
 			return err
 		}
@@ -158,7 +159,7 @@ func TransactionsPerSecond(pgPool *pgxpool.Pool) func(ctx context.Context, state
 		duration := time.Since(state.Cache.XactCommit.Timestamp).Seconds()
 		if duration > 0 {
 			tps := float64(serverXactCommits-state.Cache.XactCommit.Count) / duration
-			metricEntry, err := utils.NewMetric("perf_transactions_per_second", tps, utils.Float)
+			metricEntry, err := utils.NewMetric(keywords.PerfTransactionsPerSecond, tps, utils.Float)
 			if err != nil {
 				return err
 			}
@@ -189,7 +190,7 @@ func DatabaseSize(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.M
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric("pg_instance_size", totalSizeBytes, utils.Int)
+		metricEntry, err := utils.NewMetric(keywords.PGInstanceSize, totalSizeBytes, utils.Int)
 		if err != nil {
 			return err
 		}
@@ -213,7 +214,7 @@ func Autovacuum(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.Met
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric("pg_autovacuum_count", result, utils.Int)
+		metricEntry, err := utils.NewMetric(keywords.PGAutovacuumCount, result, utils.Int)
 		if err != nil {
 			return err
 		}
@@ -236,7 +237,7 @@ func Uptime(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.Metrics
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric("server_uptime", uptime, utils.Float)
+		metricEntry, err := utils.NewMetric(keywords.ServerUptime, uptime, utils.Float)
 		if err != nil {
 			return err
 		}
@@ -265,7 +266,7 @@ func BufferCacheHitRatio(pgPool *pgxpool.Pool) func(ctx context.Context, state *
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric("pg_cache_hit_ratio", bufferCacheHitRatio, utils.Float)
+		metricEntry, err := utils.NewMetric(keywords.PGCacheHitRatio, bufferCacheHitRatio, utils.Float)
 		if err != nil {
 			return err
 		}
@@ -332,7 +333,7 @@ func WaitEvents(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.Met
 				return err
 			}
 
-			metricEntry, _ := utils.NewMetric(fmt.Sprintf("pg_wait_events_%s", strings.ToLower(event)), count, utils.Int)
+			metricEntry, _ := utils.NewMetric(fmt.Sprintf("%s%s", keywords.PGWaitEventPrefix, strings.ToLower(event)), count, utils.Int)
 			state.AddMetric(metricEntry)
 		}
 

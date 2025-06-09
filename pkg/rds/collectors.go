@@ -24,7 +24,7 @@ func RDSHardwareInfo(
 			if err == nil {
 				memoryUsage, err := GetMemoryUsageFromPI(clients, resourceID, logger)
 				if err == nil {
-					memoryMetric, err := utils.NewMetric("node_memory_used", memoryUsage, utils.Bytes)
+					memoryMetric, err := utils.NewMetric(keywords.NodeMemoryUsed, memoryUsage, utils.Bytes)
 					if err == nil {
 						metric_state.AddMetric(memoryMetric)
 					} else {
@@ -41,7 +41,7 @@ func RDSHardwareInfo(
 		if err != nil {
 			logger.Errorf("failed to get freeable memory from CloudWatch: %v", err)
 		} else {
-			freeableMemoryMetric, _ := utils.NewMetric("node_memory_freeable", freeableMemory, utils.Bytes)
+			freeableMemoryMetric, _ := utils.NewMetric(keywords.NodeMemoryFreeable, freeableMemory, utils.Bytes)
 			metric_state.AddMetric(freeableMemoryMetric)
 		}
 
@@ -50,7 +50,7 @@ func RDSHardwareInfo(
 		if err != nil {
 			logger.Errorf("failed to get CPU utilization: %v", err)
 		} else {
-			cpuUtilMetric, _ := utils.NewMetric("node_cpu_usage", cpuUtil, utils.Percentage)
+			cpuUtilMetric, _ := utils.NewMetric(keywords.NodeCPUUsage, cpuUtil, utils.Percentage)
 			metric_state.AddMetric(cpuUtilMetric)
 		}
 
@@ -60,17 +60,17 @@ func RDSHardwareInfo(
 			logger.Errorf("failed to get IOPS: %v", err)
 			return nil
 		}
-		readIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSRead, iops.ReadIOPS, utils.Float)
+		readIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSReadPerSecond, iops.ReadIOPS, utils.Float)
 		if err == nil {
 			metric_state.AddMetric(readIOPSMetric)
 		}
 
-		writeIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSWrite, iops.WriteIOPS, utils.Float)
+		writeIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSWritePerSecond, iops.WriteIOPS, utils.Float)
 		if err == nil {
 			metric_state.AddMetric(writeIOPSMetric)
 		}
 
-		totalIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSTotal, iops.TotalIOPS, utils.Float)
+		totalIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSTotalPerSecond, iops.TotalIOPS, utils.Float)
 		if err == nil {
 			metric_state.AddMetric(totalIOPSMetric)
 		}

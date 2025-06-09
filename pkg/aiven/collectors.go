@@ -64,11 +64,26 @@ func AivenHardwareInfo(
 		}
 
 		// Calculate the total IOPS from the read and write IOPS if exist
+		var readIOPSValue *float64
 		readIOPS, okRead := fetchedMetrics[DISK_IO_READ_KEY]
+		if okRead && readIOPS.Value != nil && readIOPS.Error == nil {
+			v, ok := readIOPS.Value.(float64)
+			if ok {
+				readIOPSValue = &v
+			}
+		}
+		var writeIOPSValue *float64
 		writeIOPS, okWrite := fetchedMetrics[DISK_IO_WRITES_KEY]
-		if okRead && okWrite {
-			totalIOPS := readIOPS.Value.(float64) + writeIOPS.Value.(float64)
-			totalIOPSMetric, _ := utils.NewMetric(keywords.NodeDiskIOPSTotal, totalIOPS, utils.Float)
+		if okWrite && writeIOPS.Value != nil && writeIOPS.Error == nil {
+			v, ok := writeIOPS.Value.(float64)
+			if ok {
+				writeIOPSValue = &v
+			}
+		}
+
+		if readIOPSValue != nil && writeIOPSValue != nil {
+			totalIOPS := *readIOPSValue + *writeIOPSValue
+			totalIOPSMetric, _ := utils.NewMetric(keywords.NodeDiskIOPSTotalPerSecond, totalIOPS, utils.Float)
 			metricState.AddMetric(totalIOPSMetric)
 		}
 
@@ -76,15 +91,16 @@ func AivenHardwareInfo(
 		// sends down a lot of data, we cache the results for the memory usage, which is
 		// used by the guardrails.
 		// The code will still work without this block.
-		memAvailable := fetchedMetrics[MEM_AVAILABLE_KEY]
-		if memAvailable.Error != nil {
+		memAvailable, okMem := fetchedMetrics[MEM_AVAILABLE_KEY]
+		if okMem && memAvailable.Value != nil && memAvailable.Error == nil {
 			// NOTE: We don't need to return an error for this, it's not a critical issue,
 			// and the next call or Guardrails() will fetch the metrics again.
-			return nil
+			State.LastMemoryAvailablePercentage = memAvailable.ParsedMetric.Value.(float64)
+			State.LastMemoryAvailableTime = memAvailable.ParsedMetric.Timestamp
+		} else {
+			logger.Warnf("Failed to get memory available metric: %v", memAvailable.Error)
 		}
 
-		State.LastMemoryAvailablePercentage = memAvailable.ParsedMetric.Value.(float64)
-		State.LastMemoryAvailableTime = memAvailable.ParsedMetric.Timestamp
 		return nil
 	}
 }

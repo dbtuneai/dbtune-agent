@@ -40,11 +40,11 @@ func DockerHardwareInfo(client *client.Client, containerName string) func(ctx co
 		)
 
 		// Add metrics
-		cpuMetric, _ := utils.NewMetric("node_cpu_usage", cpuPercent, utils.Float)
+		cpuMetric, _ := utils.NewMetric(keywords.NodeCPUUsage, cpuPercent, utils.Float)
 		state.AddMetric(cpuMetric)
 
 		memoryUsed := CalculateDockerMemoryUsed(statsJSON.MemoryStats)
-		memUsedMetric, _ := utils.NewMetric("node_memory_used", memoryUsed, utils.Float)
+		memUsedMetric, _ := utils.NewMetric(keywords.NodeMemoryUsed, memoryUsed, utils.Float)
 		state.AddMetric(memUsedMetric)
 
 		memLimitMetric, _ := utils.NewMetric(keywords.NodeMemoryTotal, statsJSON.MemoryStats.Limit, utils.Int)

@@ -88,6 +88,7 @@ func NewCustomCollector(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx
             return err
         }
 
+        // If you can prefer to use the names present in `keywords.go` for system related metrics
         metric, err := utils.NewMetric("custom.metric", value, utils.Int)
         if err != nil {
             return err
