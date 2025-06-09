@@ -87,6 +87,9 @@ func main() {
 			adapter, err = docker.CreateDockerContainerAdapter()
 
 		} else if rds.DetectConfigFromEnv() {
+			// NOTE: This is because they both share the same environment variables and there's
+			// no easy distinction. Theoretically we could just let this run, as they have no functional
+			// differences, but better not to introduce this default behaviour incase it was to change.
 			log.Println("RDS or Aurora configuration detected")
 			log.Fatal(
 				"Ambiguous configuration detected. This can happen if using environment variables, as they" +
