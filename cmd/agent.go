@@ -19,7 +19,7 @@ func main() {
 	// Define flags
 	useDocker := flag.Bool("docker", false, "Use Docker adapter")
 	useAurora := flag.Bool("aurora", false, "Use Aurora adapter")
-	useRDS := flag.Bool("rds", false, "Use RDS adapater")
+	useRDS := flag.Bool("rds", false, "Use RDS adapter")
 	useAiven := flag.Bool("aiven", false, "Use Aiven PostgreSQL adapter")
 	useLocal := flag.Bool("local", false, "Use local PostgreSQL adapter")
 	flag.Parse()
@@ -117,7 +117,7 @@ func main() {
 			// NOTE: This was the previous behavior, which is consistent with our configuration.
 			// All config files have the `postgres:` subheader, which is all the local Postgres
 			// adapter requires. I would rather error out but alas.
-			log.Println("Defaulting to local PostgreSQL adapter as no other adapater was detected.")
+			log.Println("Defaulting to local PostgreSQL adapter as no other adapter was detected.")
 			adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
 		}
 		if err != nil {
