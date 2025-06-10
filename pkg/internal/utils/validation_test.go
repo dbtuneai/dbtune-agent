@@ -53,7 +53,7 @@ func TestValidateStruct(t *testing.T) {
 			name:          "Nil input",
 			input:         nil,
 			expectError:   true,
-			errorContains: []string{"Invalid validation"},
+			errorContains: []string{"invalid validation"},
 		},
 	}
 
