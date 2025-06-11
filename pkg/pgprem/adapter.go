@@ -211,7 +211,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 			adapter.Logger().Warn("failed to restart PostgreSQL service: %v. Trying with sudo...", err)
 
 			sudoCmd := exec.Command("sudo", "systemctl", "restart", adapter.pgConfig.ServiceName)
-			if sudoCmd := sudoCmd.Run(); sudoErr != nil {
+			if sudoErr := sudoCmd.Run(); sudoErr != nil {
 			  return fmt.Errorf("failed to restart PostgreSQL service with sudo: %w", sudoErr)
 			}
 			adapter.Logger().Warn("Service restarted using sudo.")
