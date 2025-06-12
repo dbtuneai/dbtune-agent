@@ -103,7 +103,7 @@ Once started you can check and verify that the dbtune-agent is running by lookin
 
 ### Configuration via YAML
 
-Create the dbtune-agent configuration and store it where dbtune-agent can access it. dbtune-agent searches for configuration to be in either one of these 3 locations, ordered by priority:
+Create the dbtune-agent configuration and store it where dbtune-agent can access it. The dbtune-agent searches for configuration to be in one of these 3 locations, ordered by priority:
 * `/etc/dbtune.yaml` 
 * `/etc/dbtune/dbtune.yaml`
 * `./dbtune.yaml`
