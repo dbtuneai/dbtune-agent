@@ -89,7 +89,7 @@ For the pre-built binary, create a systemd service with the following config and
     [Install]
     WantedBy=multi-user.target
 
-Make sure the user and group that you speficy in the systemd service has rights to access postgres data files and also is allowed to use sudo without a password to do a systemd restart of the postgresql service e.g. `sudo systemctl restart postgres`.
+Make sure the user and group that you specify in the systemd service has rights to access postgres data files and also is allowed to use sudo without a password to do a systemd restart of the postgresql service e.g. `sudo systemctl restart postgres`.
 
 Reload the unit files and enable the dbtune-agent.service:
 ```bash
