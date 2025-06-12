@@ -27,6 +27,10 @@ func main() {
 	// Set the file name of the configurations file
 	viper.SetConfigName("dbtune")
 	viper.SetConfigType("yaml")
+
+	// Locations where to look for the config file
+	viper.AddConfigPath("/etc/") // config at /etc/dbtune.yaml
+	viper.AddConfigPath("/etc/dbtune/") // config at /etc/dbtune/dbtune.yaml
 	viper.AddConfigPath(".") // optionally look for config in the working directory
 
 	// Read the configuration file
