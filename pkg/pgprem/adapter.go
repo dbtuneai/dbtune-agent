@@ -8,9 +8,8 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
-	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
 
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
@@ -87,7 +86,7 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 		{
 			Key:        "server_uptime",
 			MetricType: "float",
-			Collector:  pg.Uptime(pgDriver),
+			Collector:  pg.UptimeMinutes(pgDriver),
 		},
 		{
 			Key:        "database_cache_hit_ratio",
@@ -104,15 +103,10 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 			MetricType: "int",
 			Collector:  HardwareInfoOnPremise(),
 		},
-		//{
-		//	Key:        "failing_slow_queries",
-		//	MetricType: "int",
-		//	Collector:  pg.ArtificiallyFailingQueries(pgAdapter),
-		//},
 	}
 }
 
-func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
+func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	adapter.Logger().Println("Collecting system info")
 
 	pgDriver := adapter.pgDriver
@@ -147,19 +141,19 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, err
 	}
 
 	// Convert into metrics
-	totalMemory, err := utils.NewMetric(keywords.NodeMemoryTotal, memoryInfo.Total, utils.Int)
+	totalMemory, err := metrics.NodeMemoryTotal.AsFlatValue(memoryInfo.Total)
 	if err != nil {
 		return nil, err
 	}
-	version, _ := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
-	hostOS, _ := utils.NewMetric(keywords.NodeOSInfo, hostInfo.OS, utils.String)
-	platform, _ := utils.NewMetric(keywords.NodeOSPlatform, hostInfo.Platform, utils.String)
-	platformVersion, _ := utils.NewMetric(keywords.NodeOSPlatformVer, hostInfo.PlatformVersion, utils.String)
-	maxConnectionsMetric, _ := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
-	noCPUsMetric, _ := utils.NewMetric(keywords.NodeCPUCount, noCPUs, utils.Int)
-	diskTypeMetric, _ := utils.NewMetric(keywords.NodeStorageType, diskType, utils.String)
+	version, _ := metrics.PGVersion.AsFlatValue(pgVersion)
+	hostOS, _ := metrics.NodeOSInfo.AsFlatValue(hostInfo.OS)
+	platform, _ := metrics.NodeOSPlatform.AsFlatValue(hostInfo.Platform)
+	platformVersion, _ := metrics.NodeOSPlatformVer.AsFlatValue(hostInfo.PlatformVersion)
+	maxConnectionsMetric, _ := metrics.PGMaxConnections.AsFlatValue(maxConnections)
+	noCPUsMetric, _ := metrics.NodeCPUCount.AsFlatValue(noCPUs)
+	diskTypeMetric, _ := metrics.NodeStorageType.AsFlatValue(diskType)
 
-	systemInfo := []utils.FlatValue{
+	systemInfo := []metrics.FlatValue{
 		version,
 		totalMemory,
 		hostOS,
@@ -212,7 +206,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 
 			sudoCmd := exec.Command("sudo", "systemctl", "restart", adapter.pgConfig.ServiceName)
 			if sudoErr := sudoCmd.Run(); sudoErr != nil {
-			  return fmt.Errorf("failed to restart PostgreSQL service with sudo: %w", sudoErr)
+				return fmt.Errorf("failed to restart PostgreSQL service with sudo: %w", sudoErr)
 			}
 			adapter.Logger().Warn("Service restarted using sudo.")
 		} else {

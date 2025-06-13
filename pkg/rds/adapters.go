@@ -7,8 +7,7 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
-	"github.com/dbtuneai/agent/pkg/internal/keywords"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -89,8 +88,8 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 	return c, nil
 }
 
-func (adapter *RDSAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
-	adapter.Logger().Println("Collecting system info")
+func (adapter *RDSAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+	adapter.Logger().Info("Collecting system info")
 
 	// Refreshes self
 	dbInfo, err := FetchDBInfo(
@@ -116,7 +115,7 @@ func (adapter *RDSAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 		return nil, err
 	}
 
-	version, err := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
+	version, err := metrics.PGVersion.AsFlatValue(pgVersion)
 	if err != nil {
 		adapter.Logger().Errorf("Failed to create PostgreSQL version metric: %v", err)
 		return nil, err
@@ -128,7 +127,7 @@ func (adapter *RDSAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 	if err != nil {
 		return nil, err
 	}
-	maxConnectionsMetric, err := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
+	maxConnectionsMetric, err := metrics.PGMaxConnections.AsFlatValue(maxConnections)
 
 	if err != nil {
 		adapter.Logger().Errorf("Failed to create PostgreSQL max connections metric: %v", err)
@@ -213,7 +212,7 @@ func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
 		{
 			Key:        "server_uptime",
 			MetricType: "float",
-			Collector:  pg.Uptime(pool),
+			Collector:  pg.UptimeMinutes(pool),
 		},
 		{
 			Key:        "database_cache_hit_ratio",

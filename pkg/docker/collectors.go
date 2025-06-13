@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/internal/keywords"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/metrics"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
@@ -40,14 +39,14 @@ func DockerHardwareInfo(client *client.Client, containerName string) func(ctx co
 		)
 
 		// Add metrics
-		cpuMetric, _ := utils.NewMetric(keywords.NodeCPUUsage, cpuPercent, utils.Float)
+		cpuMetric, _ := metrics.NodeCPUUsage.AsFlatValue(cpuPercent)
 		state.AddMetric(cpuMetric)
 
 		memoryUsed := CalculateDockerMemoryUsed(statsJSON.MemoryStats)
-		memUsedMetric, _ := utils.NewMetric(keywords.NodeMemoryUsed, memoryUsed, utils.Float)
+		memUsedMetric, _ := metrics.NodeMemoryUsed.AsFlatValue(memoryUsed)
 		state.AddMetric(memUsedMetric)
 
-		memLimitMetric, _ := utils.NewMetric(keywords.NodeMemoryTotal, statsJSON.MemoryStats.Limit, utils.Int)
+		memLimitMetric, _ := metrics.NodeMemoryTotal.AsFlatValue(statsJSON.MemoryStats.Limit)
 		state.AddMetric(memLimitMetric)
 
 		return nil

@@ -7,8 +7,7 @@ import (
 	aivenclient "github.com/aiven/go-client-codegen"
 	"github.com/aiven/go-client-codegen/handler/service"
 	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/internal/keywords"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/sirupsen/logrus"
 )
 
@@ -54,13 +53,8 @@ func AivenHardwareInfo(
 				continue
 			}
 
-			parsedMetric := maybeMetric.ParsedMetric
-			metric, _ := utils.NewMetric(
-				parsedMetric.RenameTo,
-				parsedMetric.Value,
-				parsedMetric.Type,
-			)
-			metricState.AddMetric(metric)
+			value, _ := maybeMetric.ParsedMetric.AsFlatValue()
+			metricState.AddMetric(value)
 		}
 
 		// Calculate the total IOPS from the read and write IOPS if exist
@@ -83,7 +77,7 @@ func AivenHardwareInfo(
 
 		if readIOPSValue != nil && writeIOPSValue != nil {
 			totalIOPS := *readIOPSValue + *writeIOPSValue
-			totalIOPSMetric, _ := utils.NewMetric(keywords.NodeDiskIOPSTotalPerSecond, totalIOPS, utils.Float)
+			totalIOPSMetric, _ := metrics.NodeDiskIOPSTotalPerSecond.AsFlatValue(totalIOPS)
 			metricState.AddMetric(totalIOPSMetric)
 		}
 
