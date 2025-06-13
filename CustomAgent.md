@@ -89,7 +89,7 @@ func NewCustomCollector(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx
         }
 
         // If you can prefer to use the metrics defined in `metrics.go`
-        metric, err := metrics.NodeOSInfo(value).AsFlatValue()
+        metric, err := metrics.NodeOSInfo.AsFlatValue(value)
         if err != nil {
             return err
         }
@@ -97,7 +97,7 @@ func NewCustomCollector(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx
         state.AddMetric(metric)
 
         // Or to create a custom metric,
-        custom_metric, err := metrics.MetricDef{Key: "my_metric", Type: metric.Int}.asFlatValue()
+        custom_metric, err := metrics.MetricDef{Key: "my_metric", Type: metric.Int}.asFlatValue(value)
         if err != nil {
             return err
         }
