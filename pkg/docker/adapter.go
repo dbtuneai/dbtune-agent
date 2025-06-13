@@ -8,9 +8,8 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
-	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -105,7 +104,7 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 		{
 			Key:        "server_uptime",
 			MetricType: "float",
-			Collector:  pg.Uptime(pgDriver),
+			Collector:  pg.UptimeMinutes(pgDriver),
 		},
 		{
 			Key:        "database_cache_hit_ratio",
@@ -122,19 +121,13 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 			MetricType: "int",
 			Collector:  DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
 		},
-		// Use it for testing
-		//{
-		//	Key:        "failing_slow_queries",
-		//	MetricType: "int",
-		//	Collector:  pg.ArtificiallyFailingQueries(pgAdapter),
-		//},
 	}
 }
 
-func (d *DockerContainerAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
+func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	d.Logger().Println("Collecting system info for Docker container")
 
-	var systemInfo []utils.FlatValue
+	var systemInfo []metrics.FlatValue
 
 	// Get PostgreSQL version using the existing collector
 	pgDriver := d.PGDriver
@@ -170,23 +163,23 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 	}
 
 	// Create metrics
-	version, _ := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
-	maxConnectionsMetric, _ := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
+	version, _ := metrics.PGVersion.AsFlatValue(pgVersion)
+	maxConnectionsMetric, _ := metrics.PGMaxConnections.AsFlatValue(maxConnections)
 
 	// Memory info
-	memLimitMetric, _ := utils.NewMetric(keywords.NodeMemoryTotal, statsJSON.MemoryStats.Limit, utils.Int)
+	memLimitMetric, _ := metrics.NodeMemoryTotal.AsFlatValue(statsJSON.MemoryStats.Limit)
 
 	// CPU info
 	noCPUs := float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
 	if statsJSON.CPUStats.OnlineCPUs > 0 {
 		noCPUs = float64(statsJSON.CPUStats.OnlineCPUs)
 	}
-	cpuMetric, _ := utils.NewMetric(keywords.NodeCPUCount, noCPUs, utils.Float)
+	cpuMetric, _ := metrics.NodeCPUCount.AsFlatValue(noCPUs)
 
 	// Container info
-	containerOS, _ := utils.NewMetric(keywords.NodeOSInfo, "linux", utils.String) // Docker containers are Linux-based
-	containerPlatform, _ := utils.NewMetric(keywords.NodeOSPlatform, "docker", utils.String)
-	containerVersion, _ := utils.NewMetric(keywords.NodeOSPlatformVer, containerInfo.Config.Image, utils.String)
+	containerOS, _ := metrics.NodeOSInfo.AsFlatValue("linux") // Docker containers are Linux-based
+	containerPlatform, _ := metrics.NodeOSPlatform.AsFlatValue("docker")
+	containerVersion, _ := metrics.NodeOSPlatformVer.AsFlatValue(containerInfo.Config.Image)
 
 	systemInfo = append(systemInfo,
 		version,

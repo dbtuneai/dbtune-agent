@@ -11,9 +11,8 @@ import (
 	"github.com/aiven/go-client-codegen/handler/service"
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
-	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -102,7 +101,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 }
 
 // GetSystemInfo returns system information for the Aiven PostgreSQL service
-func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
+func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	adapter.Logger().Info("Collecting Aiven system info")
 
 	// Get service information from Aiven API
@@ -146,18 +145,18 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error
 	}
 
 	// Create metrics
-	totalMemory, err := utils.NewMetric(keywords.NodeMemoryTotal, totalMemoryBytes, utils.Int)
+	totalMemory, err := metrics.NodeMemoryTotal.AsFlatValue(totalMemoryBytes)
 	if err != nil {
 		adapter.Logger().Errorf("Error creating total memory metric: %v", err)
 		return nil, err
 	}
 
-	noCPUsMetric, err := utils.NewMetric(keywords.NodeCPUCount, numCPUs, utils.Int)
+	noCPUsMetric, err := metrics.NodeCPUCount.AsFlatValue(numCPUs)
 	if err != nil {
 		adapter.Logger().Errorf("Error creating number of CPUs metric: %v", err)
 		return nil, err
 	}
-	version, err := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
+	version, err := metrics.PGVersion.AsFlatValue(pgVersion)
 	if err != nil {
 		adapter.Logger().Errorf("Error creating PostgreSQL version metric: %v", err)
 		return nil, err
@@ -165,19 +164,19 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]utils.FlatValue, error
 
 	// Aiven uses SSD storage
 	// TODO: Verify this? Can't find anything in their API or website that says this, but it's a reasonable assumption
-	diskTypeMetric, err := utils.NewMetric(keywords.NodeStorageType, "SSD", utils.String)
+	diskTypeMetric, err := metrics.NodeStorageType.AsFlatValue("SSD")
 	if err != nil {
 		adapter.Logger().Errorf("Error creating disk type metric: %v", err)
 		return nil, err
 	}
 
-	maxConnectionsMetric, err := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
+	maxConnectionsMetric, err := metrics.PGMaxConnections.AsFlatValue(maxConnections)
 	if err != nil {
 		adapter.Logger().Errorf("Error creating max connections metric: %v", err)
 		return nil, err
 	}
 
-	systemInfo := []utils.FlatValue{
+	systemInfo := []metrics.FlatValue{
 		version,
 		totalMemory,
 		maxConnectionsMetric,
@@ -422,7 +421,7 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 		{
 			Key:        "server_uptime",
 			MetricType: "float",
-			Collector:  pg.Uptime(pgDriver),
+			Collector:  pg.UptimeMinutes(pgDriver),
 		},
 		{
 			Key:        "database_cache_hit_ratio",

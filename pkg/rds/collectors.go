@@ -4,8 +4,7 @@ import (
 	"context"
 
 	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/internal/keywords"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/sirupsen/logrus"
 )
 
@@ -24,7 +23,7 @@ func RDSHardwareInfo(
 			if err == nil {
 				memoryUsage, err := GetMemoryUsageFromPI(clients, resourceID, logger)
 				if err == nil {
-					memoryMetric, err := utils.NewMetric(keywords.NodeMemoryUsed, memoryUsage, utils.Bytes)
+					memoryMetric, err := metrics.NodeMemoryUsed.AsFlatValue(memoryUsage)
 					if err == nil {
 						metric_state.AddMetric(memoryMetric)
 					} else {
@@ -41,7 +40,7 @@ func RDSHardwareInfo(
 		if err != nil {
 			logger.Errorf("failed to get freeable memory from CloudWatch: %v", err)
 		} else {
-			freeableMemoryMetric, _ := utils.NewMetric(keywords.NodeMemoryFreeable, freeableMemory, utils.Bytes)
+			freeableMemoryMetric, _ := metrics.NodeMemoryFreeable.AsFlatValue(freeableMemory)
 			metric_state.AddMetric(freeableMemoryMetric)
 		}
 
@@ -50,7 +49,7 @@ func RDSHardwareInfo(
 		if err != nil {
 			logger.Errorf("failed to get CPU utilization: %v", err)
 		} else {
-			cpuUtilMetric, _ := utils.NewMetric(keywords.NodeCPUUsage, cpuUtil, utils.Percentage)
+			cpuUtilMetric, _ := metrics.NodeCPUUsage.AsFlatValue(cpuUtil)
 			metric_state.AddMetric(cpuUtilMetric)
 		}
 
@@ -60,17 +59,17 @@ func RDSHardwareInfo(
 			logger.Errorf("failed to get IOPS: %v", err)
 			return nil
 		}
-		readIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSReadPerSecond, iops.ReadIOPS, utils.Float)
+		readIOPSMetric, err := metrics.NodeDiskIOPSReadPerSecond.AsFlatValue(iops.ReadIOPS)
 		if err == nil {
 			metric_state.AddMetric(readIOPSMetric)
 		}
 
-		writeIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSWritePerSecond, iops.WriteIOPS, utils.Float)
+		writeIOPSMetric, err := metrics.NodeDiskIOPSWritePerSecond.AsFlatValue(iops.WriteIOPS)
 		if err == nil {
 			metric_state.AddMetric(writeIOPSMetric)
 		}
 
-		totalIOPSMetric, err := utils.NewMetric(keywords.NodeDiskIOPSTotalPerSecond, iops.TotalIOPS, utils.Float)
+		totalIOPSMetric, err := metrics.NodeDiskIOPSTotalPerSecond.AsFlatValue(iops.TotalIOPS)
 		if err == nil {
 			metric_state.AddMetric(totalIOPSMetric)
 		}

@@ -56,7 +56,7 @@ func (a *CustomAdapter) PGDriver() *pgPool.Pool
 func (a *CustomAdapter) APIClient() *retryablehttp.Client
 
 // Optional: Implement additional methods to extend/override functionality
-func (a *CustomAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
+func (a *CustomAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
     // Custom system info implementation
 }
 
@@ -88,13 +88,22 @@ func NewCustomCollector(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx
             return err
         }
 
-        // If you can prefer to use the names present in `keywords.go` for system related metrics
-        metric, err := utils.NewMetric("custom.metric", value, utils.Int)
+        // If you can prefer to use the metrics defined in `metrics.go`
+        metric, err := metrics.NodeOSInfo(value).AsFlatValue()
         if err != nil {
             return err
         }
 
         state.AddMetric(metric)
+
+        // Or to create a custom metric,
+        custom_metric, err := metrics.MetricDef{Key: "my_metric", Type: metric.Int}.asFlatValue()
+        if err != nil {
+            return err
+        }
+
+
+        state.AddMetric(custom_metric)
         return nil
     }
 }
