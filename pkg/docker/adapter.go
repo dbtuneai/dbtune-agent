@@ -163,23 +163,54 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	}
 
 	// Create metrics
-	version, _ := metrics.PGVersion.AsFlatValue(pgVersion)
-	maxConnectionsMetric, _ := metrics.PGMaxConnections.AsFlatValue(maxConnections)
+	version, err := metrics.PGVersion.AsFlatValue(pgVersion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create PostgreSQL version metric: %w", err)
+	}
+
+	maxConnectionsMetric, err := metrics.PGMaxConnections.AsFlatValue(maxConnections)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create max connections metric: %w", err)
+	}
 
 	// Memory info
-	memLimitMetric, _ := metrics.NodeMemoryTotal.AsFlatValue(statsJSON.MemoryStats.Limit)
+	memLimitMetric, err := metrics.NodeMemoryTotal.AsFlatValue(int64(statsJSON.MemoryStats.Limit))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create memory limit metric: %w", err)
+	}
 
 	// CPU info
-	noCPUs := float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
-	if statsJSON.CPUStats.OnlineCPUs > 0 {
-		noCPUs = float64(statsJSON.CPUStats.OnlineCPUs)
+	var cpuCount float64
+	if containerInfo.HostConfig.NanoCPUs > 0 {
+		// Convert from nano CPUs to actual CPU count
+		cpuCount = float64(containerInfo.HostConfig.NanoCPUs) / 1e9
+	} else if containerInfo.HostConfig.CPUQuota > 0 && containerInfo.HostConfig.CPUPeriod > 0 {
+		// Convert from quota/period to CPU count
+		cpuCount = float64(containerInfo.HostConfig.CPUQuota) / float64(containerInfo.HostConfig.CPUPeriod)
+	} else {
+		// If no limits set, use the number of CPUs available to the container
+		cpuCount = float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
 	}
-	cpuMetric, _ := metrics.NodeCPUCount.AsFlatValue(noCPUs)
+	cpuMetric, err := metrics.NodeCPUCount.AsFlatValue(int64(cpuCount))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CPU count metric: %w", err)
+	}
 
 	// Container info
-	containerOS, _ := metrics.NodeOSInfo.AsFlatValue("linux") // Docker containers are Linux-based
-	containerPlatform, _ := metrics.NodeOSPlatform.AsFlatValue("docker")
-	containerVersion, _ := metrics.NodeOSPlatformVer.AsFlatValue(containerInfo.Config.Image)
+	containerOS, err := metrics.NodeOSInfo.AsFlatValue("linux") // Docker containers are Linux-based
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OS info metric: %w", err)
+	}
+
+	containerPlatform, err := metrics.NodeOSPlatform.AsFlatValue("docker")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create platform metric: %w", err)
+	}
+
+	containerVersion, err := metrics.NodeOSPlatformVer.AsFlatValue(containerInfo.Config.Image)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create platform version metric: %w", err)
+	}
 
 	systemInfo = append(systemInfo,
 		version,
