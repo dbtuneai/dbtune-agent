@@ -44,7 +44,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${DBT_DBTUNE_SERVER_URL}/api/v1/
     "db_engine": "postgresql",
     "cloud_provider": "AWS",
     "hosting": "on_prem",
-    "tuning_target": "average_query_runtime",
+    "tuning_target": "transactions_per_second",
     "iteration_duration": 0.1
   }')
 
