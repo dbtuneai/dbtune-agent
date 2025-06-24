@@ -9,7 +9,7 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/guardrails"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -30,22 +30,22 @@ func (m *MockAgentLooper) SendHeartbeat() error {
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) GetMetrics() ([]utils.FlatValue, error) {
+func (m *MockAgentLooper) GetMetrics() ([]metrics.FlatValue, error) {
 	args := m.Called()
-	return args.Get(0).([]utils.FlatValue), args.Error(1)
+	return args.Get(0).([]metrics.FlatValue), args.Error(1)
 }
 
-func (m *MockAgentLooper) SendMetrics(metrics []utils.FlatValue) error {
+func (m *MockAgentLooper) SendMetrics(metrics []metrics.FlatValue) error {
 	args := m.Called(metrics)
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) GetSystemInfo() ([]utils.FlatValue, error) {
+func (m *MockAgentLooper) GetSystemInfo() ([]metrics.FlatValue, error) {
 	args := m.Called()
-	return args.Get(0).([]utils.FlatValue), args.Error(1)
+	return args.Get(0).([]metrics.FlatValue), args.Error(1)
 }
 
-func (m *MockAgentLooper) SendSystemInfo(info []utils.FlatValue) error {
+func (m *MockAgentLooper) SendSystemInfo(info []metrics.FlatValue) error {
 	args := m.Called(info)
 	return args.Error(0)
 }
@@ -156,9 +156,9 @@ func TestRunner(t *testing.T) {
 	// Setup mock expectations
 	mockAgent.On("Logger").Return(logger)
 	mockAgent.On("SendHeartbeat").Return(nil)
-	mockAgent.On("GetMetrics").Return([]utils.FlatValue{}, nil)
+	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendMetrics", mock.Anything).Return(nil)
-	mockAgent.On("GetSystemInfo").Return([]utils.FlatValue{}, nil)
+	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything).Return(nil)
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything).Return(nil)
@@ -187,8 +187,8 @@ func TestRunnerWithErrors(t *testing.T) {
 	// Setup mock expectations with errors
 	mockAgent.On("Logger").Return(logger)
 	mockAgent.On("SendHeartbeat").Return(errors.New("heartbeat error"))
-	mockAgent.On("GetMetrics").Return([]utils.FlatValue{}, errors.New("metrics error"))
-	mockAgent.On("GetSystemInfo").Return([]utils.FlatValue{}, errors.New("system info error"))
+	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, errors.New("metrics error"))
+	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, errors.New("system info error"))
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, errors.New("config error"))
 	mockAgent.On("Guardrails").Return(nil)
 
@@ -215,9 +215,9 @@ func TestRunnerWhenGetProposedConfigReturnsAConfigThenApplyConfigShouldBeCalled(
 
 	mockAgent.On("Logger").Return(logger)
 	mockAgent.On("SendHeartbeat").Return(nil)
-	mockAgent.On("GetMetrics").Return([]utils.FlatValue{}, nil)
+	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendMetrics", mock.Anything).Return(nil)
-	mockAgent.On("GetSystemInfo").Return([]utils.FlatValue{}, nil)
+	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything).Return(nil)
 	mockAgent.On("Guardrails").Return(nil)
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, nil)
@@ -246,9 +246,9 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 
 	mockAgent.On("Logger").Return(logger)
 	mockAgent.On("SendHeartbeat").Return(nil)
-	mockAgent.On("GetMetrics").Return([]utils.FlatValue{}, nil)
+	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendMetrics", mock.Anything).Return(nil)
-	mockAgent.On("GetSystemInfo").Return([]utils.FlatValue{}, nil)
+	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything).Return(nil)
 	mockAgent.On("Guardrails").Return(nil)
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, nil)

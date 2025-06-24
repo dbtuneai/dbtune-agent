@@ -9,8 +9,8 @@ import (
 
 	aiven "github.com/aiven/go-client-codegen"
 	"github.com/aiven/go-client-codegen/handler/service"
-	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -55,46 +55,16 @@ const (
 // ['cpu_usage', 'disk_usage', 'diskio_read', 'diskio_writes', 'load_average', 'mem_available', 'mem_usage', 'net_receive', 'net_send']
 // TODO(eddiebergman): I wasn't sure on the naming, as the units are missing from some
 // of these metrics, and I tried to match pre-existing ones where possible.
-var MetricsKnown = map[MetricKnownName]struct {
-	RenameTo    string
-	EncodedType utils.MetricType
-}{
-	CPU_USAGE_KEY: {
-		RenameTo:    keywords.NodeCPUUsage,
-		EncodedType: utils.Percentage,
-	},
-	DISK_USAGE_KEY: { // TODO : We don't display this
-		RenameTo:    keywords.NodeDiskUsedPercentage,
-		EncodedType: utils.Percentage,
-	},
-	DISK_IO_READ_KEY: {
-		RenameTo:    keywords.NodeDiskIOPSReadPerSecond,
-		EncodedType: utils.Float,
-	},
-	DISK_IO_WRITES_KEY: {
-		RenameTo:    keywords.NodeDiskIOPSWritePerSecond,
-		EncodedType: utils.Float,
-	},
-	LOAD_AVERAGE_KEY: { // TODO: Wut is this even? We also don't display this
-		RenameTo:    keywords.NodeLoadAverage,
-		EncodedType: utils.Float,
-	},
-	MEM_AVAILABLE_KEY: { // TODO: Should this be converted to bytes? If so, modify frontend
-		RenameTo:    keywords.NodeMemoryAvailablePercentage,
-		EncodedType: utils.Percentage,
-	},
-	MEM_USAGE_KEY: { // TODO: Should this be converted to bytes? If so, modify frontend
-		RenameTo:    keywords.NodeMemoryUsedPercentage,
-		EncodedType: utils.Percentage,
-	},
-	NET_RECEIVE_KEY: { // TODO: We don't use this
-		RenameTo:    keywords.NodeNetworkReceivePerSecond, // I think this is some kind of average per second
-		EncodedType: utils.Float,
-	},
-	NET_SEND_KEY: { // TODO: We don't use this
-		RenameTo:    keywords.NodeNetworkSendPerSecond, // I think this is some kind of average per second
-		EncodedType: utils.Float,
-	},
+var MetricsKnown = map[MetricKnownName]metrics.MetricDef{
+	CPU_USAGE_KEY:      metrics.NodeCPUUsage,
+	DISK_USAGE_KEY:     metrics.NodeDiskUsedPercentage,
+	DISK_IO_READ_KEY:   metrics.NodeDiskIOPSReadPerSecond,
+	DISK_IO_WRITES_KEY: metrics.NodeDiskIOPSWritePerSecond,
+	LOAD_AVERAGE_KEY:   metrics.NodeLoadAverage,
+	MEM_AVAILABLE_KEY:  metrics.NodeMemoryAvailablePercentage,
+	MEM_USAGE_KEY:      metrics.NodeMemoryUsedPercentage,
+	NET_RECEIVE_KEY:    metrics.NodeNetworkReceivePerSecond,
+	NET_SEND_KEY:       metrics.NodeNetworkSendPerSecond,
 }
 
 func asKnownMetric(name string) (MetricKnownName, error) {
@@ -109,10 +79,13 @@ func asKnownMetric(name string) (MetricKnownName, error) {
 // all metrics, but we store it separately for each metric as this is not gauranteed.
 type ParsedMetric struct {
 	Name      MetricKnownName
-	RenameTo  string
 	Value     any
-	Type      utils.MetricType
+	MetricDef metrics.MetricDef
 	Timestamp time.Time
+}
+
+func (p ParsedMetric) AsFlatValue() (metrics.FlatValue, error) {
+	return p.MetricDef.AsFlatValue(p.Value)
 }
 
 func parseMetricForMasterNode(name MetricKnownName, data FetchMetricJSONData) (ParsedMetric, error) {
@@ -151,9 +124,8 @@ func parseMetricForMasterNode(name MetricKnownName, data FetchMetricJSONData) (P
 
 	return ParsedMetric{
 		Name:      name,
-		RenameTo:  MetricsKnown[name].RenameTo,
+		MetricDef: MetricsKnown[name],
 		Value:     latestValue,
-		Type:      MetricsKnown[name].EncodedType,
 		Timestamp: time.Unix(data.MaxTimestamp, 0),
 	}, nil
 }

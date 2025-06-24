@@ -8,14 +8,13 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/dbtuneai/agent/pkg/metrics"
 
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 
 	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
-	"github.com/dbtuneai/agent/pkg/internal/keywords"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
 )
 
 type State struct {
@@ -106,33 +105,33 @@ func (info *DBInfo) ParameterGroupStatus(name string) *rdsTypes.DBParameterGroup
 	return nil
 }
 
-func (info *DBInfo) TryIntoFlatValuesSlice() ([]utils.FlatValue, error) {
-	metrics := []utils.FlatValue{}
+func (info *DBInfo) TryIntoFlatValuesSlice() ([]metrics.FlatValue, error) {
+	flat_metrics := []metrics.FlatValue{}
 
 	totalMemoryBytes, err := info.TotalMemoryBytes()
 	if err == nil {
-		totalMemoryBytesMetric, err := utils.NewMetric(keywords.NodeMemoryTotal, totalMemoryBytes, utils.Int)
+		totalMemoryBytesMetric, err := metrics.NodeMemoryTotal.AsFlatValue(totalMemoryBytes)
 		if err == nil {
-			metrics = append(metrics, totalMemoryBytesMetric)
+			flat_metrics = append(flat_metrics, totalMemoryBytesMetric)
 		}
 	}
 
 	nVCPUs, err := info.VCPUs()
 	if err == nil {
-		noCPUsMetric, err := utils.NewMetric(keywords.NodeCPUCount, nVCPUs, utils.Int)
+		noCPUsMetric, err := metrics.NodeCPUCount.AsFlatValue(nVCPUs)
 		if err == nil {
-			metrics = append(metrics, noCPUsMetric)
+			flat_metrics = append(flat_metrics, noCPUsMetric)
 		}
 	}
 
 	// TODO(eddie): Really? We should definitely find where to fetch this and add to system info.
 	// For RDS, disk type is always SSD
-	diskTypeMetric, err := utils.NewMetric(keywords.NodeStorageType, "SSD", utils.String)
+	diskTypeMetric, err := metrics.NodeStorageType.AsFlatValue("SSD")
 	if err == nil {
-		metrics = append(metrics, diskTypeMetric)
+		flat_metrics = append(flat_metrics, diskTypeMetric)
 	}
 
-	return metrics, nil
+	return flat_metrics, nil
 }
 
 func fetchRDSDBInstance(

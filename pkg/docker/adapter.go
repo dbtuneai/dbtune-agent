@@ -8,9 +8,8 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
-	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -105,7 +104,7 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 		{
 			Key:        "server_uptime",
 			MetricType: "float",
-			Collector:  pg.Uptime(pgDriver),
+			Collector:  pg.UptimeMinutes(pgDriver),
 		},
 		{
 			Key:        "database_cache_hit_ratio",
@@ -122,19 +121,13 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 			MetricType: "int",
 			Collector:  DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
 		},
-		// Use it for testing
-		//{
-		//	Key:        "failing_slow_queries",
-		//	MetricType: "int",
-		//	Collector:  pg.ArtificiallyFailingQueries(pgAdapter),
-		//},
 	}
 }
 
-func (d *DockerContainerAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
+func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	d.Logger().Println("Collecting system info for Docker container")
 
-	var systemInfo []utils.FlatValue
+	var systemInfo []metrics.FlatValue
 
 	// Get PostgreSQL version using the existing collector
 	pgDriver := d.PGDriver
@@ -170,23 +163,54 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]utils.FlatValue, error) {
 	}
 
 	// Create metrics
-	version, _ := utils.NewMetric(keywords.PGVersion, pgVersion, utils.String)
-	maxConnectionsMetric, _ := utils.NewMetric(keywords.PGMaxConnections, maxConnections, utils.Int)
+	version, err := metrics.PGVersion.AsFlatValue(pgVersion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create PostgreSQL version metric: %w", err)
+	}
+
+	maxConnectionsMetric, err := metrics.PGMaxConnections.AsFlatValue(maxConnections)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create max connections metric: %w", err)
+	}
 
 	// Memory info
-	memLimitMetric, _ := utils.NewMetric(keywords.NodeMemoryTotal, statsJSON.MemoryStats.Limit, utils.Int)
+	memLimitMetric, err := metrics.NodeMemoryTotal.AsFlatValue(int64(statsJSON.MemoryStats.Limit))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create memory limit metric: %w", err)
+	}
 
 	// CPU info
-	noCPUs := float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
-	if statsJSON.CPUStats.OnlineCPUs > 0 {
-		noCPUs = float64(statsJSON.CPUStats.OnlineCPUs)
+	var cpuCount float64
+	if containerInfo.HostConfig.NanoCPUs > 0 {
+		// Convert from nano CPUs to actual CPU count
+		cpuCount = float64(containerInfo.HostConfig.NanoCPUs) / 1e9
+	} else if containerInfo.HostConfig.CPUQuota > 0 && containerInfo.HostConfig.CPUPeriod > 0 {
+		// Convert from quota/period to CPU count
+		cpuCount = float64(containerInfo.HostConfig.CPUQuota) / float64(containerInfo.HostConfig.CPUPeriod)
+	} else {
+		// If no limits set, use the number of CPUs available to the container
+		cpuCount = float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
 	}
-	cpuMetric, _ := utils.NewMetric(keywords.NodeCPUCount, noCPUs, utils.Float)
+	cpuMetric, err := metrics.NodeCPUCount.AsFlatValue(int64(cpuCount))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CPU count metric: %w", err)
+	}
 
 	// Container info
-	containerOS, _ := utils.NewMetric(keywords.NodeOSInfo, "linux", utils.String) // Docker containers are Linux-based
-	containerPlatform, _ := utils.NewMetric(keywords.NodeOSPlatform, "docker", utils.String)
-	containerVersion, _ := utils.NewMetric(keywords.NodeOSPlatformVer, containerInfo.Config.Image, utils.String)
+	containerOS, err := metrics.NodeOSInfo.AsFlatValue("linux") // Docker containers are Linux-based
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OS info metric: %w", err)
+	}
+
+	containerPlatform, err := metrics.NodeOSPlatform.AsFlatValue("docker")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create platform metric: %w", err)
+	}
+
+	containerVersion, err := metrics.NodeOSPlatformVer.AsFlatValue(containerInfo.Config.Image)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create platform version metric: %w", err)
+	}
 
 	systemInfo = append(systemInfo,
 		version,

@@ -3,13 +3,11 @@ package pg
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/internal/keywords"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -48,7 +46,7 @@ func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *age
 			// Calculate the runtime of the queries (AQR)
 			runtime := utils.CalculateQueryRuntime(state.Cache.QueryRuntimeList, queryStats)
 
-			metricEntry, err := utils.NewMetric(keywords.PerfAverageQueryRuntime, runtime, utils.Float)
+			metricEntry, err := metrics.PerfAverageQueryRuntime.AsFlatValue(runtime)
 			if err != nil {
 				return err
 			}
@@ -57,10 +55,10 @@ func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *age
 			// Calculate the pg_stat_statements delta to send to the server
 			pgStatStatementsDelta, totalDiffs := utils.CalculateQueryRuntimeDelta(state.Cache.QueryRuntimeList, queryStats)
 
-			totalDiffsMetric, _ := utils.NewMetric(keywords.PGStatStatementsDeltaCount, totalDiffs, utils.Int)
+			totalDiffsMetric, _ := metrics.PGStatStatementsDeltaCount.AsFlatValue(totalDiffs)
 			state.AddMetric(totalDiffsMetric)
 
-			pgStatStatementsDeltaMetric, _ := utils.NewMetric(keywords.PGStatStatementsDelta, pgStatStatementsDelta, utils.PgssDelta)
+			pgStatStatementsDeltaMetric, _ := metrics.PGStatStatementsDelta.AsFlatValue(pgStatStatementsDelta)
 			state.AddMetric(pgStatStatementsDeltaMetric)
 
 			state.Cache.QueryRuntimeList = queryStats
@@ -85,32 +83,7 @@ func ActiveConnections(pgPool *pgxpool.Pool) func(ctx context.Context, state *ag
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric(keywords.PGActiveConnections, result, utils.Int)
-		if err != nil {
-			return err
-		}
-		state.AddMetric(metricEntry)
-
-		return nil
-	}
-}
-
-const SleepQuery = `
-/*dbtune*/
-SELECT pg_sleep(1000000);
-`
-
-func ArtificiallyFailingQueries(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
-	// Perform runtime reflection to make sure that the
-	// struct is embedding the default adapter
-	return func(ctx context.Context, state *agent.MetricsState) error {
-		var result int
-		err := pgPool.QueryRow(ctx, SleepQuery).Scan(&result)
-		if err != nil {
-			return err
-		}
-
-		metricEntry, err := utils.NewMetric("pg_sleep_result", result, utils.Int)
+		metricEntry, err := metrics.PGActiveConnections.AsFlatValue(result)
 		if err != nil {
 			return err
 		}
@@ -159,7 +132,7 @@ func TransactionsPerSecond(pgPool *pgxpool.Pool) func(ctx context.Context, state
 		duration := time.Since(state.Cache.XactCommit.Timestamp).Seconds()
 		if duration > 0 {
 			tps := float64(serverXactCommits-state.Cache.XactCommit.Count) / duration
-			metricEntry, err := utils.NewMetric(keywords.PerfTransactionsPerSecond, tps, utils.Float)
+			metricEntry, err := metrics.PerfTransactionsPerSecond.AsFlatValue(tps)
 			if err != nil {
 				return err
 			}
@@ -190,7 +163,7 @@ func DatabaseSize(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.M
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric(keywords.PGInstanceSize, totalSizeBytes, utils.Int)
+		metricEntry, err := metrics.PGInstanceSize.AsFlatValue(totalSizeBytes)
 		if err != nil {
 			return err
 		}
@@ -214,7 +187,7 @@ func Autovacuum(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.Met
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric(keywords.PGAutovacuumCount, result, utils.Int)
+		metricEntry, err := metrics.PGAutovacuumCount.AsFlatValue(result)
 		if err != nil {
 			return err
 		}
@@ -224,20 +197,20 @@ func Autovacuum(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.Met
 	}
 }
 
-const UptimeQuery = `
+const UptimeMinutesQuery = `
 /*dbtune*/
 SELECT EXTRACT(EPOCH FROM (current_timestamp - pg_postmaster_start_time())) / 60 as uptime_minutes;
 `
 
-func Uptime(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+func UptimeMinutes(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
 		var uptime float64
-		err := pgPool.QueryRow(ctx, UptimeQuery).Scan(&uptime)
+		err := pgPool.QueryRow(ctx, UptimeMinutesQuery).Scan(&uptime)
 		if err != nil {
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric(keywords.ServerUptime, uptime, utils.Float)
+		metricEntry, err := metrics.ServerUptimeMinutes.AsFlatValue(uptime)
 		if err != nil {
 			return err
 		}
@@ -266,7 +239,7 @@ func BufferCacheHitRatio(pgPool *pgxpool.Pool) func(ctx context.Context, state *
 			return err
 		}
 
-		metricEntry, err := utils.NewMetric(keywords.PGCacheHitRatio, bufferCacheHitRatio, utils.Float)
+		metricEntry, err := metrics.PGCacheHitRatio.AsFlatValue(bufferCacheHitRatio)
 		if err != nil {
 			return err
 		}
@@ -333,7 +306,7 @@ func WaitEvents(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.Met
 				return err
 			}
 
-			metricEntry, _ := utils.NewMetric(fmt.Sprintf("%s%s", keywords.PGWaitEventPrefix, strings.ToLower(event)), count, utils.Int)
+			metricEntry, _ := metrics.PGWaitEvent{Name: event}.AsFlatValue(count)
 			state.AddMetric(metricEntry)
 		}
 

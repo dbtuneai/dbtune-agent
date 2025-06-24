@@ -18,6 +18,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/dbtune"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/version"
 
 	"github.com/hashicorp/go-retryablehttp"
@@ -112,8 +113,8 @@ type AgentLooper interface {
 	// approach, where the collectors are executed in parallel and the errors are
 	// collected in a channel. The channel is then closed and the results are
 	// returned. Uses the errgroup package to delegate the concurrent execution.
-	GetMetrics() ([]utils.FlatValue, error)
-	SendMetrics([]utils.FlatValue) error
+	GetMetrics() ([]metrics.FlatValue, error)
+	SendMetrics([]metrics.FlatValue) error
 
 	// GetSystemInfo returns the system info of the PostgresSQL server
 	// Example of system info:
@@ -126,8 +127,8 @@ type AgentLooper interface {
 	// This is because if only a partial amount of the SystemInfo can be observed, then
 	// it means that DBtune will detect this as the system information having been changed
 	// and potentially abort an inprogress tuning session.
-	GetSystemInfo() ([]utils.FlatValue, error)
-	SendSystemInfo([]utils.FlatValue) error
+	GetSystemInfo() ([]metrics.FlatValue, error)
+	SendSystemInfo([]metrics.FlatValue) error
 
 	GetActiveConfig() (ConfigArraySchema, error)
 	SendActiveConfig(ConfigArraySchema) error
@@ -212,12 +213,12 @@ type MetricsState struct {
 	Cache Caches
 	// Every round of metric collections this array will be filled with the metrics
 	// that are collected, and then emptied
-	Metrics []utils.FlatValue
+	Metrics []metrics.FlatValue
 	Mutex   *sync.Mutex
 }
 
 // AddMetric appends a metric in a thread-safe way
-func (state *MetricsState) AddMetric(metric utils.FlatValue) {
+func (state *MetricsState) AddMetric(metric metrics.FlatValue) {
 	state.Mutex.Lock()
 	defer state.Mutex.Unlock()
 	state.Metrics = append(state.Metrics, metric)
@@ -296,7 +297,7 @@ func CreateCommonAgentWithVersion(version string) *CommonAgent {
 			Collectors: []MetricCollector{},
 			Cache:      Caches{},
 			Mutex:      &sync.Mutex{},
-			Metrics:    []utils.FlatValue{},
+			Metrics:    []metrics.FlatValue{},
 		},
 		// Default timeouts
 		CollectionTimeout: 20 * time.Second,
@@ -362,11 +363,11 @@ func (a *CommonAgent) InitCollectors(collectors []MetricCollector) {
 // GetMetrics will have a default implementation to handle gracefully
 // error and send partial metrics rather than failing.
 // It is discouraged for every adapter overriding this one.
-func (a *CommonAgent) GetMetrics() ([]utils.FlatValue, error) {
+func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
 	a.Logger().Println("Staring metric collection")
 
 	// Cleanup metrics from the previous heartbeat
-	a.MetricsState.Metrics = []utils.FlatValue{}
+	a.MetricsState.Metrics = []metrics.FlatValue{}
 
 	// Create context with configured timeout
 	ctx, cancel := context.WithTimeout(context.Background(), a.CollectionTimeout)
@@ -437,10 +438,10 @@ func (a *CommonAgent) GetMetrics() ([]utils.FlatValue, error) {
 	return a.MetricsState.Metrics, nil
 }
 
-func (a *CommonAgent) SendMetrics(metrics []utils.FlatValue) error {
+func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
 	a.Logger().Println("Sending metrics to server")
 
-	formattedMetrics := utils.FormatMetrics(metrics)
+	formattedMetrics := metrics.FormatMetrics(ms)
 
 	jsonData, err := json.Marshal(formattedMetrics)
 	if err != nil {
@@ -462,10 +463,10 @@ func (a *CommonAgent) SendMetrics(metrics []utils.FlatValue) error {
 	return nil
 }
 
-func (a *CommonAgent) SendSystemInfo(systemInfo []utils.FlatValue) error {
+func (a *CommonAgent) SendSystemInfo(systemInfo []metrics.FlatValue) error {
 	a.Logger().Println("Sending system info to server")
 
-	formattedMetrics := utils.FormatSystemInfo(systemInfo)
+	formattedMetrics := metrics.FormatSystemInfo(systemInfo)
 
 	jsonData, err := json.Marshal(formattedMetrics)
 	if err != nil {
