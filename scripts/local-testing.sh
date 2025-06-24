@@ -4,6 +4,7 @@
 # It used the DBtune platform and requires two env variables to be set:
 # - DBT_DBTUNE_API_KEY
 # - DBT_DBTUNE_SERVER_URL
+# - TUNING_TARGET (optional, default: transactions_per_second)
 #
 # The script will:
 # 1. Create a new database in the DBtune platform you are targeting and grab the ID
@@ -11,6 +12,16 @@
 
 set -e
 
+# Set default tuning target if not provided
+if [ -z "${TUNING_TARGET}" ]; then
+  TUNING_TARGET="transactions_per_second"
+fi
+
+# Validate tuning target
+if [ "$TUNING_TARGET" != "transactions_per_second" ] && [ "$TUNING_TARGET" != "average_query_runtime" ]; then
+  echo "Error: TUNING_TARGET must be either 'transactions_per_second' or 'average_query_runtime'"
+  exit 1
+fi
 
 if [ -z "${DBT_DBTUNE_API_KEY}" ] || [ -z "${DBT_DBTUNE_SERVER_URL}" ]; then
   echo "Error: DBT_DBTUNE_API_KEY and DBT_DBTUNE_SERVER_URL must be set"
@@ -44,7 +55,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${DBT_DBTUNE_SERVER_URL}/api/v1/
     "db_engine": "postgresql",
     "cloud_provider": "AWS",
     "hosting": "on_prem",
-    "tuning_target": "transactions_per_second",
+    "tuning_target": "'"${TUNING_TARGET}"'",
     "iteration_duration": 0.1
   }')
 
