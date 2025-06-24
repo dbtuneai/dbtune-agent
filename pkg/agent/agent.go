@@ -19,6 +19,7 @@ import (
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
+	"github.com/dbtuneai/agent/pkg/version"
 
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/spf13/viper"
@@ -252,9 +253,15 @@ type CommonAgent struct {
 	// Timeout configuration
 	CollectionTimeout time.Duration // Total timeout for all collectors
 	IndividualTimeout time.Duration // Timeout for each individual collector
+	// Version information
+	Version string
 }
 
 func CreateCommonAgent() *CommonAgent {
+	return CreateCommonAgentWithVersion(version.GetVersionOnly())
+}
+
+func CreateCommonAgentWithVersion(version string) *CommonAgent {
 	logger := log.New()
 	logger.SetFormatter(&log.TextFormatter{
 		FullTimestamp: true,
@@ -294,6 +301,7 @@ func CreateCommonAgent() *CommonAgent {
 		APIClient:  client,
 		logger:     logger,
 		StartTime:  time.Now().UTC().Format(time.RFC3339),
+		Version:    version,
 		MetricsState: MetricsState{
 			Collectors: []MetricCollector{},
 			Cache:      Caches{},
@@ -317,7 +325,7 @@ func (a *CommonAgent) SendHeartbeat() error {
 	a.Logger().Infof("Sending heartbeat to %s", a.ServerURLs.PostHeartbeat())
 
 	payload := AgentPayload{
-		AgentVersion:   "1.0.0",
+		AgentVersion:   a.Version,
 		AgentStartTime: a.StartTime,
 	}
 
@@ -325,17 +333,31 @@ func (a *CommonAgent) SendHeartbeat() error {
 	if err != nil {
 		a.Logger().Infof("Error marshaling JSON: %s", err)
 		fmt.Println("Error marshaling JSON:", err)
-		panic(err)
+		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.PostHeartbeat(), "application/json", bytes.NewBuffer(jsonData))
+	// Add a timeout context to avoid hanging
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", a.ServerURLs.PostHeartbeat(), bytes.NewBuffer(jsonData))
+	if err != nil {
+		a.Logger().Errorf("Failed to create heartbeat request: %v", err)
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.APIClient.Do(req)
+	if err != nil {
+		a.Logger().Errorf("Failed to send heartbeat: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != 204 {
-		a.Logger().Infof("Failed to send heartbeat to %s", a.ServerURLs.PostHeartbeat())
-	}
-
-	if err != nil {
-		panic(err)
+		body, _ := io.ReadAll(resp.Body)
+		a.Logger().Errorf("Failed to send heartbeat to %s, status: %d, body: %s", a.ServerURLs.PostHeartbeat(), resp.StatusCode, string(body))
+		return fmt.Errorf("heartbeat failed with status code %d", resp.StatusCode)
 	}
 
 	return nil

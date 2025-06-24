@@ -42,6 +42,7 @@ docker pull public.ecr.aws/dbtune/dbtune/agent:latest
 debug: false
 postgresql:
   connection_url: postgresql://user:password@localhost:5432/database
+  service_name: postgresql
 dbtune:
   server_url: https://app.dbtune.com
   api_key: your-api-key
@@ -67,9 +68,45 @@ docker run \
   public.ecr.aws/dbtune/dbtune/agent:latest
 ```
 
+4. (Optional) Install a systemd service for dbtune-agent
+
+For the pre-built binary, create a systemd service with the following config and save it as `/etc/systemd/system/dbtune-agent.service`
+
+    [Unit]
+    Description=DBtune agent
+    After=network.target
+    
+    [Service]
+    User=dbtune   # User that runs the dbtune-agent, can be root
+    Group=dbtune  # Group to run the dbtune-agent with
+    WorkingDirectory=/usr/local/bin
+    ExecStart=/usr/local/bin/dbtune-agent
+    Restart=always
+    RestartSec=5s
+    StandardOutput=journal
+    StandardError=journal
+    
+    [Install]
+    WantedBy=multi-user.target
+
+Make sure the user and group that you specify in the systemd service has rights to access postgres data files and also is allowed to use sudo without a password to do a systemd restart of the postgresql service e.g. `sudo systemctl restart postgres`.
+
+Reload the unit files and enable the dbtune-agent.service:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now dbtune-agent
+```
+
+Once started you can check and verify that the dbtune-agent is running by looking at the journal, for example: `journalctl -u dbtune-agent -f`
+
 ## Configuration
 
 ### Configuration via YAML
+
+Create the dbtune-agent configuration and store it where dbtune-agent can access it. The dbtune-agent searches for configuration to be in one of these 3 locations, ordered by priority:
+* `/etc/dbtune.yaml` 
+* `/etc/dbtune/dbtune.yaml`
+* `./dbtune.yaml` (Relative to the path from which `dbtune-agent` was executed)
 
 ```yaml
 # Basic configuration

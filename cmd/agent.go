@@ -2,14 +2,18 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
+	"os"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/aiven"
+	"github.com/dbtuneai/agent/pkg/checks"
 	"github.com/dbtuneai/agent/pkg/docker"
 	"github.com/dbtuneai/agent/pkg/pgprem"
 	"github.com/dbtuneai/agent/pkg/rds"
 	"github.com/dbtuneai/agent/pkg/runner"
+	"github.com/dbtuneai/agent/pkg/version"
 	"github.com/spf13/viper"
 )
 
@@ -22,12 +26,23 @@ func main() {
 	useRDS := flag.Bool("rds", false, "Use RDS adapter")
 	useAiven := flag.Bool("aiven", false, "Use Aiven PostgreSQL adapter")
 	useLocal := flag.Bool("local", false, "Use local PostgreSQL adapter")
+	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
+
+	// Handle version flag
+	if *showVersion {
+		fmt.Println(version.GetVersion())
+		os.Exit(0)
+	}
 
 	// Set the file name of the configurations file
 	viper.SetConfigName("dbtune")
 	viper.SetConfigType("yaml")
-	viper.AddConfigPath(".") // optionally look for config in the working directory
+
+	// Locations where to look for the config file
+	viper.AddConfigPath("/etc/")        // config at /etc/dbtune.yaml
+	viper.AddConfigPath("/etc/dbtune/") // config at /etc/dbtune/dbtune.yaml
+	viper.AddConfigPath(".")            // optionally look for config in the working directory
 
 	// Read the configuration file
 	if err := viper.ReadInConfig(); err != nil {
@@ -42,6 +57,11 @@ func main() {
 
 	viper.AutomaticEnv()      // Read also environment variables
 	viper.SetEnvPrefix("DBT") // Set a prefix for environment variables
+
+	// Startup checks for config and connectivity
+	if err := checks.CheckStartupRequirements(); err != nil {
+		log.Fatalf("Startup check failed: %v", err)
+	}
 
 	var adapter agent.AgentLooper
 	var err error
