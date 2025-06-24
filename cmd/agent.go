@@ -35,11 +35,6 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Startup checks for config and connectivity
-	if err := checks.CheckStartupRequirements(); err != nil {
-		log.Fatalf("Startup check failed: %v", err)
-	}
-
 	// Set the file name of the configurations file
 	viper.SetConfigName("dbtune")
 	viper.SetConfigType("yaml")
@@ -62,6 +57,11 @@ func main() {
 
 	viper.AutomaticEnv()      // Read also environment variables
 	viper.SetEnvPrefix("DBT") // Set a prefix for environment variables
+
+	// Startup checks for config and connectivity
+	if err := checks.CheckStartupRequirements(); err != nil {
+		log.Fatalf("Startup check failed: %v", err)
+	}
 
 	var adapter agent.AgentLooper
 	var err error

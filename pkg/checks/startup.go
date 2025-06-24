@@ -28,15 +28,6 @@ func CheckStartupRequirements() error {
 	if err != nil {
 		return fmt.Errorf("dbtune server configuration invalid: %w", err)
 	}
-	if serverURLs.ServerUrl == "" {
-		return fmt.Errorf("dbtune server URL is required but not set")
-	}
-	if serverURLs.ApiKey == "" {
-		return fmt.Errorf("dbtune API key is required but not set")
-	}
-	if serverURLs.DbID == "" {
-		return fmt.Errorf("dbtune database ID is required but not set")
-	}
 
 	// Try to connect to the database
 	dbpool, err := pgxpool.New(context.Background(), pgConfig.ConnectionURL)
