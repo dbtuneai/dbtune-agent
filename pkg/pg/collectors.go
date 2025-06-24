@@ -3,6 +3,7 @@ package pg
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -222,21 +223,66 @@ func UptimeMinutes(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.
 
 const BufferCacheHitRatioQuery = `
 /*dbtune*/
-SELECT ROUND(100.0 * blks_hit / (blks_hit + blks_read), 2) as cache_hit_ratio
+SELECT blks_hit, blks_read
 FROM pg_stat_database 
 WHERE datname = current_database();
 `
 
-// BufferCacheHitRatio returns the buffer cache hit ratio.
-// The current implementation gets only the hit ratio for the current database,
-// we intentionally avoid aggregating the hit ratio for all databases,
-// as this may add much noise from unused DBs.
+// BufferCacheHitRatio returns the buffer cache hit ratio based on delta calculations.
+// This implementation calculates the hit ratio based on the difference between
+// two consecutive snapshots, providing a more meaningful metric for recent performance.
 func BufferCacheHitRatio(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-		var bufferCacheHitRatio float64
-		err := pgPool.QueryRow(ctx, BufferCacheHitRatioQuery).Scan(&bufferCacheHitRatio)
+		var blksHit, blksRead int64
+		err := pgPool.QueryRow(ctx, BufferCacheHitRatioQuery).Scan(&blksHit, &blksRead)
 		if err != nil {
 			return err
+		}
+
+		// Validate that we have reasonable values
+		if blksHit < 0 || blksRead < 0 {
+			return fmt.Errorf("invalid buffer cache statistics: blks_hit=%d, blks_read=%d", blksHit, blksRead)
+		}
+
+		// Check if we have cached values from the previous collection
+		if state.Cache.BufferStats.BlksHit == 0 && state.Cache.BufferStats.BlksRead == 0 {
+			// First collection, just cache the values
+			state.Cache.BufferStats = agent.BufferStat{
+				BlksHit:   blksHit,
+				BlksRead:  blksRead,
+				Timestamp: time.Now(),
+			}
+			return nil
+		}
+
+		// Calculate deltas
+		blksHitDelta := blksHit - state.Cache.BufferStats.BlksHit
+		blksReadDelta := blksRead - state.Cache.BufferStats.BlksRead
+
+		// Handle counter resets (e.g., after PostgreSQL crash or immediate shutdown)
+		if blksHitDelta < 0 || blksReadDelta < 0 {
+			// Reset detected, update cache and skip this collection
+			state.Cache.BufferStats = agent.BufferStat{
+				BlksHit:   blksHit,
+				BlksRead:  blksRead,
+				Timestamp: time.Now(),
+			}
+			return nil
+		}
+
+		// Calculate cache hit ratio for this interval
+		var bufferCacheHitRatio float64
+		totalBlocks := blksHitDelta + blksReadDelta
+		if totalBlocks > 0 {
+			bufferCacheHitRatio = float64(blksHitDelta) / float64(totalBlocks) * 100.0
+		} else {
+			// No block activity in this interval
+			bufferCacheHitRatio = 0.0
+		}
+
+		// Validate the calculated ratio is within reasonable bounds
+		if bufferCacheHitRatio < 0.0 || bufferCacheHitRatio > 100.0 {
+			return fmt.Errorf("calculated cache hit ratio is out of bounds: %.2f%%", bufferCacheHitRatio)
 		}
 
 		metricEntry, err := metrics.PGCacheHitRatio.AsFlatValue(bufferCacheHitRatio)
@@ -244,6 +290,13 @@ func BufferCacheHitRatio(pgPool *pgxpool.Pool) func(ctx context.Context, state *
 			return err
 		}
 		state.AddMetric(metricEntry)
+
+		// Update cache for next iteration
+		state.Cache.BufferStats = agent.BufferStat{
+			BlksHit:   blksHit,
+			BlksRead:  blksRead,
+			Timestamp: time.Now(),
+		}
 
 		return nil
 	}

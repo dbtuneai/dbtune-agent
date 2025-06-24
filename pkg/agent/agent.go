@@ -168,6 +168,12 @@ type XactStat struct {
 	Timestamp time.Time
 }
 
+type BufferStat struct {
+	BlksHit   int64
+	BlksRead  int64
+	Timestamp time.Time
+}
+
 // Caches is a struct that holds the caches for the agent
 // that is updated between each metric collection beat.
 // Currently, this is fixed for all adapters.
@@ -191,6 +197,9 @@ type Caches struct {
 	XactCommit XactStat
 
 	IOCountersStat IOCounterStat
+
+	// BufferStats stores buffer cache statistics for delta calculations
+	BufferStats BufferStat
 
 	// Hardware specific cache for guardrails
 	// {
