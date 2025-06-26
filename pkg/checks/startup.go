@@ -42,6 +42,11 @@ func CheckStartupRequirements() error {
 		return fmt.Errorf("unable to ping PostgreSQL database: %w", err)
 	}
 
+	err = pg.CheckPGStatStatements(dbpool)
+	if err != nil {
+		return fmt.Errorf("failed to query pg_stat_statements table, did you `CREATE EXTENSION pg_stat_statements;`: %w", err)
+	}
+
 	// Try to connect to the dbtune server using the existing heartbeat function
 	commonAgent := agent.CreateCommonAgent()
 	// Override the ServerURLs to use our validated ones
