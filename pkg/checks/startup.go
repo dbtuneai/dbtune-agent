@@ -36,10 +36,16 @@ func CheckStartupRequirements() error {
 	}
 	defer dbpool.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
 	defer cancel()
 	err = dbpool.Ping(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to ping PostgreSQL database: %w", err)
+	}
+
+	err = pg.CheckPGStatStatements(dbpool)
+	if err != nil {
+		return fmt.Errorf("failed to query pg_stat_statements table: %w", err)
 	}
 
 	// Try to connect to the dbtune server using the existing heartbeat function

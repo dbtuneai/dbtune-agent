@@ -160,8 +160,15 @@ SELECT 1;
 
 func Select1(pgPool *pgxpool.Pool) error {
 	_, err := pgPool.Exec(context.Background(), Select1Query)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
+}
+
+const CheckPGStatStatementsQuery = `
+/*dbtune*/
+SELECT COUNT(*) FROM pg_stat_statements;
+`
+
+func CheckPGStatStatements(pgPool *pgxpool.Pool) error {
+	_, err := pgPool.Exec(context.Background(), CheckPGStatStatementsQuery)
+	return err
 }
