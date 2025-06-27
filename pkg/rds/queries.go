@@ -333,10 +333,16 @@ func ApplyConfig(
 		return fmt.Errorf("error waiting for instance: %w", err)
 	}
 
-	// Now check that it applied successfully. Anything but in-sync at this point is an error.
-	// TODO(eddiebergman): We are left in a weird state here, where aborting tuning would be safer. However we
-	// have no way to trigger this behaviour from this point. It would be useful for the agent to return log
-	// messages to the server and let the user decide what to do.
+	// Anything but an in-sync parameter group by this point is an error.
+	// TODO(eddiebergman): If not, we are left in a weird state, if tuning,
+	// then it would be safer to abort. However we have no way to trigger
+	// this behaviour from this point. It would be useful for the agent to
+	// return log messages to the server and let the user decide what to do.
+	// If we are doing something like "apply best config", then we should
+	// also send a message, but there would be no tuning to abort.
+	// When someone comes to revisit this logic. consider `ApplyConfig` should
+	// instead only consider failures to communicate as errors, and return the
+	// status of parameger group application as a result.
 	result, err = GetRDSInstanceWithParameterGroupStatus(clients, databaseIdentifier, parameterGroupName, ctx)
 	if err != nil {
 		return fmt.Errorf("error waiting for instance: %w", err)
