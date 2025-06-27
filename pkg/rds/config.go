@@ -3,6 +3,7 @@ package rds
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/spf13/viper"
@@ -63,6 +64,15 @@ func ConfigFromViper(keyValue string) (Config, error) {
 	}
 	if rdsConfig.RDSParameterGroupName == "" {
 		return Config{}, fmt.Errorf("RDS_PARAMETER_GROUP_NAME is required")
+	}
+
+	// Validate we do not have parameter group name that begins with `default.`, as we can't and shouldn't
+	// use these.
+	if strings.HasPrefix(rdsConfig.RDSParameterGroupName, "default.") {
+		return Config{}, fmt.Errorf(
+			"RDS_PARAMETER_GROUP_NAME cannot begin with 'default.' as it is a default parameter group that we do not tune, found: %s",
+			rdsConfig.RDSParameterGroupName,
+		)
 	}
 
 	return rdsConfig, nil

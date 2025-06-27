@@ -30,29 +30,27 @@ type DBInfo struct {
 	EC2InstanceTypeInfo ec2types.InstanceTypeInfo
 }
 
-func FetchDBInfo(
-	databaseIdentifier string,
+type EC2InstanceInfo struct {
+	InstanceType     ec2types.InstanceType
+	InstanceTypeInfo ec2types.InstanceTypeInfo
+}
+
+func FetchEC2InstanceInfoForRDSDBInstance(
+	rdsInstanceInfo *rdsTypes.DBInstance,
 	clients *AWSClients,
 	ctx context.Context,
-) (DBInfo, error) {
-	rdsInstanceInfo, err := fetchRDSDBInstance(databaseIdentifier, clients, ctx)
-	if err != nil {
-		return DBInfo{}, fmt.Errorf("failed to fetch RDS instance info: %v", err)
-	}
-
+) (EC2InstanceInfo, error) {
 	instanceClass := rdsInstanceInfo.DBInstanceClass
 	instanceType := strings.TrimPrefix(*instanceClass, "db.")
 	ec2InstanceTypeInfo, err := fetchEC2InstanceTypeInfo(ec2types.InstanceType(instanceType), clients, ctx)
 	if err != nil {
-		return DBInfo{}, fmt.Errorf("failed to fetch EC2 instance info: %v", err)
+		return EC2InstanceInfo{}, fmt.Errorf("failed to fetch EC2 instance info: %v", err)
 	}
 
-	dbInfo := DBInfo{
-		DBInstance:          *rdsInstanceInfo,
-		EC2InstanceType:     ec2types.InstanceType(instanceType),
-		EC2InstanceTypeInfo: *ec2InstanceTypeInfo,
-	}
-	return dbInfo, nil
+	return EC2InstanceInfo{
+		InstanceType:     ec2types.InstanceType(instanceType),
+		InstanceTypeInfo: *ec2InstanceTypeInfo,
+	}, nil
 }
 
 func (info *DBInfo) VCPUs() (uint32, error) {
@@ -134,7 +132,7 @@ func (info *DBInfo) TryIntoFlatValuesSlice() ([]metrics.FlatValue, error) {
 	return flat_metrics, nil
 }
 
-func fetchRDSDBInstance(
+func FetchRDSDBInstance(
 	rdsDatabaseIdentifier string,
 	clients *AWSClients,
 	ctx context.Context,

@@ -274,7 +274,7 @@ func ApplyConfig(
 
 	modifiedParameters, err := modifiedParametersToApply(proposedConfig, applyMethod)
 	if err != nil {
-		return fmt.Errorf("failed to get modified parameters: %v", err)
+		return fmt.Errorf("failed to get modified parameters: %w", err)
 	}
 
 	// Modify parameter group
@@ -283,17 +283,37 @@ func ApplyConfig(
 		Parameters:           modifiedParameters,
 	}
 
-	// TODO(eddie): We should actuall verify in the response that it worked
+	// TODO(eddie): We should actually verify in the response that it worked
 	_, err = clients.RDSClient.ModifyDBParameterGroup(ctx, args)
 	if err != nil {
-		return fmt.Errorf("failed to modify parameter group: %v", err)
+		return fmt.Errorf("failed to modify parameter group: %w", err)
 	}
 
 	// Wait for parameter group changes to be processed
 	logger.Info("Waiting for parameter group changes to be processed...")
-	err = waitRDSInstanceAvailable(clients, databaseIdentifier, parameterGroupName, ctx)
+	result, err := GetRDSInstanceWithParameterGroupStatus(clients, databaseIdentifier, parameterGroupName, ctx)
 	if err != nil {
-		return fmt.Errorf("error waiting for parameter group changes to be processed: %v", err)
+		return fmt.Errorf("error waiting for parameter group changes to be processed: %w", err)
+	}
+
+	switch result.Status {
+	case ParamGroupInSync:
+		// Rather than early return here, we go through the InstanceAvailableWaiter as we may not have the most
+		// up to date information.
+		logger.Info("Parameter group changes applied and active on database")
+	case ParamGroupPending:
+		if applyMethod == rdsTypes.ApplyMethodPendingReboot {
+			logger.Info("Parameter group changes applied, will attempt to restart database")
+		} else {
+			return fmt.Errorf("parameter group changes are unexpectedly in a pending status, could not apply config")
+		}
+	case ParamGroupFailed:
+		return fmt.Errorf("parameter group changes failed to apply with status: %s", *result.StatusMessage)
+	case ParamGroupMissing:
+		// NOTE: This shouldn't happen unless the parameter group suddenly changed.
+		return fmt.Errorf("parameter group '%s' not found attached to instance '%s'", parameterGroupName, databaseIdentifier)
+	case ParamGroupUnknown:
+		return fmt.Errorf("unknown parameter group status: %s", *result.StatusMessage)
 	}
 
 	// If restart is required and specified
@@ -301,7 +321,7 @@ func ApplyConfig(
 		args := &rds.RebootDBInstanceInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
 		_, err = clients.RDSClient.RebootDBInstance(ctx, args)
 		if err != nil {
-			return fmt.Errorf("failed to reboot RDS instance: %v", err)
+			return fmt.Errorf("failed to reboot RDS instance: %w", err)
 		}
 	}
 
@@ -310,13 +330,25 @@ func ApplyConfig(
 	dbWaiterArgs := &rds.DescribeDBInstancesInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
 	err = waiter.Wait(ctx, dbWaiterArgs, 15*time.Minute)
 	if err != nil {
-		return fmt.Errorf("error waiting for instance: %v", err)
+		return fmt.Errorf("error waiting for instance: %w", err)
 	}
 
+	// Now check that it applied successfully. Anything but in-sync at this point is an error.
+	// TODO(eddiebergman): We are left in a weird state here, where aborting tuning would be safer. However we
+	// have no way to trigger this behaviour from this point. It would be useful for the agent to return log
+	// messages to the server and let the user decide what to do.
+	result, err = GetRDSInstanceWithParameterGroupStatus(clients, databaseIdentifier, parameterGroupName, ctx)
+	if err != nil {
+		return fmt.Errorf("error waiting for instance: %w", err)
+	}
+
+	if result.Status != ParamGroupInSync {
+		return fmt.Errorf("instance rebooted, but parameter group changes are not in-sync, but instead: %s", *result.StatusMessage)
+	}
 	return nil
 }
 
-func parameterGroupStatus(
+func findParameterGroup(
 	rdsInstanceInfo *rdsTypes.DBInstance,
 	parameterGroupName string,
 ) *rdsTypes.DBParameterGroupStatus {
@@ -354,34 +386,70 @@ func modifiedParametersToApply(
 	return modifiedParameters, nil
 }
 
-func waitRDSInstanceAvailable(
+type ParameterGroupStatus string
+
+const (
+	ParamGroupInSync  ParameterGroupStatus = "in-sync" // absorbs in-sync
+	ParamGroupPending ParameterGroupStatus = "pending" // absorbs pending-reboot, pending-database-upgrade
+	ParamGroupFailed  ParameterGroupStatus = "failed"  // absorbs failed-to-apply
+	ParamGroupMissing ParameterGroupStatus = "missing" // When parameter group does not exist on instance
+	ParamGroupUnknown ParameterGroupStatus = "unknown" // absorbs all other
+)
+
+type ParameterGroupStatusResult struct {
+	DBInstance    *rdsTypes.DBInstance
+	Status        ParameterGroupStatus
+	StatusMessage *string
+}
+
+// Get the RDS instance information, along with the parameter group status.
+//
+// If the parameter group is in an "applying" state, we will wait until the database is
+// available. The caller may use the ParameterGroupStatus to see if the current `Status` is
+// considered an error state or not.
+//
+// An error explicitly indicates a timeout occured.
+func GetRDSInstanceWithParameterGroupStatus(
 	clients *AWSClients,
 	databaseIdentifier string,
 	parameterGroupName string,
 	ctx context.Context,
-) error {
+) (ParameterGroupStatusResult, error) { // error signifies timeout
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
-	// Wait for the parameter apply status to be either pending-reboot or in-sync
+	nullResult := ParameterGroupStatusResult{
+		Status:        ParamGroupUnknown,
+		StatusMessage: nil,
+		DBInstance:    nil,
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for parameter group changes to be processed")
+			return nullResult, fmt.Errorf("timeout waiting for parameter group changes to be processed")
 		case <-time.After(5 * time.Second):
-			rdsInstanceInfo, err := fetchRDSDBInstance(databaseIdentifier, clients, ctx)
+			rdsInstanceInfo, err := FetchRDSDBInstance(databaseIdentifier, clients, ctx)
 			if err != nil {
-				continue // Retry
+				return nullResult, fmt.Errorf("failed to fetch RDS instance information: %w", err)
 			}
 
-			parameterGroupStatus := parameterGroupStatus(rdsInstanceInfo, parameterGroupName)
+			parameterGroupStatus := findParameterGroup(rdsInstanceInfo, parameterGroupName)
 			if parameterGroupStatus == nil {
-				continue
+				return ParameterGroupStatusResult{
+					DBInstance:    rdsInstanceInfo,
+					Status:        ParamGroupMissing,
+					StatusMessage: nil,
+				}, nil
 			}
 
+			// NOTE: It can also be a null string...
 			currentParamStatus := parameterGroupStatus.ParameterApplyStatus
 			if currentParamStatus == nil {
-				return fmt.Errorf("parameter group '%s' not found attached to instance '%s'", parameterGroupName, databaseIdentifier)
+				return ParameterGroupStatusResult{
+					DBInstance:    rdsInstanceInfo,
+					Status:        ParamGroupUnknown,
+					StatusMessage: nil,
+				}, nil
 			}
 
 			// Pulled from their docs for the `status` string
@@ -394,17 +462,31 @@ func waitRDSInstanceAvailable(
 			// Waiting
 			case "applying":
 				continue
-			// Successes
+			// Success, happy path
 			case "in-sync":
-				return nil
-			case "pending-reboot":
-				return nil
+				return ParameterGroupStatusResult{
+					DBInstance:    rdsInstanceInfo,
+					Status:        ParamGroupInSync,
+					StatusMessage: currentParamStatus,
+				}, nil
 			case "failed-to-apply":
-				return fmt.Errorf("parameter group is in an invalid state")
-			case "pending-database-upgrade":
-				return fmt.Errorf("parameter group change will be applied after the DB instance is upgraded")
+				return ParameterGroupStatusResult{
+					DBInstance:    rdsInstanceInfo,
+					Status:        ParamGroupFailed,
+					StatusMessage: currentParamStatus,
+				}, nil
+			case "pending-database-upgrade", "pending-reboot":
+				return ParameterGroupStatusResult{
+					DBInstance:    rdsInstanceInfo,
+					Status:        ParamGroupPending,
+					StatusMessage: currentParamStatus,
+				}, nil
 			default:
-				return fmt.Errorf("unknown parameter apply status: %s", *currentParamStatus)
+				return ParameterGroupStatusResult{
+					DBInstance:    rdsInstanceInfo,
+					Status:        ParamGroupUnknown,
+					StatusMessage: currentParamStatus,
+				}, nil
 			}
 		}
 	}

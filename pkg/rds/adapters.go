@@ -55,10 +55,54 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 	}
 	clients := NewAWSClients(cfg)
 
-	// Check if RDS client can fetch the database instance correctly and the tokens work
-	dbInfo, err := FetchDBInfo(config.RDSDatabaseIdentifier, &clients, ctx)
+	commonAgent := agent.CreateCommonAgent()
+
+	// Now fetch the parameter group and ensure 1) that it has the parameter group attached
+	// to it and 2) warn if it's not in a healthy state.
+	result, err := GetRDSInstanceWithParameterGroupStatus(
+		&clients,
+		config.RDSDatabaseIdentifier,
+		config.RDSParameterGroupName,
+		ctx,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe database instance: %w", err)
+		return nil, fmt.Errorf("failed to get RDS instance with error: %w", err)
+	}
+
+	switch result.Status {
+	case ParamGroupInSync:
+		// Happy path
+	case ParamGroupMissing:
+		return nil, fmt.Errorf(
+			"could not find parameter group '%s' attached to RDS instance '%s'. Found the following parameter groups: %v",
+			config.RDSParameterGroupName,
+			config.RDSDatabaseIdentifier,
+			result.DBInstance.DBParameterGroups,
+		)
+	case ParamGroupPending, ParamGroupFailed, ParamGroupUnknown:
+		// NOTE(eddiebergman): At this point, it would be handy for the agent to communicate to the backend
+		// to inform the user that their database is not ready for tuning. However this doesn't prevent
+		// monitoring and is not a reason to crash the agent at startup.
+		commonAgent.Logger().Warnf(
+			"RDS instance parameter group is not in-sync, we advise against tuning, status: %s",
+			*result.StatusMessage,
+		)
+	}
+
+	// Now fetch the EC2 information about that instane class for the RDS instance
+	ec2InstanceInfo, err := FetchEC2InstanceInfoForRDSDBInstance(
+		result.DBInstance,
+		&clients,
+		ctx,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch EC2 instance info: %w", err)
+	}
+
+	dbInfo := DBInfo{
+		DBInstance:          *result.DBInstance,
+		EC2InstanceType:     ec2InstanceInfo.InstanceType,
+		EC2InstanceTypeInfo: ec2InstanceInfo.InstanceTypeInfo,
 	}
 
 	pgConfig, err := pg.ConfigFromViper(nil)
@@ -70,8 +114,6 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PG driver: %w", err)
 	}
-
-	commonAgent := agent.CreateCommonAgent()
 
 	c := &RDSAdapter{
 		CommonAgent: *commonAgent,
@@ -92,7 +134,7 @@ func (adapter *RDSAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	adapter.Logger().Info("Collecting system info")
 
 	// Refreshes self
-	dbInfo, err := FetchDBInfo(
+	dbInstanceInfo, err := FetchRDSDBInstance(
 		adapter.Config.RDSDatabaseIdentifier,
 		&adapter.AWSClients,
 		context.Background(),
@@ -100,7 +142,10 @@ func (adapter *RDSAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	if err != nil {
 		return nil, err
 	}
-	adapter.State.DBInfo = &dbInfo
+	adapter.State.DBInfo.DBInstance = *dbInstanceInfo
+	if err != nil {
+		return nil, err
+	}
 	adapter.State.LastDBInfoCheck = time.Now()
 
 	// Get the RDSDB specific info
