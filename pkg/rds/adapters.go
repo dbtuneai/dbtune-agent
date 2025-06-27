@@ -143,9 +143,6 @@ func (adapter *RDSAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 		return nil, err
 	}
 	adapter.State.DBInfo.DBInstance = *dbInstanceInfo
-	if err != nil {
-		return nil, err
-	}
 	adapter.State.LastDBInfoCheck = time.Now()
 
 	// Get the RDSDB specific info
