@@ -76,7 +76,7 @@ func main() {
 	case *useRDS:
 		adapter, err = rds.CreateRDSAdapter(nil)
 		if err != nil {
-			log.Fatalf("Failed to create Aurora RDS adapter: %v", err)
+			log.Fatalf("Failed to create RDS adapter: %v", err)
 		}
 	case *useAurora:
 		adapter, err = rds.CreateAuroraRDSAdapter()
