@@ -1,5 +1,7 @@
 debug: true
 
+disable_checks: false
+
 postgresql:
   connection_url: postgresql://username:password@your-ip:5432/database
   service_name: postgresql-17 # (required) name of the service in case of restarts
