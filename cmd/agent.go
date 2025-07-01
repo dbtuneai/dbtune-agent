@@ -59,8 +59,13 @@ func main() {
 	viper.SetEnvPrefix("DBT") // Set a prefix for environment variables
 
 	// Startup checks for config and connectivity
-	if err := checks.CheckStartupRequirements(); err != nil {
-		log.Fatalf("Startup check failed: %v", err)
+	disableChecks := viper.GetBool("disable_checks")
+	if !disableChecks {
+		if err := checks.CheckStartupRequirements(); err != nil {
+			log.Fatalf("Startup check failed: %v", err)
+		}
+	} else {
+		log.Println("Startup checks are disabled via configuration (disable_checks=true)")
 	}
 
 	var adapter agent.AgentLooper
