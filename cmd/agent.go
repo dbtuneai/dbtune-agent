@@ -9,6 +9,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/aiven"
 	"github.com/dbtuneai/agent/pkg/checks"
+	"github.com/dbtuneai/agent/pkg/cloudsql"
 	"github.com/dbtuneai/agent/pkg/docker"
 	"github.com/dbtuneai/agent/pkg/pgprem"
 	"github.com/dbtuneai/agent/pkg/rds"
@@ -17,7 +18,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-const AVAILABLE_FLAGS = "--docker, --aurora, --rds, --aiven, --local"
+const AVAILABLE_FLAGS = "--docker, --aurora, --rds, --aiven, --local, --cloudsql"
 
 func main() {
 	// Define flags
@@ -26,6 +27,7 @@ func main() {
 	useRDS := flag.Bool("rds", false, "Use RDS adapter")
 	useAiven := flag.Bool("aiven", false, "Use Aiven PostgreSQL adapter")
 	useLocal := flag.Bool("local", false, "Use local PostgreSQL adapter")
+	useCloudSQL := flag.Bool("cloudsql", false, "Use Cloud SQL adapter")
 	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
 
@@ -92,6 +94,11 @@ func main() {
 		adapter, err = aiven.CreateAivenPostgreSQLAdapter()
 		if err != nil {
 			log.Fatalf("Failed to create Aiven PostgreSQL adapter: %v", err)
+		}
+	case *useCloudSQL:
+		adapter, err = cloudsql.CreateCloudSQLAdapter()
+		if err != nil {
+			log.Fatalf("Failed to create Cloud SQL PostgreSQL adapter: %v", err)
 		}
 	case *useLocal:
 		adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
