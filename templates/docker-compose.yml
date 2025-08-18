@@ -51,6 +51,24 @@ services:
       - ./dbtune.yaml:/app/dbtune.yaml
       - /var/run/docker.sock:/var/run/docker.sock
 
+  # Generate PGSS metrics
+  query-runner:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    image: postgres:latest
+    command: >
+      sh -c "
+        while true; do
+          PGPASSWORD=password psql -h postgres -U dbtune -d dbtune -c 'SELECT COUNT(*) FROM pg_stat_statements;'
+          PGPASSWORD=password psql -h postgres -U dbtune -d dbtune -c 'SELECT version();'
+          sleep 1
+        done
+      "
+    networks:
+      - DB_NETWORK
+    restart: unless-stopped
+
 networks:
   DB_NETWORK:
     name: DB_NETWORK_NAME
