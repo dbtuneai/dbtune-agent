@@ -194,6 +194,7 @@ func TestRunnerWithErrors(t *testing.T) {
 	mockAgent.On("SendHeartbeat").Return(errors.New("heartbeat error"))
 	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, errors.New("metrics error"))
 	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, errors.New("system info error"))
+	mockAgent.On("SendError", mock.AnythingOfType("agent.ErrorPayload")).Return(nil)
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, errors.New("config error"))
 	mockAgent.On("Guardrails").Return(nil)
 
