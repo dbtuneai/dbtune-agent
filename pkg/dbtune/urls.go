@@ -80,3 +80,8 @@ func (s ServerURLs) GetKnobRecommendations() string {
 func (s ServerURLs) PostGuardrailSignal() string {
 	return fmt.Sprintf("%s/api/v1/databases/%s/guardrail", s.ServerUrl, s.DbID)
 }
+
+// PostError generates the URL for posting errors.
+func (s ServerURLs) PostError() string {
+	return fmt.Sprintf("%s/api/v1/databases/%s/errors", s.ServerUrl, s.DbID)
+}

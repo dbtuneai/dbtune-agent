@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/aiven"
@@ -141,6 +142,14 @@ func main() {
 			adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
 		}
 		if err != nil {
+			if adapter != nil {
+				errorPayload := agent.ErrorPayload{
+					ErrorMessage: "Failed to create adapter: " + err.Error(),
+					ErrorType:    "startup_error",
+					Timestamp:    time.Now().UTC().Format(time.RFC3339),
+				}
+				adapter.SendError(errorPayload)
+			}
 			log.Fatalf("Failed to create adapter: %v", err)
 		}
 	}

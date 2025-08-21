@@ -86,6 +86,11 @@ func (m *MockAgentLooper) SendGuardrailSignal(signal guardrails.Signal) error {
 	return args.Error(0)
 }
 
+func (m *MockAgentLooper) SendError(payload agent.ErrorPayload) error {
+	args := m.Called(payload)
+	return args.Error(0)
+}
+
 // Test runWithTicker function
 func TestRunWithTicker(t *testing.T) {
 	logger := logrus.New()
