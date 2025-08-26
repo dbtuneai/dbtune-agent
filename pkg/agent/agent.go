@@ -184,6 +184,49 @@ type BufferStat struct {
 	Timestamp time.Time
 }
 
+type PGDatabase struct {
+	BlksHit               int64
+	BlksRead              int64
+	TuplesReturned        int64
+	TuplesFetched         int64
+	TuplesInserted        int64
+	TuplesUpdated         int64
+	TuplesDeleted         int64
+	TempFiles             int64
+	TempBytes             int64
+	Deadlocks             int64
+	IdleInTransactionTime float64
+	Timestamp             time.Time
+}
+
+type PGBGWriter struct {
+	BuffersClean    int64
+	MaxWrittenClean int64
+	BuffersAlloc    int64
+	Timestamp       time.Time
+}
+
+type PGWAL struct {
+	WALRecords     int64
+	WALFpi         int64
+	WALBytes       int64
+	WALBuffersFull int64
+	WALWrite       int64
+	WALSync        int64
+	WALWriteTime   float64
+	WALSyncTime    float64
+	Timestamp      time.Time
+}
+
+type PGCheckPointer struct {
+	NumTimed       int64
+	NumReq         int64
+	WriteTime      float64
+	SyncTime       float64
+	BuffersWritten int64
+	Timestamp      time.Time
+}
+
 // Caches is a struct that holds the caches for the agent
 // that is updated between each metric collection beat.
 // Currently, this is fixed for all adapters.
@@ -208,8 +251,13 @@ type Caches struct {
 
 	IOCountersStat IOCounterStat
 
-	// BufferStats stores buffer cache statistics for delta calculations
-	BufferStats BufferStat
+	// stores metrics from pg_stat_database
+	PGDatabase     PGDatabase
+	PGBGWriter     PGBGWriter
+	PGWAL          PGWAL
+	PGCheckPointer PGCheckPointer
+
+	PGUserTables map[string]utils.PGUserTables
 
 	// Hardware specific cache for guardrails
 	// {
