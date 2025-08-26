@@ -444,7 +444,7 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 			),
 		},
 	}
-	if adapter.PGVersion >= "15" {
+	if adapter.PGVersion >= "17" {
 		collectors = append(collectors, agent.MetricCollector{
 			Key:        "pg_checkpointer",
 			MetricType: "int",

@@ -141,7 +141,7 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 			Collector:  DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
 		},
 	}
-	if adapter.PGVersion >= "15" {
+	if adapter.PGVersion >= "17" {
 		collectors = append(collectors, agent.MetricCollector{
 			Key:        "pg_checkpointer",
 			MetricType: "int",

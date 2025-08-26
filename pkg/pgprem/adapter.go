@@ -124,7 +124,7 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 			Collector:  HardwareInfoOnPremise(),
 		},
 	}
-	if pgAdapter.PGVersion >= "15" {
+	if pgAdapter.PGVersion >= "17" {
 		collectors = append(collectors, agent.MetricCollector{
 			Key:        "pg_checkpointer",
 			MetricType: "int",
