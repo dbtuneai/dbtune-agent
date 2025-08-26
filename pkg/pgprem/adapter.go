@@ -23,6 +23,7 @@ type DefaultPostgreSQLAdapter struct {
 	pgDriver        *pgPool.Pool
 	pgConfig        pg.Config
 	GuardrailConfig guardrails.Config
+	PGVersion       string
 }
 
 func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
@@ -42,12 +43,17 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 	}
 
 	commonAgent := agent.CreateCommonAgent()
+	PGVersion, err := pg.PGVersion(dbpool)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
+	}
 
 	c := &DefaultPostgreSQLAdapter{
 		CommonAgent:     *commonAgent,
 		pgDriver:        dbpool,
 		pgConfig:        pgConfig,
 		GuardrailConfig: guardrailSettings,
+		PGVersion:       PGVersion,
 	}
 	collectors := DefaultCollectors(c)
 	c.InitCollectors(collectors)
@@ -57,7 +63,7 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 
 func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollector {
 	pgDriver := pgAdapter.pgDriver
-	return []agent.MetricCollector{
+	collectors := []agent.MetricCollector{
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
@@ -89,9 +95,24 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 			Collector:  pg.UptimeMinutes(pgDriver),
 		},
 		{
-			Key:        "database_cache_hit_ratio",
-			MetricType: "float",
-			Collector:  pg.BufferCacheHitRatio(pgDriver),
+			Key:        "pg_database",
+			MetricType: "int",
+			Collector:  pg.PGStatDatabase(pgDriver),
+		},
+		{
+			Key:        "pg_user_tables",
+			MetricType: "int",
+			Collector:  pg.PGStatUserTables(pgDriver),
+		},
+		{
+			Key:        "pg_bgwriter",
+			MetricType: "int",
+			Collector:  pg.PGStatBGwriter(pgDriver),
+		},
+		{
+			Key:        "pg_wal",
+			MetricType: "int",
+			Collector:  pg.PGStatWAL(pgDriver),
 		},
 		{
 			Key:        "database_wait_events",
@@ -104,6 +125,14 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 			Collector:  HardwareInfoOnPremise(),
 		},
 	}
+	if pgAdapter.PGVersion >= "15" {
+		collectors = append(collectors, agent.MetricCollector{
+			Key:        "pg_checkpointer",
+			MetricType: "int",
+			Collector:  pg.PGStatCheckpointer(pgDriver),
+		})
+	}
+	return collectors
 }
 
 func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {

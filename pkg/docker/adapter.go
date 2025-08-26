@@ -26,6 +26,7 @@ type DockerContainerAdapter struct {
 	dockerClient      *client.Client
 	GuardrailSettings guardrails.Config
 	PGDriver          *pgxpool.Pool
+	PGVersion         string
 }
 
 func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
@@ -57,13 +58,17 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 	}
 
 	commonAgent := agent.CreateCommonAgent()
-
+	PGVersion, err := pg.PGVersion(dbpool)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
+	}
 	dockerAdapter := &DockerContainerAdapter{
 		CommonAgent:       *commonAgent,
 		Config:            dockerConfig,
 		dockerClient:      cli,
 		GuardrailSettings: guardrailSettings,
 		PGDriver:          dbpool,
+		PGVersion:         PGVersion,
 	}
 	collectors := DockerCollectors(dockerAdapter)
 	dockerAdapter.InitCollectors(collectors)
@@ -75,7 +80,7 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 // with Docker-specific ones while keeping database-specific collectors
 func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 	pgDriver := adapter.PGDriver
-	return []agent.MetricCollector{
+	collectors := []agent.MetricCollector{
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
@@ -107,9 +112,24 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 			Collector:  pg.UptimeMinutes(pgDriver),
 		},
 		{
-			Key:        "database_cache_hit_ratio",
-			MetricType: "float",
-			Collector:  pg.BufferCacheHitRatio(pgDriver),
+			Key:        "pg_database",
+			MetricType: "int",
+			Collector:  pg.PGStatDatabase(pgDriver),
+		},
+		{
+			Key:        "pg_user_tables",
+			MetricType: "int",
+			Collector:  pg.PGStatUserTables(pgDriver),
+		},
+		{
+			Key:        "pg_bgwriter",
+			MetricType: "int",
+			Collector:  pg.PGStatBGwriter(pgDriver),
+		},
+		{
+			Key:        "pg_wal",
+			MetricType: "int",
+			Collector:  pg.PGStatWAL(pgDriver),
 		},
 		{
 			Key:        "database_wait_events",
@@ -122,6 +142,14 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 			Collector:  DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
 		},
 	}
+	if adapter.PGVersion >= "15" {
+		collectors = append(collectors, agent.MetricCollector{
+			Key:        "pg_checkpointer",
+			MetricType: "int",
+			Collector:  pg.PGStatCheckpointer(pgDriver),
+		})
+	}
+	return collectors
 }
 
 func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {

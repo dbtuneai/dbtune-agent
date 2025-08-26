@@ -32,6 +32,7 @@ type AivenPostgreSQLAdapter struct {
 	State             *State
 	GuardrailSettings guardrails.Config
 	PGDriver          *pgPool.Pool
+	PGVersion         string
 }
 
 // CreateAivenPostgreSQLAdapter creates a new Aiven PostgreSQL adapter
@@ -84,6 +85,10 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 
 	commonAgent := agent.CreateCommonAgent()
 
+	PGVersion, err := pg.PGVersion(pgPool)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
+	}
 	// Create adapter
 	adapter := &AivenPostgreSQLAdapter{
 		CommonAgent:       *commonAgent,
@@ -92,6 +97,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		State:             state,
 		GuardrailSettings: guardrailSettings,
 		PGDriver:          pgPool,
+		PGVersion:         PGVersion,
 	}
 
 	// Initialize collectors
@@ -392,7 +398,7 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *guardrails.Signal {
 // AivenCollectors returns the metrics collectors for Aiven PostgreSQL
 func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 	pgDriver := adapter.PGDriver
-	return []agent.MetricCollector{
+	collectors := []agent.MetricCollector{
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
@@ -424,9 +430,24 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 			Collector:  pg.UptimeMinutes(pgDriver),
 		},
 		{
-			Key:        "database_cache_hit_ratio",
-			MetricType: "float",
-			Collector:  pg.BufferCacheHitRatio(pgDriver),
+			Key:        "pg_database",
+			MetricType: "int",
+			Collector:  pg.PGStatDatabase(pgDriver),
+		},
+		{
+			Key:        "pg_user_tables",
+			MetricType: "int",
+			Collector:  pg.PGStatUserTables(pgDriver),
+		},
+		{
+			Key:        "pg_bgwriter",
+			MetricType: "int",
+			Collector:  pg.PGStatBGwriter(pgDriver),
+		},
+		{
+			Key:        "pg_wal",
+			MetricType: "int",
+			Collector:  pg.PGStatWAL(pgDriver),
 		},
 		{
 			Key:        "database_wait_events",
@@ -447,6 +468,14 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 			),
 		},
 	}
+	if adapter.PGVersion >= "15" {
+		collectors = append(collectors, agent.MetricCollector{
+			Key:        "pg_checkpointer",
+			MetricType: "int",
+			Collector:  pg.PGStatCheckpointer(pgDriver),
+		})
+	}
+	return collectors
 }
 
 func boolPtr(b bool) *bool {
