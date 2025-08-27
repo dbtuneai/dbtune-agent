@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strconv"
 	"time"
 
 	aivenclient "github.com/aiven/go-client-codegen"
@@ -223,7 +222,11 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 					"the ALTER DATABASE technique for setting some parameters is not officially supported. If you unexpectedly encounter this error, please contact DBtune support",
 				)
 			}
-			err := pg.AlterDatabase(adapter.PGDriver, databaseName, knobConfig.Name, strconv.FormatFloat(knobConfig.Setting.(float64), 'f', -1, 64))
+			settingValue, err := knobConfig.GetSettingValue()
+			if err != nil {
+				return fmt.Errorf("failed to get setting value for %s: %w", knobConfig.Name, err)
+			}
+			err = pg.AlterDatabase(adapter.PGDriver, databaseName, knobConfig.Name, settingValue)
 			if err != nil {
 				return fmt.Errorf("failed to alter database: %v", err)
 			}

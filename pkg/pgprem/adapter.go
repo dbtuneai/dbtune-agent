@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"strconv"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
@@ -188,8 +187,12 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 			return err
 		}
 
-		// We make the assumption every setting is a number parsed as float
-		err = pg.AlterSystem(adapter.pgDriver, knobConfig.Name, strconv.FormatFloat(knobConfig.Setting.(float64), 'f', -1, 64))
+		// Get the setting value using the proper type conversion method
+		settingValue, err := knobConfig.GetSettingValue()
+		if err != nil {
+			return fmt.Errorf("failed to get setting value for %s: %w", knobConfig.Name, err)
+		}
+		err = pg.AlterSystem(adapter.pgDriver, knobConfig.Name, settingValue)
 		if err != nil {
 			return err
 		}
