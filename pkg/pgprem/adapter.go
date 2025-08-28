@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
+	"strings"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
@@ -124,7 +126,13 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 			Collector:  HardwareInfoOnPremise(),
 		},
 	}
-	if pgAdapter.PGVersion >= "17" {
+	majorVersion := strings.Split(pgAdapter.PGVersion, ".")
+	intMajorVersion, err := strconv.Atoi(majorVersion[0])
+	if err != nil {
+		pgAdapter.Logger().Warnf("Could not parse major version from version string %s: %v", pgAdapter.PGVersion, err)
+		return collectors
+	}
+	if intMajorVersion >= 17 {
 		collectors = append(collectors, agent.MetricCollector{
 			Key:        "pg_checkpointer",
 			MetricType: "int",

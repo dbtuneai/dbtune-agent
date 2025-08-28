@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	aivenclient "github.com/aiven/go-client-codegen"
@@ -444,7 +446,13 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 			),
 		},
 	}
-	if adapter.PGVersion >= "17" {
+	majorVersion := strings.Split(adapter.PGVersion, ".")
+	intMajorVersion, err := strconv.Atoi(majorVersion[0])
+	if err != nil {
+		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
+		return collectors
+	}
+	if intMajorVersion >= 17 {
 		collectors = append(collectors, agent.MetricCollector{
 			Key:        "pg_checkpointer",
 			MetricType: "int",
