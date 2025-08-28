@@ -34,12 +34,15 @@ type MetricMapping[T Number] struct {
 	Metric   metrics.MetricDef
 }
 
-// Helper function to calculate the delta and emit a number of metrics
-// The mapping takes the current value, the previous value and the metric to emit the metric to
+// Helper function to calculate the delta and emit a number of cumulative metrics
+// The mapping takes the current value, the previous value and the metric to emit
 // If either current or previous is nil, the metric is skipped
+//
+// # Note that cumulative metrics should be positive and monotonically increasing
+//
 // In some cases, the delta can be negative (e.g. if the counter has been reset)
 // In those cases, the metric is also skipped
-func EmitDeltaMetricsMap[T Number](state *agent.MetricsState, mappings []MetricMapping[T]) error {
+func EmitCumulativeMetricsMap[T Number](state *agent.MetricsState, mappings []MetricMapping[T]) error {
 	for _, m := range mappings {
 		if m.Previous != nil && m.Current != nil {
 			delta := *m.Current - *m.Previous
@@ -417,10 +420,10 @@ func PGStatDatabase(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent
 			{Current: &idleInTransactionTime, Previous: &state.Cache.PGDatabase.IdleInTransactionTime, Metric: metrics.PGIdleInTransactionTime},
 		}
 
-		if err := EmitDeltaMetricsMap(state, mappingsInt); err != nil {
+		if err := EmitCumulativeMetricsMap(state, mappingsInt); err != nil {
 			return err
 		}
-		if err := EmitDeltaMetricsMap(state, mappingsFloat); err != nil {
+		if err := EmitCumulativeMetricsMap(state, mappingsFloat); err != nil {
 			return err
 		}
 
@@ -465,7 +468,6 @@ SELECT JSON_OBJECT_AGG(
 )
 as stats
 FROM pg_stat_user_tables
-as f
 `
 
 // PGStatUserTables collects statistics from pg_stat_user_tables, computes deltas for various metrics per table,
@@ -602,7 +604,7 @@ func PGStatBGwriter(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent
 			{Current: &buffersAlloc, Previous: &state.Cache.PGBGWriter.BuffersAlloc, Metric: metrics.PGBGWBuffersAlloc},
 		}
 
-		if err := EmitDeltaMetricsMap(state, mappings); err != nil {
+		if err := EmitCumulativeMetricsMap(state, mappings); err != nil {
 			return err
 		}
 
@@ -666,10 +668,10 @@ func PGStatWAL(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.Metr
 			{Current: &WalSyncTime, Previous: &state.Cache.PGWAL.WALSyncTime, Metric: metrics.PGWALSyncTime},
 		}
 
-		if err := EmitDeltaMetricsMap(state, mappingsInt); err != nil {
+		if err := EmitCumulativeMetricsMap(state, mappingsInt); err != nil {
 			return err
 		}
-		if err := EmitDeltaMetricsMap(state, mappingsFloat); err != nil {
+		if err := EmitCumulativeMetricsMap(state, mappingsFloat); err != nil {
 			return err
 		}
 
@@ -730,10 +732,10 @@ func PGStatCheckpointer(pgPool *pgxpool.Pool) func(ctx context.Context, state *a
 			{Current: &syncTime, Previous: &state.Cache.PGCheckPointer.SyncTime, Metric: metrics.PGCPSyncTime},
 		}
 
-		if err := EmitDeltaMetricsMap(state, mappingsInt); err != nil {
+		if err := EmitCumulativeMetricsMap(state, mappingsInt); err != nil {
 			return err
 		}
-		if err := EmitDeltaMetricsMap(state, mappingsFloat); err != nil {
+		if err := EmitCumulativeMetricsMap(state, mappingsFloat); err != nil {
 			return err
 		}
 

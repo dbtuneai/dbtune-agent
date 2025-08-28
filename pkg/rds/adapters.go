@@ -3,6 +3,8 @@ package rds
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -255,7 +257,13 @@ func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
 			),
 		},
 	}
-	if adapter.PGVersion >= "17" {
+	majorVersion := strings.Split(adapter.PGVersion, ".")
+	intMajorVersion, err := strconv.Atoi(majorVersion[0])
+	if err != nil {
+		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
+		return collectors
+	}
+	if intMajorVersion >= 17 {
 		collectors = append(collectors, agent.MetricCollector{
 			Key:        "pg_checkpointer",
 			MetricType: "int",

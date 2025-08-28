@@ -227,6 +227,9 @@ var (
 	NodeOSPlatformVer = MetricDef{Key: "system_info_platform_version", Type: String}
 
 	// PG
+	// The PG stats are fetched from pg_stat_statements (https://www.postgresql.org/docs/current/pgstatstatements.html)
+	// as well as a number of native pg stats views.    (https://www.postgresql.org/docs/current/monitoring-stats.html)
+
 	PGVersion                  = MetricDef{Key: "pg_version", Type: String}
 	PGMaxConnections           = MetricDef{Key: "pg_max_connections", Type: Int}
 	PGStatStatementsDelta      = MetricDef{Key: "pg_stat_statements_delta", Type: PgssDelta}
