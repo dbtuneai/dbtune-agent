@@ -28,9 +28,36 @@ AS f
 `
 
 func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+	// Get config when collecter creater
+	pgConfig, _ := ConfigFromViper(nil)
+
 	return func(ctx context.Context, state *agent.MetricsState) error {
 		var jsonResult string
-		err := pgPool.QueryRow(ctx, PgStatStatementsQuery).Scan(&jsonResult)
+		var err error
+
+
+		if pgConfig.IncludeQueries {
+			// Query with query text
+			query := `
+/*dbtune*/
+SELECT JSON_OBJECT_AGG(
+	CONCAT(queryid, '_', userid, '_', dbid), 
+	JSON_BUILD_OBJECT(
+		'calls',calls,
+		'total_exec_time',total_exec_time,
+		'query_id', CONCAT(queryid, '_', userid, '_', dbid),
+		'query',query
+	)
+)
+AS qrt_stats
+FROM (SELECT * FROM pg_stat_statements WHERE query NOT LIKE '%dbtune%' ORDER BY calls DESC)
+AS f`
+			err = pgPool.QueryRow(ctx, query).Scan(&jsonResult)
+		} else {
+			// Query without query text
+			err = pgPool.QueryRow(ctx, PgStatStatementsQuery).Scan(&jsonResult)
+		}
+
 		if err != nil {
 			return err
 		}

@@ -43,6 +43,7 @@ debug: false
 postgresql:
   connection_url: postgresql://user:password@localhost:5432/database
   service_name: postgresql
+  include_queries: true
 dbtune:
   server_url: https://app.dbtune.com
   api_key: your-api-key
@@ -65,6 +66,7 @@ docker run \
   -e DBT_DBTUNE_SERVER_URL=https://app.dbtune.com \
   -e DBT_DBTUNE_API_KEY=your-api-key \
   -e DBT_DBTUNE_DATABASE_ID=your-database-id \
+  -e DBT_POSTGRESQL_INCLUDE_QUERIES=true \
   public.ecr.aws/dbtune/dbtune/agent:latest
 ```
 
@@ -117,6 +119,7 @@ postgresql:
   # It might need to run as root depending on your system and service setup.
   # Check the postgres.go adapter to see which commands are getting executed.
   service_name: postgresql-17 # (required) name of the service in case of restarts
+  include_queries: true # (required) to include query text when sending stats
 
 dbtune:
   server_url: https://app.dbtune.com # Optional: DBtune server endpoint (change for self-hosted)
@@ -153,6 +156,7 @@ export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/d
 export DBT_DBTUNE_SERVER_URL=http://localhost:8000
 export DBT_DBTUNE_API_KEY=your-api-key
 export DBT_DBTUNE_DATABASE_ID=your-database-id
+export DBT_POSTGRESQL_INCLUDE_QUERIES=true
 ```
 
 ## Core metrics
