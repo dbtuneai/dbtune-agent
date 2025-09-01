@@ -28,12 +28,13 @@ AS f
 `
 
 func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+	// Get config when collecter creater
+	pgConfig, _ := ConfigFromViper(nil)
+
 	return func(ctx context.Context, state *agent.MetricsState) error {
 		var jsonResult string
 		var err error
 
-		// Get config
-		pgConfig, _ := ConfigFromViper(nil)
 
 		if pgConfig.IncludeQueries {
 			// Query with query text
