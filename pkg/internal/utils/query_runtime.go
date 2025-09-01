@@ -8,6 +8,7 @@ var diffLimit = 100
 
 type CachedPGStatStatement struct {
 	QueryID       string  `json:"query_id"`
+	Query         string  `json:"query,omitempty"`
 	Calls         int     `json:"calls"`
 	TotalExecTime float64 `json:"total_exec_time"`
 }
@@ -74,6 +75,7 @@ func CalculateQueryRuntimeDelta(prev, curr map[string]CachedPGStatStatement) ([]
 
 			diffs = append(diffs, CachedPGStatStatement{
 				QueryID:       queryId,
+				Query:         currStat.Query,
 				Calls:         callsDiff,
 				TotalExecTime: execTimeDiff,
 			})
