@@ -180,21 +180,15 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 		}
 	}
 
-	// Apply the configuration with ALTER
-	for _, knob := range proposedConfig.KnobsOverrides {
-		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
-		if err != nil {
-			return err
-		}
+	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
+	if err != nil {
+		return err
+	}
 
-		// Get the setting value using the proper type conversion method
-		settingValue, err := knobConfig.GetSettingValue()
+	for _, knob := range parsedKnobs {
+		err = pg.AlterSystem(adapter.pgDriver, knob.Name, knob.SettingValue)
 		if err != nil {
-			return fmt.Errorf("failed to get setting value for %s: %w", knobConfig.Name, err)
-		}
-		err = pg.AlterSystem(adapter.pgDriver, knobConfig.Name, settingValue)
-		if err != nil {
-			return err
+			return fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)
 		}
 	}
 

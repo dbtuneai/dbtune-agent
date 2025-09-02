@@ -268,21 +268,16 @@ func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfi
 	d.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
 	ctx := context.Background()
-	// Apply the configuration with ALTER
-	for _, knob := range proposedConfig.KnobsOverrides {
-		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
-		if err != nil {
-			return err
-		}
 
-		// Get the setting value using the proper type conversion method
-		settingValue, err := knobConfig.GetSettingValue()
+	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
+	if err != nil {
+		return err
+	}
+
+	for _, knob := range parsedKnobs {
+		err := pg.AlterSystem(d.PGDriver, knob.Name, knob.SettingValue)
 		if err != nil {
-			return fmt.Errorf("failed to get setting value for %s: %w", knobConfig.Name, err)
-		}
-		err = pg.AlterSystem(d.PGDriver, knobConfig.Name, settingValue)
-		if err != nil {
-			return fmt.Errorf("failed to alter system: %w", err)
+			return fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)
 		}
 	}
 
