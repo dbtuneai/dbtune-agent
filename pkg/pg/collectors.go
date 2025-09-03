@@ -546,8 +546,13 @@ func PGStatUserTables(pgPool *pgxpool.Pool) func(ctx context.Context, state *age
 					idxScanDelta := currentStats.IdxScan - previousStats.IdxScan
 					idxTupFetchDelta := currentStats.IdxTupFetch - previousStats.IdxTupFetch
 
-					lastAutoVacuumMap[tableKey] = currentStats.LastAutoVacuum
-					lastAutoAnalyzeMap[tableKey] = currentStats.LastAutoAnalyze
+					if !currentStats.LastAutoVacuum.IsZero() {
+						lastAutoVacuumMap[tableKey] = currentStats.LastAutoVacuum
+					}
+					if !currentStats.LastAutoAnalyze.IsZero() {
+						lastAutoAnalyzeMap[tableKey] = currentStats.LastAutoAnalyze
+					}
+
 					if autoVacuumCountDelta >= 0 {
 						autoVacuumCountMap[tableKey] = autoVacuumCountDelta
 					}
