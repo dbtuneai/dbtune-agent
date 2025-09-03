@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
@@ -269,17 +268,16 @@ func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfi
 	d.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
 	ctx := context.Background()
-	// Apply the configuration with ALTER
-	for _, knob := range proposedConfig.KnobsOverrides {
-		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
-		if err != nil {
-			return err
-		}
 
-		// We make the assumption every setting is a number parsed as float
-		err = pg.AlterSystem(d.PGDriver, knobConfig.Name, strconv.FormatFloat(knobConfig.Setting.(float64), 'f', -1, 64))
+	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
+	if err != nil {
+		return err
+	}
+
+	for _, knob := range parsedKnobs {
+		err := pg.AlterSystem(d.PGDriver, knob.Name, knob.SettingValue)
 		if err != nil {
-			return fmt.Errorf("failed to alter system: %w", err)
+			return fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)
 		}
 	}
 

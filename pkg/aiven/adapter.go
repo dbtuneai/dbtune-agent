@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strconv"
 	"time"
 
 	aivenclient "github.com/aiven/go-client-codegen"
@@ -210,29 +209,6 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 			return fmt.Errorf("parameter %s has unknown modifiability status on Aiven. Skipping on applying the configuration", knobConfig.Name)
 		}
 		switch knobModifiability.ModifyLevel {
-		case ModifyAlterDB:
-			// NOTE: We may wish to have this, I'm not sure. In the
-			// meantime it's left here. However I believe this should
-			// really be a `panic()`, as if we hit this,
-			// no tuning will happen but this will manifest as the
-			// tuning session just stopping or hanging. To activate
-			// this hack, you need to set the `DBT_AIVEN_DATABASE_NAME` in the config file.
-			databaseName := adapter.Config.DatabaseName
-			if databaseName == "" {
-				return fmt.Errorf(
-					"the ALTER DATABASE technique for setting some parameters is not officially supported. If you unexpectedly encounter this error, please contact DBtune support",
-				)
-			}
-			err := pg.AlterDatabase(adapter.PGDriver, databaseName, knobConfig.Name, strconv.FormatFloat(knobConfig.Setting.(float64), 'f', -1, 64))
-			if err != nil {
-				return fmt.Errorf("failed to alter database: %v", err)
-			}
-
-			// HACK: Toggling this plugin forces the service to restart PG quickly, causing connections
-			// to reset and ALTER DATABASE queries to take effect for all new connections. If we have
-			// any ALTER DB statements, then we insert this into the Aiven API call.
-			userConfig["pg_stat_monitor_enable"] = !adapter.State.LastKnownPGStatMonitorEnable
-			restartRequired = true
 		case ModifyUserPGConfig:
 			pgSettings[knobConfig.Name] = knobConfig.Setting
 		case ModifyServiceLevel:

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"strconv"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
@@ -181,17 +180,15 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 		}
 	}
 
-	// Apply the configuration with ALTER
-	for _, knob := range proposedConfig.KnobsOverrides {
-		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
-		if err != nil {
-			return err
-		}
+	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
+	if err != nil {
+		return err
+	}
 
-		// We make the assumption every setting is a number parsed as float
-		err = pg.AlterSystem(adapter.pgDriver, knobConfig.Name, strconv.FormatFloat(knobConfig.Setting.(float64), 'f', -1, 64))
+	for _, knob := range parsedKnobs {
+		err = pg.AlterSystem(adapter.pgDriver, knob.Name, knob.SettingValue)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)
 		}
 	}
 
