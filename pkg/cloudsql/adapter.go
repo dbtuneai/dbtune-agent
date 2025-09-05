@@ -84,10 +84,7 @@ func (adapter *CloudSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfig
 	// TODO: need to make sure that the last update has been applied - I think this is fairly "edge casey"
 	// but the update is non-zero in time so we should gracefully handle
 	// also the knobs that need restarts!
-
 	adapter.Logger().Infof("Applying config")
-	adapter.Logger().Infof("Proposed Config: %v", proposedConfig)
-	adapter.Logger().Infof("Knobs to Override: %v", proposedConfig.KnobsOverrides)
 
 	flags := []*sqladmin.DatabaseFlags{}
 
@@ -117,7 +114,28 @@ func (adapter *CloudSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfig
 func (adapter *CloudSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 	adapter.Logger().Debugf("Getting Active Config")
 
-	return pg.GetActiveConfig(adapter.PGDriver, context.Background(), adapter.Logger())
+	config, err := pg.GetActiveConfig(adapter.PGDriver, context.Background(), adapter.Logger())
+	if err != nil {
+		return nil, err
+	}
+
+	// some config rows are marked as internal, we cannot control these at all and
+	// they change in a way we can't predict and so can cause tuning to fail
+	filteredConfig := make(agent.ConfigArraySchema, 0, len(config))
+
+	for _, knob := range config {
+		if k, ok := knob.(agent.PGConfigRow); ok {
+			if k.Context != "internal" {
+				filteredConfig = append(filteredConfig, k)
+			} else {
+				adapter.Logger().Debugf("Internal config option filtered out: %s", k.Name)
+			}
+		} else {
+			adapter.Logger().Errorf("Unexpected Config Type: %T", knob)
+		}
+	}
+
+	return filteredConfig, nil
 }
 
 func (adapter *CloudSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {

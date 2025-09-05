@@ -128,6 +128,10 @@ func main() {
 					" are used for both RDS and Aurora. Please specify which using `--rds` or `--aurora`.",
 			)
 
+		} else if cloudsql.DetectConfigFromEnv() {
+			log.Println("Google Cloud Sql configuration deteceted in config file")
+			adapter, err = cloudsql.CreateCloudSQLAdapter()
+
 		} else if aiven.DetectConfigFromConfigFile() {
 			log.Println("Aiven PostgreSQL configuration detected in config file")
 			adapter, err = aiven.CreateAivenPostgreSQLAdapter()
@@ -145,6 +149,9 @@ func main() {
 				log.Println("Aurora configuration detected in config file")
 				adapter, err = rds.CreateAuroraRDSAdapter()
 			}
+		} else if cloudsql.DetectConfigFromConfigFile() {
+			log.Println("Google Cloud SQL configuration detected in config file")
+			adapter, err = cloudsql.CreateCloudSQLAdapter()
 		} else {
 			// NOTE: This was the previous behavior, which is consistent with our configuration.
 			// All config files have the `postgres:` subheader, which is all the local Postgres
