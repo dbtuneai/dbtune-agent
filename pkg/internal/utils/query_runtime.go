@@ -4,7 +4,7 @@ import (
 	"sort"
 )
 
-var diffLimit = 100
+var diffLimit = 500
 
 type CachedPGStatStatement struct {
 	QueryID       string  `json:"query_id"`
