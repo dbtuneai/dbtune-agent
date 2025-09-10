@@ -19,7 +19,13 @@ type SqlAdminClient struct {
 	client *sqladmin.Service
 }
 
-func (client *SqlAdminClient) applyFlags(projectId string, databaseName string, newFlags []*sqladmin.DatabaseFlags) error {
+func NewSqlAdminClient(client *sqladmin.Service) SqlAdminClient {
+	return SqlAdminClient{
+		client: client,
+	}
+}
+
+func (client *SqlAdminClient) ApplyFlags(projectId string, databaseName string, newFlags []*sqladmin.DatabaseFlags) error {
 	// get current flag values (so we don't unset any that are already set!)
 	inst, err := client.client.Instances.Get(projectId, databaseName).Do()
 	if err != nil {
@@ -50,9 +56,50 @@ func (client *SqlAdminClient) applyFlags(projectId string, databaseName string, 
 		Settings: &sqladmin.Settings{DatabaseFlags: flags},
 	}
 
-	return applyPatch(client.client, projectId, databaseName, settings)
+	err = applyPatch(client.client, projectId, databaseName, settings)
+	if err != nil {
+		return err
+	}
+	// get the latest op which will be the update op caused by above patch
+	ops, err := client.client.Operations.List(projectId).Do(googleapi.QueryParameter("instance", databaseName), googleapi.QueryParameter("maxResults", "5"))
+	if err != nil {
+		return err
+	}
+	updateOp := ops.Items[0]
+	return client.waitForUpdate(projectId, updateOp.Name)
 }
 
+func (client *SqlAdminClient) waitForUpdate(projectId string, updateOpId string) error {
+	// updates should not take particularly long, so set a window of 2 minutes
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			// we hit the timeout
+			return fmt.Errorf("Timeout waiting for config to apply")
+		case <-time.After(1 * time.Second):
+			// check update operation and see if it is done
+			status, err := getOperationStatus(client.client, projectId, updateOpId)
+			if err != nil {
+				return err
+			}
+			if status == "DONE" {
+				return nil
+			}
+		}
+	}
+}
+
+func getOperationStatus(service *sqladmin.Service, projectId string, updateOpId string) (string, error) {
+	op, err := service.Operations.Get(projectId, updateOpId).Do()
+	if err != nil {
+		return "", err
+	}
+
+	return op.Status, nil
+}
 func applyPatch(service *sqladmin.Service, projectId string, databaseName string, database *sqladmin.DatabaseInstance) error {
 	patchSuccessful := false
 

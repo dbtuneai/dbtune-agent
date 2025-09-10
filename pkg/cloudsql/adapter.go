@@ -106,8 +106,19 @@ func (adapter *CloudSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfig
 		flags = append(flags, param)
 	}
 
-	adapter.CloudSQLAdminClient.applyFlags(adapter.CloudSQLConfig.ProjectID, adapter.CloudSQLConfig.DatabaseName, flags)
-
+	err := adapter.CloudSQLAdminClient.ApplyFlags(adapter.CloudSQLConfig.ProjectID, adapter.CloudSQLConfig.DatabaseName, flags)
+	if err != nil {
+		return err
+	}
+	// does the new config apply immediately?
+	_, err = adapter.GetActiveConfig()
+	if err != nil {
+		return err
+	}
+	err = pg.WaitPostgresReady(adapter.PGDriver)
+	if err != nil {
+		return fmt.Errorf("Error waiting for PostgreSQL to come back online: %v", err)
+	}
 	return nil
 }
 
@@ -137,6 +148,10 @@ func (adapter *CloudSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, erro
 
 	return filteredConfig, nil
 }
+
+// func (adapter *CloudSQLAdapter) waitForUpdateToApply() error {
+
+// }
 
 func (adapter *CloudSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	adapter.Logger().Debugf("Getting System Info")
