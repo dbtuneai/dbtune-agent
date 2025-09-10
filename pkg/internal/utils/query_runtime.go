@@ -69,12 +69,12 @@ func CalculateQueryRuntimeDelta(prev, curr map[string]CachedPGStatStatement) ([]
 		// Calculate the difference in calls and execution time
 		callsDiff := currStat.Calls - prevStat.Calls
 		execTimeDiff := currStat.TotalExecTime - prevStat.TotalExecTime
+		rowsDiff := currStat.Rows - prevStat.Rows
 
 		// Only consider queries that have had positive changes
-		if callsDiff > 0 && execTimeDiff > 0 {
+		if callsDiff > 0 && execTimeDiff > 0  && rowsDiff > 0 {
 			totalDiffs++
 
-			rowsDiff := currStat.Rows - prevStat.Rows
 			diffs = append(diffs, CachedPGStatStatement{
 				QueryID:       queryId,
 				Query:         currStat.Query,
