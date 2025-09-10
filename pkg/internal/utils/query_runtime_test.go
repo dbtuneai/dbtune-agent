@@ -16,33 +16,33 @@ func TestCalculateQueryRuntime(t *testing.T) {
 		{
 			name: "Basic increase in calls and exec time",
 			prev: map[string]CachedPGStatStatement{
-				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 5.0},
-				"query2": {QueryID: "query2", Calls: 10, TotalExecTime: 5.0},
+				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 5.0, Rows: 100},
+				"query2": {QueryID: "query2", Calls: 10, TotalExecTime: 5.0, Rows: 50},
 			},
 			curr: map[string]CachedPGStatStatement{
-				"query1": {QueryID: "query1", Calls: 20, TotalExecTime: 10.0},
-				"query2": {QueryID: "query2", Calls: 20, TotalExecTime: 10.0},
+				"query1": {QueryID: "query1", Calls: 20, TotalExecTime: 10.0, Rows: 200},
+				"query2": {QueryID: "query2", Calls: 20, TotalExecTime: 10.0, Rows: 100},
 			},
 			expected: 0.5, // (5 + 5) / (10 + 10) = 10 / 20 = 0.5 ms
 		},
 		{
 			name: "No increase in calls or exec time",
 			prev: map[string]CachedPGStatStatement{
-				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 100.0},
+				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 100.0, Rows: 1000},
 			},
 			curr: map[string]CachedPGStatStatement{
-				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 100.0},
+				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 100.0, Rows: 1000},
 			},
 			expected: 0.0, // No calls or exec time increase
 		},
 		{
 			name: "New query in current snapshot",
 			prev: map[string]CachedPGStatStatement{
-				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 100.0},
+				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 100.0, Rows: 500},
 			},
 			curr: map[string]CachedPGStatStatement{
-				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 100.0},
-				"query2": {QueryID: "query2", Calls: 5, TotalExecTime: 50.0},
+				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 100.0, Rows: 500},
+				"query2": {QueryID: "query2", Calls: 5, TotalExecTime: 50.0, Rows: 250},
 			},
 			// ((100 - 100) + (50 - 0)) / ((10 - 10) + (5 - 0)) = 50 / 5 = 10 ms
 			expected: 10.0,
@@ -50,11 +50,11 @@ func TestCalculateQueryRuntime(t *testing.T) {
 		{
 			name: "Query removed in current snapshot",
 			prev: map[string]CachedPGStatStatement{
-				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 100.0},
-				"query2": {QueryID: "query2", Calls: 5, TotalExecTime: 50.0},
+				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 100.0, Rows: 300},
+				"query2": {QueryID: "query2", Calls: 5, TotalExecTime: 50.0, Rows: 150},
 			},
 			curr: map[string]CachedPGStatStatement{
-				"query1": {QueryID: "query1", Calls: 15, TotalExecTime: 150.0},
+				"query1": {QueryID: "query1", Calls: 15, TotalExecTime: 150.0, Rows: 450},
 			},
 			expected: 10.0, // Only query1 is considered
 		},
@@ -81,23 +81,23 @@ func TestCalculateQueryRuntimeDelta(t *testing.T) {
 		{
 			name: "Basic increase in calls and exec time",
 			prev: map[string]CachedPGStatStatement{
-				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 5.0},
+				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 5.0, Rows: 100},
 			},
 			curr: map[string]CachedPGStatStatement{
-				"query1": {QueryID: "query1", Calls: 20, TotalExecTime: 10.0},
+				"query1": {QueryID: "query1", Calls: 20, TotalExecTime: 10.0, Rows: 200},
 			},
 			expected: []CachedPGStatStatement{
-				{QueryID: "query1", Calls: 10, TotalExecTime: 5.0},
+				{QueryID: "query1", Calls: 10, TotalExecTime: 5.0, Rows: 100},
 			},
 			expectedNum: 1,
 		},
 		{
 			name: "Decrease in calls and exec time",
 			prev: map[string]CachedPGStatStatement{
-				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 5.0},
+				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 5.0, Rows: 100},
 			},
 			curr: map[string]CachedPGStatStatement{
-				"query1": {QueryID: "query1", Calls: 5, TotalExecTime: 4.0},
+				"query1": {QueryID: "query1", Calls: 5, TotalExecTime: 4.0, Rows: 50},
 			},
 			// Should not include any diff
 			expected:    []CachedPGStatStatement{},
@@ -107,10 +107,10 @@ func TestCalculateQueryRuntimeDelta(t *testing.T) {
 			name: "Entry existing only in current but not in previous",
 			prev: map[string]CachedPGStatStatement{},
 			curr: map[string]CachedPGStatStatement{
-				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 5.0},
+				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 5.0, Rows: 100},
 			},
 			expected: []CachedPGStatStatement{
-				{QueryID: "query1", Calls: 10, TotalExecTime: 5.0},
+				{QueryID: "query1", Calls: 10, TotalExecTime: 5.0, Rows: 100},
 			},
 			expectedNum: 1,
 		},
@@ -118,16 +118,16 @@ func TestCalculateQueryRuntimeDelta(t *testing.T) {
 			name: "Multiple entries with custom limit of 3",
 			prev: map[string]CachedPGStatStatement{},
 			curr: map[string]CachedPGStatStatement{
-				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 50.0},
-				"query2": {QueryID: "query2", Calls: 20, TotalExecTime: 200.0},
-				"query3": {QueryID: "query3", Calls: 5, TotalExecTime: 100.0},
-				"query4": {QueryID: "query4", Calls: 15, TotalExecTime: 45.0},
-				"query5": {QueryID: "query5", Calls: 25, TotalExecTime: 50.0},
+				"query1": {QueryID: "query1", Calls: 10, TotalExecTime: 50.0, Rows: 1000},
+				"query2": {QueryID: "query2", Calls: 20, TotalExecTime: 200.0, Rows: 2000},
+				"query3": {QueryID: "query3", Calls: 5, TotalExecTime: 100.0, Rows: 500},
+				"query4": {QueryID: "query4", Calls: 15, TotalExecTime: 45.0, Rows: 1500},
+				"query5": {QueryID: "query5", Calls: 25, TotalExecTime: 50.0, Rows: 2500},
 			},
 			expected: []CachedPGStatStatement{
-				{QueryID: "query3", Calls: 5, TotalExecTime: 100.0},
-				{QueryID: "query2", Calls: 20, TotalExecTime: 200.0},
-				{QueryID: "query1", Calls: 10, TotalExecTime: 50.0},
+				{QueryID: "query3", Calls: 5, TotalExecTime: 100.0, Rows: 500},
+				{QueryID: "query2", Calls: 20, TotalExecTime: 200.0, Rows: 2000},
+				{QueryID: "query1", Calls: 10, TotalExecTime: 50.0, Rows: 1000},
 			},
 			expectedNum: 5,
 		},
@@ -147,7 +147,8 @@ func TestCalculateQueryRuntimeDelta(t *testing.T) {
 			equal := slices.EqualFunc(diff, tt.expected, func(a, b CachedPGStatStatement) bool {
 				return a.QueryID == b.QueryID &&
 					a.Calls == b.Calls &&
-					a.TotalExecTime == b.TotalExecTime
+					a.TotalExecTime == b.TotalExecTime &&
+					a.Rows == b.Rows
 			})
 
 			if !equal {

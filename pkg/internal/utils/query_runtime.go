@@ -11,6 +11,7 @@ type CachedPGStatStatement struct {
 	Query         string  `json:"query,omitempty"`
 	Calls         int     `json:"calls"`
 	TotalExecTime float64 `json:"total_exec_time"`
+	Rows          int64   `json:"rows"`
 }
 
 // CalculateQueryRuntime calculates the runtime of
@@ -25,7 +26,7 @@ func CalculateQueryRuntime(prev, curr map[string]CachedPGStatStatement) float64 
 		// Get the previous stats, defaulting to zero if not found
 		prevStat, exists := prev[queryId]
 		if !exists {
-			prevStat = CachedPGStatStatement{QueryID: queryId, Calls: 0, TotalExecTime: 0.0}
+			prevStat = CachedPGStatStatement{QueryID: queryId, Calls: 0, TotalExecTime: 0.0, Rows: 0}
 		}
 
 		// Calculate the difference in calls and execution time
@@ -62,15 +63,16 @@ func CalculateQueryRuntimeDelta(prev, curr map[string]CachedPGStatStatement) ([]
 		// Get the previous stats, defaulting to zero if not found
 		prevStat, exists := prev[queryId]
 		if !exists {
-			prevStat = CachedPGStatStatement{QueryID: queryId, Calls: 0, TotalExecTime: 0.0}
+			prevStat = CachedPGStatStatement{QueryID: queryId, Calls: 0, TotalExecTime: 0.0, Rows: 0}
 		}
 
 		// Calculate the difference in calls and execution time
 		callsDiff := currStat.Calls - prevStat.Calls
 		execTimeDiff := currStat.TotalExecTime - prevStat.TotalExecTime
+		rowsDiff := currStat.Rows - prevStat.Rows
 
 		// Only consider queries that have had positive changes
-		if callsDiff > 0 && execTimeDiff > 0 {
+		if callsDiff > 0 && execTimeDiff > 0  && rowsDiff > 0 {
 			totalDiffs++
 
 			diffs = append(diffs, CachedPGStatStatement{
@@ -78,6 +80,7 @@ func CalculateQueryRuntimeDelta(prev, curr map[string]CachedPGStatStatement) ([]
 				Query:         currStat.Query,
 				Calls:         callsDiff,
 				TotalExecTime: execTimeDiff,
+				Rows:          rowsDiff,
 			})
 		}
 	}
