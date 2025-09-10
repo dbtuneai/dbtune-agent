@@ -19,7 +19,8 @@ SELECT JSON_OBJECT_AGG(
 	JSON_BUILD_OBJECT(
 		'calls',calls,
 		'total_exec_time',total_exec_time,
-		'query_id', CONCAT(queryid, '_', userid, '_', dbid)
+		'query_id', CONCAT(queryid, '_', userid, '_', dbid),
+		'rows',rows
 	)
 )
 AS qrt_stats
@@ -46,7 +47,8 @@ SELECT JSON_OBJECT_AGG(
 		'calls',calls,
 		'total_exec_time',total_exec_time,
 		'query_id', CONCAT(queryid, '_', userid, '_', dbid),
-		'query',query
+		'query',query,
+		'rows',rows
 	)
 )
 AS qrt_stats
