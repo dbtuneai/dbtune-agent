@@ -81,9 +81,6 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 }
 
 func (adapter *CloudSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
-	// TODO: need to make sure that the last update has been applied - I think this is fairly "edge casey"
-	// but the update is non-zero in time so we should gracefully handle
-	// also the knobs that need restarts!
 	adapter.Logger().Infof("Applying config")
 
 	flags := []*sqladmin.DatabaseFlags{}
@@ -110,11 +107,7 @@ func (adapter *CloudSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfig
 	if err != nil {
 		return err
 	}
-	// does the new config apply immediately?
-	_, err = adapter.GetActiveConfig()
-	if err != nil {
-		return err
-	}
+
 	err = pg.WaitPostgresReady(adapter.PGDriver)
 	if err != nil {
 		return fmt.Errorf("Error waiting for PostgreSQL to come back online: %v", err)
@@ -148,10 +141,6 @@ func (adapter *CloudSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, erro
 
 	return filteredConfig, nil
 }
-
-// func (adapter *CloudSQLAdapter) waitForUpdateToApply() error {
-
-// }
 
 func (adapter *CloudSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	adapter.Logger().Debugf("Getting System Info")

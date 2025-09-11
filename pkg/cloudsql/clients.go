@@ -36,13 +36,11 @@ func (client *SqlAdminClient) ApplyFlags(projectId string, databaseName string, 
 	flagValues := make(map[string]string, len(inst.Settings.DatabaseFlags))
 
 	for _, flag := range inst.Settings.DatabaseFlags {
-		fmt.Printf("Previously set database flag, %s: %s\n", flag.Name, flag.Value)
 		flagValues[flag.Name] = flag.Value
 	}
 
 	// merge in new flags
 	for _, flag := range newFlags {
-		fmt.Printf("New database flag, %s: %s\n", flag.Name, flag.Value)
 		flagValues[flag.Name] = flag.Value
 	}
 
@@ -92,6 +90,11 @@ func (client *SqlAdminClient) waitForUpdate(projectId string, updateOpId string)
 	}
 }
 
+// Fetches the status of the operation specified by `updateOpId`. Known values of status are:
+//   - `"DONE"`: The operation completed.
+//   - `"RUNNING"`: The operation is running.
+//   - `"PENDING"`: The operation has been queued, but has not yet started.
+//   - `"SQL_OPERATION_STATUS_UNSPECIFIED"`: The state of the operation is unknown.
 func getOperationStatus(service *sqladmin.Service, projectId string, updateOpId string) (string, error) {
 	op, err := service.Operations.Get(projectId, updateOpId).Do()
 	if err != nil {

@@ -123,7 +123,6 @@ func getLatestMetricValue(cloudMonitoringClient *CloudMonitoringClient, projectI
 		View: monitoringpb.ListTimeSeriesRequest_FULL,
 	}
 
-	// TODO: better contexts
 	it := cloudMonitoringClient.client.ListTimeSeries(cloudMonitoringClient.ctx, req)
 
 	// we expect there to be exactly one result
@@ -136,5 +135,16 @@ func getLatestMetricValue(cloudMonitoringClient *CloudMonitoringClient, projectI
 		log.Fatalf("Could not read time series value: %v", err)
 	}
 
-	return *resp.GetPoints()[0].GetValue(), nil
+	// the iterator should end here as our filters should give a single time series
+	// per call to the API
+	_, err = it.Next()
+	if err != iterator.Done {
+		return monitoringpb.TypedValue{}, fmt.Errorf("Too many metrics returned")
+	}
+
+	if (len(resp.GetPoints()) > 0) && (resp.GetPoints()[0].GetValue() != nil) {
+		return *resp.GetPoints()[0].GetValue(), nil
+	} else {
+		return monitoringpb.TypedValue{}, fmt.Errorf("Unable to get latest metric value")
+	}
 }
