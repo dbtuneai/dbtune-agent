@@ -1,0 +1,40 @@
+{
+  "family": "dbtune-fargate-staging",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/dbTuneTaskRole",
+  "taskRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/dbTuneTaskRole",
+  "networkMode": "awsvpc",
+  "memory": "1024",
+  "cpu": "256",
+  "containerDefinitions": [
+    {
+      "name": "dbtune",
+      "image": "public.ecr.aws/dbtune/dbtune/agent:latest",
+      "command": ["--rds"],
+      "essential": true,
+      "environment": [
+        {"name": "DBT_RDS_DATABASE_IDENTIFIER", "value": "staging"},
+        {"name": "DBT_RDS_PARAMETER_GROUP_NAME", "value": "${PARAMETER_GROUP_NAME_ASSIGNED_TO_YOUR_RDS_DATABASE}"},
+        {"name": "DBT_AWS_REGION", "value": "${AWS_REGION}"},
+        {"name": "DBT_DBTUNE_SERVER_URL", "value": "https://app.dbtune.com"},
+        {"name": "DBT_DBTUNE_DATABASE_ID", "value": "${YOUR_DBTUNE_DATABASE_ID_PROVIDED_BY_DBTUNE}"}
+      ],
+      "secrets": [
+        {"name": "DBT_DBTUNE_API_KEY", "valueFrom": "/global/dbtune/api_key"},
+        {"name": "DBT_POSTGRESQL_CONNECTION_URL", "valueFrom": "/staging/dbtune/postgres_connection_url"}
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/dbtune/staging",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "dbtune"
+        }
+      },
+      "readonlyRootFilesystem": false,
+      "mountPoints": []
+    }
+  ]
+}
