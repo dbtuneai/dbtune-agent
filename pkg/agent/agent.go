@@ -150,6 +150,9 @@ type AgentLooper interface {
 	// The signal will be send maximum once every 15 seconds.
 	SendGuardrailSignal(signal guardrails.Signal) error
 
+	// SendError sends an error report to the DBtune server
+	SendError(payload ErrorPayload) error
+
 	// GetLogger returns the logger for the agent
 	Logger() *log.Logger
 }
@@ -157,6 +160,12 @@ type AgentLooper interface {
 type AgentPayload struct {
 	AgentVersion   string `json:"agent_version"`
 	AgentStartTime string `json:"agent_start_time"`
+}
+
+type ErrorPayload struct {
+	ErrorMessage string `json:"error_message"`
+	ErrorType    string `json:"error_type"`
+	Timestamp    string `json:"timestamp"`
 }
 
 type IOCounterStat struct {
@@ -575,6 +584,29 @@ func (a *CommonAgent) SendGuardrailSignal(signal guardrails.Signal) error {
 		body, _ := io.ReadAll(resp.Body)
 		a.Logger().Error("Failed to send guardrail signal. Response body: ", string(body))
 		return fmt.Errorf("failed to send guardrail signal, code: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (a *CommonAgent) SendError(payload ErrorPayload) error {
+	a.Logger().Errorf("🚨 Sending Error Report, type: %s, message: %s", payload.ErrorType, payload.ErrorMessage)
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	resp, err := a.APIClient.Post(a.ServerURLs.PostError(), "application/json", jsonData)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 204 && resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		a.Logger().Errorf("Failed to send error. Response body: %s", string(body))
+		return fmt.Errorf("failed to send error, code: %d", resp.StatusCode)
 	}
 
 	return nil

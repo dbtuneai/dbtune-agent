@@ -86,6 +86,11 @@ func (m *MockAgentLooper) SendGuardrailSignal(signal guardrails.Signal) error {
 	return args.Error(0)
 }
 
+func (m *MockAgentLooper) SendError(payload agent.ErrorPayload) error {
+	args := m.Called(payload)
+	return args.Error(0)
+}
+
 // Test runWithTicker function
 func TestRunWithTicker(t *testing.T) {
 	logger := logrus.New()
@@ -189,6 +194,7 @@ func TestRunnerWithErrors(t *testing.T) {
 	mockAgent.On("SendHeartbeat").Return(errors.New("heartbeat error"))
 	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, errors.New("metrics error"))
 	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, errors.New("system info error"))
+	mockAgent.On("SendError", mock.AnythingOfType("agent.ErrorPayload")).Return(nil)
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, errors.New("config error"))
 	mockAgent.On("Guardrails").Return(nil)
 
