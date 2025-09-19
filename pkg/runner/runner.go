@@ -51,6 +51,12 @@ func Runner(adapter agent.AgentLooper) {
 	go runWithTicker(ctx, metricsTicker, "metrics", logger, func() error {
 		data, err := adapter.GetMetrics()
 		if err != nil {
+			errorPayload := agent.ErrorPayload{
+				ErrorMessage: "Failed to collect metrics: " + err.Error(),
+				ErrorType:    "metrics_error",
+				Timestamp:    time.Now().UTC().Format(time.RFC3339),
+			}
+			adapter.SendError(errorPayload)
 			return err
 		}
 		return adapter.SendMetrics(data)
@@ -75,6 +81,12 @@ func Runner(adapter agent.AgentLooper) {
 	go runWithTicker(ctx, configTicker, "config", logger, func() error {
 		config, err := adapter.GetActiveConfig()
 		if err != nil {
+			errorPayload := agent.ErrorPayload{
+				ErrorMessage: "Failed to get active configuration: " + err.Error(),
+				ErrorType:    "config_error",
+				Timestamp:    time.Now().UTC().Format(time.RFC3339),
+			}
+			adapter.SendError(errorPayload)
 			return err
 		}
 		if err := adapter.SendActiveConfig(config); err != nil {

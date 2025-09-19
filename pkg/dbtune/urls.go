@@ -83,5 +83,5 @@ func (s ServerURLs) PostGuardrailSignal() string {
 
 // PostError generates the URL for posting errors.
 func (s ServerURLs) PostError() string {
-	return fmt.Sprintf("%s/api/v1/databases/%s/errors", s.ServerUrl, s.DbID)
+	return fmt.Sprintf("%s/api/v1/databases/%s/log-entries", s.ServerUrl, s.DbID)
 }
