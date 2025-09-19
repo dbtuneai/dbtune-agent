@@ -9,6 +9,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/aiven"
 	"github.com/dbtuneai/agent/pkg/checks"
+	"github.com/dbtuneai/agent/pkg/cloudsql"
 	"github.com/dbtuneai/agent/pkg/docker"
 	"github.com/dbtuneai/agent/pkg/pgprem"
 	"github.com/dbtuneai/agent/pkg/rds"
@@ -17,7 +18,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-const AVAILABLE_FLAGS = "--docker, --aurora, --rds, --aiven, --local"
+const AVAILABLE_FLAGS = "--docker, --aurora, --rds, --aiven, --local, --cloudsql"
 
 func main() {
 	// Define flags
@@ -26,6 +27,7 @@ func main() {
 	useRDS := flag.Bool("rds", false, "Use RDS adapter")
 	useAiven := flag.Bool("aiven", false, "Use Aiven PostgreSQL adapter")
 	useLocal := flag.Bool("local", false, "Use local PostgreSQL adapter")
+	useCloudSQL := flag.Bool("cloudsql", false, "Use Cloud SQL adapter")
 	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
 
@@ -93,6 +95,11 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to create Aiven PostgreSQL adapter: %v", err)
 		}
+	case *useCloudSQL:
+		adapter, err = cloudsql.CreateCloudSQLAdapter()
+		if err != nil {
+			log.Fatalf("Failed to create Cloud SQL PostgreSQL adapter: %v", err)
+		}
 	case *useLocal:
 		adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
 		if err != nil {
@@ -121,6 +128,10 @@ func main() {
 					" are used for both RDS and Aurora. Please specify which using `--rds` or `--aurora`.",
 			)
 
+		} else if cloudsql.DetectConfigFromEnv() {
+			log.Println("Google Cloud Sql configuration deteceted in config file")
+			adapter, err = cloudsql.CreateCloudSQLAdapter()
+
 		} else if aiven.DetectConfigFromConfigFile() {
 			log.Println("Aiven PostgreSQL configuration detected in config file")
 			adapter, err = aiven.CreateAivenPostgreSQLAdapter()
@@ -138,6 +149,9 @@ func main() {
 				log.Println("Aurora configuration detected in config file")
 				adapter, err = rds.CreateAuroraRDSAdapter()
 			}
+		} else if cloudsql.DetectConfigFromConfigFile() {
+			log.Println("Google Cloud SQL configuration detected in config file")
+			adapter, err = cloudsql.CreateCloudSQLAdapter()
 		} else {
 			// NOTE: This was the previous behavior, which is consistent with our configuration.
 			// All config files have the `postgres:` subheader, which is all the local Postgres
