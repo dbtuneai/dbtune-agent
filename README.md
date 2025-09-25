@@ -80,7 +80,6 @@ sudo systemctl enable --now dbtune-agent
 
 Once started you can check and verify that the dbtune-agent is running by looking at the journal, for example: `journalctl -u dbtune-agent -f`
 
-
 #### Docker
 1. Pull our Docker image:
 
@@ -109,16 +108,48 @@ Once started you can check and verify that the dbtune-agent is running by lookin
 
 		```
 	
-
 #### Build from source
 
-_DBTUNE TO ADD SPECIFIC STEPS HERE_
+To build the DBtune agent from source, you'll need Go 1.23.1 or later installed on your system.
 
+**Prerequisites:**
+- Go 1.23.1 or later ([download from golang.org](https://golang.org/dl/))
+- Git (to clone the repository)
+
+**Build steps:**
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/dbtuneai/dbtune-agent.git
+   cd dbtune-agent
+   ```
+
+2. Download dependencies:
+   ```bash
+   go mod download
+   ```
+
+3. Build the binary:
+   ```bash
+   go build -o dbtune-agent ./cmd/agent.go
+   ```
+
+4. Run the agent:
+   ```bash
+   ./dbtune-agent
+   ```
+
+**Installation:**
+
+After building, you can install the binary system-wide:
+
+```bash
+# Copy to a directory in your PATH
+sudo cp dbtune-agent /usr/local/bin/
+```
 
 #### AWS Fargate / ECS
 Follow these [README](fargate/README.md) instructions to run the agent under AWS Fargate as a service. 
-
-
 
 ## Configuration
 
