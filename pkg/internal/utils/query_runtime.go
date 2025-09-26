@@ -72,7 +72,7 @@ func CalculateQueryRuntimeDelta(prev, curr map[string]CachedPGStatStatement) ([]
 		rowsDiff := currStat.Rows - prevStat.Rows
 
 		// Only consider queries that have had positive changes
-		if callsDiff > 0 && execTimeDiff > 0  && rowsDiff > 0 {
+		if callsDiff > 0 && execTimeDiff > 0 && rowsDiff > 0 {
 			totalDiffs++
 
 			diffs = append(diffs, CachedPGStatStatement{

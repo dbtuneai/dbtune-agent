@@ -81,7 +81,6 @@ func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *age
 		var jsonResult string
 		var err error
 
-
 		if pgConfig.IncludeQueries {
 			// Query with query text
 			query := `
