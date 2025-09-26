@@ -378,7 +378,7 @@ WHERE datname = current_database();
 `
 
 // PG stat database has info about IO, temp files and idle transaction time. Many of those are cumulative
-// metrics and require calulating deltas between collection intervals.
+// metrics and require calculating deltas between collection intervals.
 // This function fetches and emits a number of those as well as calaculates the pg_cache_hit_ratio which
 // is a derivative from blks_read and blks_hit
 func PGStatDatabase(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
