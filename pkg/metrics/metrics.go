@@ -21,6 +21,9 @@ const (
 	Time       MetricType = "time"
 	Percentage MetricType = "percentage"
 	PgssDelta  MetricType = "pgss_delta"
+	IntMap     MetricType = "int_map"
+	FloatMap   MetricType = "float_map"
+	TimeMap    MetricType = "time_map"
 )
 
 // FlatValue is a struct that represents
@@ -108,6 +111,19 @@ func NewMetric(key string, value interface{}, typeStr MetricType) (FlatValue, er
 		// Validate array elements using the validator
 		if err := validatePgssDeltaItems(value); err != nil {
 			return FlatValue{}, err
+		}
+	case "int_map":
+		// TODO: cast to int64?
+		if _, ok := value.(map[string]int64); !ok {
+			return FlatValue{}, fmt.Errorf("int_map data is not of type map[string]int64")
+		}
+	case "float_map":
+		if _, ok := value.(map[string]float64); !ok {
+			return FlatValue{}, fmt.Errorf("float_map data is not of type map[string]float64")
+		}
+	case "time_map":
+		if _, ok := value.(map[string]time.Time); !ok {
+			return FlatValue{}, fmt.Errorf("time_map data is not of type map[string]time.Time")
 		}
 	default:
 		return FlatValue{}, fmt.Errorf("unknown type: %s", typeStr)
@@ -211,14 +227,62 @@ var (
 	NodeOSPlatformVer = MetricDef{Key: "system_info_platform_version", Type: String}
 
 	// PG
+	// The PG stats are fetched from pg_stat_statements (https://www.postgresql.org/docs/current/pgstatstatements.html)
+	// as well as a number of native pg stats views.    (https://www.postgresql.org/docs/current/monitoring-stats.html)
+
 	PGVersion                  = MetricDef{Key: "pg_version", Type: String}
 	PGMaxConnections           = MetricDef{Key: "pg_max_connections", Type: Int}
 	PGStatStatementsDelta      = MetricDef{Key: "pg_stat_statements_delta", Type: PgssDelta}
 	PGStatStatementsDeltaCount = MetricDef{Key: "pg_stat_statements_delta_count", Type: Int}
 	PGActiveConnections        = MetricDef{Key: "pg_active_connections", Type: Int}
 	PGInstanceSize             = MetricDef{Key: "pg_instance_size", Type: Bytes}
-	PGAutovacuumCount          = MetricDef{Key: "pg_autovacuum_count", Type: Int}
+	PGAutoVacuumCount          = MetricDef{Key: "pg_autovacuum_count", Type: Int}
 	PGCacheHitRatio            = MetricDef{Key: "pg_cache_hit_ratio", Type: Percentage}
+
+	PGTuplesReturned = MetricDef{Key: "pg_tuples_returned", Type: Int}
+	PGTuplesFetched  = MetricDef{Key: "pg_tuples_fetched", Type: Int}
+	PGTuplesInserted = MetricDef{Key: "pg_tuples_inserted", Type: Int}
+	PGTuplesUpdated  = MetricDef{Key: "pg_tuples_updated", Type: Int}
+	PGTuplesDeleted  = MetricDef{Key: "pg_tuples_deleted", Type: Int}
+
+	PGTempFiles = MetricDef{Key: "pg_tuples_updated", Type: Int}
+	PGTempBytes = MetricDef{Key: "pg_tuples_updated", Type: Int}
+
+	PGIdleInTransactionTime = MetricDef{Key: "pg_idle_in_transaction_time", Type: Float}
+
+	PGAutoVacuumCountM = MetricDef{Key: "pg_autovacuum_count_per_table", Type: IntMap}
+	PGAutoAnalyzeCount = MetricDef{Key: "pg_auto_analyze_count", Type: IntMap}
+	PGNLiveTuples      = MetricDef{Key: "pg_live_tuples", Type: IntMap}
+	PGNDeadTuples      = MetricDef{Key: "pg_dead_tuples", Type: IntMap}
+	PGNModSinceAnalyze = MetricDef{Key: "pg_n_mod_since_analyze", Type: IntMap}
+	PGNInsSinceVacuum  = MetricDef{Key: "pg_n_ins_since_vacuum", Type: IntMap}
+	PGLastAutoVacuum   = MetricDef{Key: "pg_last_autovacuum", Type: TimeMap}
+	PGLastAutoAnalyze  = MetricDef{Key: "pg_last_autoanalyze", Type: TimeMap}
+
+	PGDeadlocks = MetricDef{Key: "pg_deadlocks", Type: Int}
+
+	PGSeqScan     = MetricDef{Key: "pg_seq_scan", Type: IntMap}
+	PGSeqTupRead  = MetricDef{Key: "pg_sec_tup_read", Type: IntMap}
+	PGIdxScan     = MetricDef{Key: "pg_idx_scan", Type: IntMap}
+	PGIdxTupFetch = MetricDef{Key: "pg_idx_tup_fetch", Type: IntMap}
+
+	PGBGWBuffersClean    = MetricDef{Key: "pg_bg_buffers_clean", Type: Int}
+	PGMBGWaxWrittenClean = MetricDef{Key: "pg_bg_max_written_clean", Type: Int}
+	PGBGWBuffersAlloc    = MetricDef{Key: "pg_bg_buffers_alloc", Type: Int}
+
+	PGCPNumTimed       = MetricDef{Key: "pg_cp_num_timed", Type: Int}
+	PGCPNumRequested   = MetricDef{Key: "pg_cp_num_requested", Type: Int}
+	PGCPWriteTime      = MetricDef{Key: "pg_cp_write_time", Type: Float}
+	PGCPSyncTime       = MetricDef{Key: "pg_cp_sync_time", Type: Float}
+	PGCPBuffersWritten = MetricDef{Key: "pg_cp_buffers_written", Type: Int}
+	PGWALRecords       = MetricDef{Key: "pg_wal_records", Type: Int}
+	PGWALFpi           = MetricDef{Key: "pg_wal_fpi", Type: Int}
+	PGWALBytes         = MetricDef{Key: "pg_wal_bytes", Type: Int}
+	PGWALBuffersFull   = MetricDef{Key: "pg_wal_buffers_full", Type: Int}
+	PGWALWrite         = MetricDef{Key: "pg_wal_write", Type: Int}
+	PGWALSync          = MetricDef{Key: "pg_wal_sync", Type: Int}
+	PGWALWriteTime     = MetricDef{Key: "pg_wal_write_time", Type: Float}
+	PGWALSyncTime      = MetricDef{Key: "pg_wal_sync_time", Type: Float}
 
 	// Performance
 	PerfAverageQueryRuntime   = MetricDef{Key: "perf_average_query_runtime", Type: Float}

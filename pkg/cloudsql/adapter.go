@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"time"
 
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
@@ -24,6 +26,7 @@ type CloudSQLAdapter struct {
 	CloudMonitoringClient *CloudMonitoringClient
 	CloudSQLAdminClient   *SqlAdminClient
 	GuardrailSettings     *guardrails.Config
+	PGVersion             string
 }
 
 func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
@@ -60,6 +63,11 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		return nil, fmt.Errorf("failed to validate settings for guardrails %w", err)
 	}
 
+	PGVersion, err := pg.PGVersion(pgPool)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
+	}
+
 	c := &CloudSQLAdapter{
 		CommonAgent:    *commonAgent,
 		State:          &State{LastGuardrailCheck: time.Now()},
@@ -73,6 +81,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 			client: sqladminService,
 		},
 		GuardrailSettings: &guardrailSettings,
+		PGVersion:         PGVersion,
 	}
 
 	c.InitCollectors(c.Collectors())
@@ -234,8 +243,7 @@ func (adapter *CloudSQLAdapter) Guardrails() *guardrails.Signal {
 
 func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
 	pool := adapter.PGDriver
-
-	return []agent.MetricCollector{
+	collectors := []agent.MetricCollector{
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
@@ -267,9 +275,24 @@ func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
 			Collector:  pg.UptimeMinutes(pool),
 		},
 		{
-			Key:        "database_cache_hit_ratio",
-			MetricType: "float",
-			Collector:  pg.BufferCacheHitRatio(pool),
+			Key:        "pg_database",
+			MetricType: "int",
+			Collector:  pg.PGStatDatabase(pool),
+		},
+		{
+			Key:        "pg_user_tables",
+			MetricType: "int",
+			Collector:  pg.PGStatUserTables(pool),
+		},
+		{
+			Key:        "pg_bgwriter",
+			MetricType: "int",
+			Collector:  pg.PGStatBGwriter(pool),
+		},
+		{
+			Key:        "pg_wal",
+			MetricType: "int",
+			Collector:  pg.PGStatWAL(pool),
 		},
 		{
 			Key:        "database_wait_events",
@@ -282,4 +305,18 @@ func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
 			Collector:  CloudSQLHardwareInfo(adapter.Logger(), adapter.CloudSQLConfig, adapter.CloudMonitoringClient),
 		},
 	}
+	majorVersion := strings.Split(adapter.PGVersion, ".")
+	intMajorVersion, err := strconv.Atoi(majorVersion[0])
+	if err != nil {
+		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
+		return collectors
+	}
+	if intMajorVersion >= 17 {
+		collectors = append(collectors, agent.MetricCollector{
+			Key:        "pg_checkpointer",
+			MetricType: "int",
+			Collector:  pg.PGStatCheckpointer(pool),
+		})
+	}
+	return collectors
 }

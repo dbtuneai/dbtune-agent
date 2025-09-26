@@ -3,6 +3,8 @@ package rds
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -19,6 +21,7 @@ type RDSAdapter struct {
 	State             State
 	AWSClients        AWSClients
 	PGDriver          *pgxpool.Pool
+	PGVersion         string
 }
 
 func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
@@ -72,7 +75,11 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 	}
 
 	commonAgent := agent.CreateCommonAgent()
-
+	// PGVersion
+	PGVersion, err := pg.PGVersion(dbpool)
+	if err != nil {
+		return nil, err
+	}
 	c := &RDSAdapter{
 		CommonAgent: *commonAgent,
 		Config:      config,
@@ -82,6 +89,7 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 		AWSClients:        clients,
 		GuardrailSettings: guardrailSettings,
 		PGDriver:          dbpool,
+		PGVersion:         PGVersion,
 	}
 	collectors := c.Collectors()
 	c.InitCollectors(collectors)
@@ -182,8 +190,7 @@ func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigRespo
 
 func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
 	pool := adapter.PGDriver
-
-	return []agent.MetricCollector{
+	collectors := []agent.MetricCollector{
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
@@ -215,9 +222,24 @@ func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
 			Collector:  pg.UptimeMinutes(pool),
 		},
 		{
-			Key:        "database_cache_hit_ratio",
-			MetricType: "float",
-			Collector:  pg.BufferCacheHitRatio(pool),
+			Key:        "pg_database",
+			MetricType: "int",
+			Collector:  pg.PGStatDatabase(pool),
+		},
+		{
+			Key:        "pg_user_tables",
+			MetricType: "int",
+			Collector:  pg.PGStatUserTables(pool),
+		},
+		{
+			Key:        "pg_bgwriter",
+			MetricType: "int",
+			Collector:  pg.PGStatBGwriter(pool),
+		},
+		{
+			Key:        "pg_wal",
+			MetricType: "int",
+			Collector:  pg.PGStatWAL(pool),
 		},
 		{
 			Key:        "database_wait_events",
@@ -235,6 +257,20 @@ func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
 			),
 		},
 	}
+	majorVersion := strings.Split(adapter.PGVersion, ".")
+	intMajorVersion, err := strconv.Atoi(majorVersion[0])
+	if err != nil {
+		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
+		return collectors
+	}
+	if intMajorVersion >= 17 {
+		collectors = append(collectors, agent.MetricCollector{
+			Key:        "pg_checkpointer",
+			MetricType: "int",
+			Collector:  pg.PGStatCheckpointer(pool),
+		})
+	}
+	return collectors
 }
 
 // Guardrails checks memory utilization and returns Critical if thresholds are exceeded
