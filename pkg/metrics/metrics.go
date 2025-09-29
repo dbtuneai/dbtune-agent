@@ -279,10 +279,6 @@ var (
 	PGWALFpi           = MetricDef{Key: "pg_wal_fpi", Type: Int}
 	PGWALBytes         = MetricDef{Key: "pg_wal_bytes", Type: Int}
 	PGWALBuffersFull   = MetricDef{Key: "pg_wal_buffers_full", Type: Int}
-	PGWALWrite         = MetricDef{Key: "pg_wal_write", Type: Int}
-	PGWALSync          = MetricDef{Key: "pg_wal_sync", Type: Int}
-	PGWALWriteTime     = MetricDef{Key: "pg_wal_write_time", Type: Float}
-	PGWALSyncTime      = MetricDef{Key: "pg_wal_sync_time", Type: Float}
 
 	// Performance
 	PerfAverageQueryRuntime   = MetricDef{Key: "perf_average_query_runtime", Type: Float}

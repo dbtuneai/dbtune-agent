@@ -674,28 +674,19 @@ SELECT
     wal_records,
 	wal_fpi,
 	wal_bytes,
-	wal_buffers_full,
-	wal_write,
-	wal_sync,
-	wal_write_time,
-	wal_sync_time
+	wal_buffers_full
 FROM pg_stat_wal;
 `
 
 // PGStatWAL collects statistics from pg_stat_wal and computes and emits deltas for them.
 func PGStatWAL(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-		var WalRecords, WalFpi, WalBytes, WalBuffersFull, WalWrite, WalSync int64
-		var WalWriteTime, WalSyncTime float64
+		var WalRecords, WalFpi, WalBytes, WalBuffersFull int64
 		err := pgPool.QueryRow(ctx, PGStatWalQuery).Scan(
 			&WalRecords,
 			&WalFpi,
 			&WalBytes,
 			&WalBuffersFull,
-			&WalWrite,
-			&WalSync,
-			&WalWriteTime,
-			&WalSyncTime,
 		)
 
 		if err != nil {
@@ -708,18 +699,9 @@ func PGStatWAL(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.Metr
 			{Current: &WalFpi, Previous: &state.Cache.PGWAL.WALFpi, Metric: metrics.PGWALFpi},
 			{Current: &WalBytes, Previous: &state.Cache.PGWAL.WALBytes, Metric: metrics.PGWALBytes},
 			{Current: &WalBuffersFull, Previous: &state.Cache.PGWAL.WALBuffersFull, Metric: metrics.PGWALBuffersFull},
-			{Current: &WalWrite, Previous: &state.Cache.PGWAL.WALWrite, Metric: metrics.PGWALWrite},
-			{Current: &WalSync, Previous: &state.Cache.PGWAL.WALSync, Metric: metrics.PGWALSync},
-		}
-		mappingsFloat := []MetricMapping[float64]{
-			{Current: &WalWriteTime, Previous: &state.Cache.PGWAL.WALWriteTime, Metric: metrics.PGWALWriteTime},
-			{Current: &WalSyncTime, Previous: &state.Cache.PGWAL.WALSyncTime, Metric: metrics.PGWALSyncTime},
 		}
 
 		if err := EmitCumulativeMetricsMap(state, mappingsInt); err != nil {
-			return err
-		}
-		if err := EmitCumulativeMetricsMap(state, mappingsFloat); err != nil {
 			return err
 		}
 
@@ -729,10 +711,6 @@ func PGStatWAL(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.Metr
 			WALFpi:         WalFpi,
 			WALBytes:       WalBytes,
 			WALBuffersFull: WalBuffersFull,
-			WALWrite:       WalWrite,
-			WALSync:        WalSync,
-			WALWriteTime:   WalWriteTime,
-			WALSyncTime:    WalSyncTime,
 			Timestamp:      time.Now(),
 		}
 
@@ -744,7 +722,7 @@ const PGStatCheckpointerQuery = `
 /*dbtune*/
 SELECT
     num_timed,
-	num_req,
+	num_requested,
 	write_time,
 	sync_time,
 	buffers_written
@@ -755,11 +733,11 @@ FROM pg_stat_checkpointer
 // metrics and require
 func PGStatCheckpointer(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-		var numTimed, numReq, BuffersWritten int64
+		var numTimed, numRequested, BuffersWritten int64
 		var writeTime, syncTime float64
 		err := pgPool.QueryRow(ctx, PGStatCheckpointerQuery).Scan(
 			&numTimed,
-			&numReq,
+			&numRequested,
 			&writeTime,
 			&syncTime,
 			&BuffersWritten,
@@ -772,7 +750,7 @@ func PGStatCheckpointer(pgPool *pgxpool.Pool) func(ctx context.Context, state *a
 		// Check if we have cached values from the previous collection
 		mappingsInt := []MetricMapping[int64]{
 			{Current: &numTimed, Previous: &state.Cache.PGCheckPointer.NumTimed, Metric: metrics.PGCPNumTimed},
-			{Current: &numReq, Previous: &state.Cache.PGCheckPointer.NumReq, Metric: metrics.PGCPNumRequested},
+			{Current: &numRequested, Previous: &state.Cache.PGCheckPointer.NumRequested, Metric: metrics.PGCPNumRequested},
 			{Current: &BuffersWritten, Previous: &state.Cache.PGCheckPointer.BuffersWritten, Metric: metrics.PGCPBuffersWritten},
 		}
 		mappingsFloat := []MetricMapping[float64]{
@@ -790,7 +768,7 @@ func PGStatCheckpointer(pgPool *pgxpool.Pool) func(ctx context.Context, state *a
 		// Update cache for next iteration
 		state.Cache.PGCheckPointer = agent.PGCheckPointer{
 			NumTimed:       numTimed,
-			NumReq:         numReq,
+			NumRequested:   numRequested,
 			WriteTime:      writeTime,
 			SyncTime:       syncTime,
 			BuffersWritten: BuffersWritten,
