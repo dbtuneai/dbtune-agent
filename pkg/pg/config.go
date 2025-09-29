@@ -35,6 +35,9 @@ func ConfigFromViper(key *string) (Config, error) {
 	dbtuneConfig.BindEnv("service_name", "DBT_POSTGRESQL_SERVICE_NAME")
 	dbtuneConfig.BindEnv("include_queries", "DBT_POSTGRESQL_INCLUDE_QUERIES")
 
+	// Set default for include_queries to true when using environment variables
+	dbtuneConfig.SetDefault("include_queries", true)
+
 	var pgConfig Config
 	err := dbtuneConfig.Unmarshal(&pgConfig)
 	if err != nil {
