@@ -114,26 +114,41 @@ AS f`
 			return err
 		}
 
+		if len(queryStats) == 0 {
+			return nil
+		}
+
 		if state.Cache.QueryRuntimeList == nil {
 			state.Cache.QueryRuntimeList = queryStats
 		} else {
 			// Calculate the runtime of the queries (AQR)
+			// Calculate the pg_stat_statements delta to send to the server
+			pgStatStatementsDelta, totalDiffs := utils.CalculateQueryRuntimeDelta(state.Cache.QueryRuntimeList, queryStats)
 			runtime := utils.CalculateQueryRuntime(state.Cache.QueryRuntimeList, queryStats)
+
+			totalDiffsMetric, err := metrics.PGStatStatementsDeltaCount.AsFlatValue(totalDiffs)
+			if err != nil {
+				return err
+			}
+
+			pgStatStatementsDeltaMetric, err := metrics.PGStatStatementsDelta.AsFlatValue(pgStatStatementsDelta)
+			if err != nil {
+				return err
+			}
 
 			metricEntry, err := metrics.PerfAverageQueryRuntime.AsFlatValue(runtime)
 			if err != nil {
 				return err
 			}
+
+			// Only add metrics if they all succeeded to not have partial information
+
+			if totalDiffs > 0 {
+				state.AddMetric(pgStatStatementsDeltaMetric)
+			}
+
 			state.AddMetric(metricEntry)
-
-			// Calculate the pg_stat_statements delta to send to the server
-			pgStatStatementsDelta, totalDiffs := utils.CalculateQueryRuntimeDelta(state.Cache.QueryRuntimeList, queryStats)
-
-			totalDiffsMetric, _ := metrics.PGStatStatementsDeltaCount.AsFlatValue(totalDiffs)
 			state.AddMetric(totalDiffsMetric)
-
-			pgStatStatementsDeltaMetric, _ := metrics.PGStatStatementsDelta.AsFlatValue(pgStatStatementsDelta)
-			state.AddMetric(pgStatStatementsDeltaMetric)
 
 			state.Cache.QueryRuntimeList = queryStats
 		}
