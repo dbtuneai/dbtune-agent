@@ -220,7 +220,7 @@ type PGWAL struct {
 
 type PGCheckPointer struct {
 	NumTimed       int64
-	NumReq         int64
+	NumRequested   int64
 	WriteTime      float64
 	SyncTime       float64
 	BuffersWritten int64
