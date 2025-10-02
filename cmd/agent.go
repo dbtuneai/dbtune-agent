@@ -8,6 +8,7 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/aiven"
+	"github.com/dbtuneai/agent/pkg/azureflex"
 	"github.com/dbtuneai/agent/pkg/checks"
 	"github.com/dbtuneai/agent/pkg/cloudsql"
 	"github.com/dbtuneai/agent/pkg/docker"
@@ -28,6 +29,7 @@ func main() {
 	useAiven := flag.Bool("aiven", false, "Use Aiven PostgreSQL adapter")
 	useLocal := flag.Bool("local", false, "Use local PostgreSQL adapter")
 	useCloudSQL := flag.Bool("cloudsql", false, "Use Cloud SQL adapter")
+	useAzureFlex := flag.Bool("azure-flex", false, "Use Azure Flexible Server")
 	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
 
@@ -105,6 +107,12 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to create local PostgreSQL adapter: %v", err)
 		}
+	case *useAzureFlex:
+		adapter, err = azureflex.CreateAzureFlexAdapter()
+		if err != nil {
+			log.Fatalf("Failed to create Azure Database for PostgreSQL - Flexible Server adapter: %v", err)
+		}
+		log.Fatalf("This adapter is not ready for use yet!")
 	default:
 		log.Println("No explicit provider specified, detecting config present...")
 		log.Println("To explicitly specify a provider, please use one of the following flags: " + AVAILABLE_FLAGS)
