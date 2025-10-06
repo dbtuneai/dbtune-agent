@@ -24,7 +24,7 @@ type RDSAdapter struct {
 	PGVersion         string
 }
 
-func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
+func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 	var keyValue string
 	if configKey == nil {
 		keyValue = RDS_CONFIG_KEY
@@ -80,7 +80,7 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &RDSAdapter{
+	adapter := &RDSAdapter{
 		CommonAgent: *commonAgent,
 		Config:      config,
 		State: State{
@@ -91,9 +91,17 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 		PGDriver:          dbpool,
 		PGVersion:         PGVersion,
 	}
-	collectors := c.Collectors()
-	c.InitCollectors(collectors)
-	return c, nil
+	return adapter, nil
+}
+
+func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
+	rdsAdapter, err := CreateRDSAdapterWithoutCollectors(configKey)
+	if err != nil {
+		return nil, err
+	}
+	collectors := rdsAdapter.Collectors(false)
+	rdsAdapter.InitCollectors(collectors)
+	return rdsAdapter, nil
 }
 
 func (adapter *RDSAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
@@ -188,7 +196,7 @@ func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigRespo
 	return nil
 }
 
-func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
+func (adapter *RDSAdapter) Collectors(aurora bool) []agent.MetricCollector {
 	pool := adapter.PGDriver
 	collectors := []agent.MetricCollector{
 		{
@@ -237,11 +245,6 @@ func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
 			Collector:  pg.PGStatBGwriter(pool),
 		},
 		{
-			Key:        "pg_wal",
-			MetricType: "int",
-			Collector:  pg.PGStatWAL(pool),
-		},
-		{
 			Key:        "database_wait_events",
 			MetricType: "int",
 			Collector:  pg.WaitEvents(pool),
@@ -270,6 +273,14 @@ func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
 			Collector:  pg.PGStatCheckpointer(pool),
 		})
 	}
+	if !aurora {
+		collectors = append(collectors, agent.MetricCollector{
+			Key:        "pg_wal",
+			MetricType: "int",
+			Collector:  pg.PGStatWAL(pool),
+		})
+	}
+
 	return collectors
 }
 
@@ -344,9 +355,11 @@ type AuroraRDSAdapter struct {
 
 func CreateAuroraRDSAdapter() (*AuroraRDSAdapter, error) {
 	configKey := AURORA_CONFIG_KEY
-	rdsAdapter, err := CreateRDSAdapter(&configKey)
+	rdsAdapter, err := CreateRDSAdapterWithoutCollectors(&configKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AuroraRDS adapter: %w", err)
 	}
+	collectors := rdsAdapter.Collectors(true)
+	rdsAdapter.InitCollectors(collectors)
 	return &AuroraRDSAdapter{*rdsAdapter}, nil
 }
