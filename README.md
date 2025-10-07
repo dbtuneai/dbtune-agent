@@ -13,6 +13,7 @@ The DBtune agent is a lightweight, extensible monitoring and configuration manag
   - Docker containers
   - Amazon Aurora
   - Amazon RDS (closed Beta)
+  - Google Cloud Platform Cloud SQL for PostgreSQL
   - Azure Flexible Server (coming soon)
 - Extensible adapter architecture for custom deployments
 - Concurrent metric collection with error handling
@@ -25,12 +26,12 @@ There are multiple ways to run the DBtune agent:
 - Download and run the pre-built binary
 - Use our official Docker image
 - Build from source (requires Go 1.23.1 or later)
-- AWS Fargate / ECS 
+- AWS Fargate / ECS
 
 ### Installation
 
 Create a configuration file called `dbtune.yaml` file with the following contents (check the [configuration section](#configuration) for more details):
-	
+
 ```yaml
 debug: false
 postgresql:
@@ -50,12 +51,12 @@ This file will be used/referenced for the pre-built binary, docker and build fro
 1. Download the latest release for your platform from our [releases page](https://github.com/dbtuneai/dbtune-agent/releases)
 2. Run the agent via `./dbtune-agent` in a terminal where the binary was downloaded/expanded and your `dbtune.yaml` file exists.
 3. (Optional) Install a systemd service for dbtune-agent. Create a systemd service with the following config and save it as `/etc/systemd/system/dbtune-agent.service`.
-	
+
 	```
 	[Unit]
 	Description=DBtune agent
 	After=network.target
-	    
+
 	[Service]
 	User=dbtune   # User that runs the dbtune-agent, can be root
 	Group=dbtune  # Group to run the dbtune-agent with
@@ -65,7 +66,7 @@ This file will be used/referenced for the pre-built binary, docker and build fro
 	RestartSec=5s
 	StandardOutput=journal
 	StandardError=journal
-	    
+
 	[Install]
 	WantedBy=multi-user.target
 	```
@@ -86,7 +87,7 @@ Once started you can check and verify that the dbtune-agent is running by lookin
 	```
 	docker pull public.ecr.aws/dbtune/dbtune/agent:latest
 	```
-	
+
 2. Run the agent via `docker`
  	- With mounted config file
 
@@ -107,7 +108,7 @@ Once started you can check and verify that the dbtune-agent is running by lookin
 			  public.ecr.aws/dbtune/dbtune/agent:latest
 
 		```
-	
+
 #### Build from source
 
 To build the DBtune agent from source, you'll need Go 1.23.1 or later installed on your system.
@@ -149,14 +150,14 @@ sudo cp dbtune-agent /usr/local/bin/
 ```
 
 #### AWS Fargate / ECS
-Follow these [README](fargate/README.md) instructions to run the agent under AWS Fargate as a service. 
+Follow these [README](fargate/README.md) instructions to run the agent under AWS Fargate as a service.
 
 ## Configuration
 
 ### Configuration via YAML
 
 Create the dbtune-agent configuration and store it where dbtune-agent can access it. The dbtune-agent searches for configuration to be in one of these 3 locations, ordered by priority:
-* `/etc/dbtune.yaml` 
+* `/etc/dbtune.yaml`
 * `/etc/dbtune/dbtune.yaml`
 * `./dbtune.yaml` (Relative to the path from which `dbtune-agent` was executed)
 
@@ -195,6 +196,10 @@ rds-aurora:
   AWS_SECRET_ACCESS_KEY: "<your-aws-secret-access-key>"
   RDS_DATABASE_IDENTIFIER: "<your-rds-database-identifier>" # The Writer instance of the Aurora cluster
   RDS_PARAMETER_GROUP_NAME: "<your-rds-parameter-group-name>" # Be sure to define a custom one and not to use the default.postgresXX one
+
+cloudsql:
+  DBT_GCP_PROJECT_ID: "<your-gcp-project-id>"
+  DBT_GCP_DATABASE_NAME: "<name-of-your-gcp-cloud-sql-instance>"
 ```
 
 ### Environment variables
