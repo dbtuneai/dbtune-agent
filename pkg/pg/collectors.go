@@ -75,7 +75,7 @@ FROM (
         total_exec_time,
         "rows"
     FROM pg_stat_statements
-    WHERE query !~* 'BEGIN|COMMIT|pg_|dbtune|^\s*SELECT\s+\$1\s*$|version'
+    WHERE query !~* '^BEGIN$|^COMMIT$|\s+pg_|\/\*dbtune\*\/|^\s*SELECT\s+\$1\s*$|^\s*SELECT\s+version\s*\(\s*\)\s*;?\s*$'
 ) AS f;
 `
 
@@ -109,7 +109,7 @@ FROM (
         query,
         "rows"
     FROM pg_stat_statements
-    WHERE query !~* 'BEGIN|COMMIT|pg_|dbtune|^\s*SELECT\s+\$1\s*$|version'
+    WHERE query !~* '^BEGIN$|^COMMIT$|\s+pg_|\/\*dbtune\*\/|^\s*SELECT\s+\$1\s*$|^\s*SELECT\s+version\s*\(\s*\)\s*;?\s*$'
 ) AS f;
 `
 			err = pgPool.QueryRow(ctx, query).Scan(&jsonResult)
