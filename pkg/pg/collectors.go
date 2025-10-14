@@ -69,7 +69,9 @@ SELECT JSON_OBJECT_AGG(
 	)
 )
 AS qrt_stats
-FROM (SELECT * FROM pg_stat_statements WHERE query NOT LIKE '%dbtune%' ORDER BY calls DESC)
+FROM (SELECT * FROM pg_stat_statements
+	WHERE query !~ 'BEGIN|COMMIT|\.pg_\.|\.dbtune\.|^SELECT \$1$|\.version\.'
+	ORDER BY calls DESC)
 AS f
 `
 
@@ -96,7 +98,9 @@ SELECT JSON_OBJECT_AGG(
 	)
 )
 AS qrt_stats
-FROM (SELECT * FROM pg_stat_statements WHERE query NOT LIKE '%dbtune%' ORDER BY calls DESC)
+FROM (SELECT * FROM pg_stat_statements
+	WHERE query !~ 'BEGIN|COMMIT|\.pg_\.|\.dbtune\.|^SELECT \$1$|\.version\.'
+	ORDER BY calls DESC)
 AS f`
 			err = pgPool.QueryRow(ctx, query).Scan(&jsonResult)
 		} else {
