@@ -60,19 +60,23 @@ func EmitCumulativeMetricsMap[T Number](state *agent.MetricsState, mappings []Me
 const PgStatStatementsQuery = `
 /*dbtune*/
 SELECT JSON_OBJECT_AGG(
-	CONCAT(queryid, '_', userid, '_', dbid), 
-	JSON_BUILD_OBJECT(
-		'calls',calls,
-		'total_exec_time',total_exec_time,
-		'query_id', CONCAT(queryid, '_', userid, '_', dbid),
-		'rows',rows
-	)
-)
-AS qrt_stats
-FROM (SELECT * FROM pg_stat_statements
-	WHERE query !~ 'BEGIN|COMMIT|\.pg_\.|\.dbtune\.|^SELECT \$1$|\.version\.'
-	ORDER BY calls DESC)
-AS f
+    composite_key,
+    JSON_BUILD_OBJECT(
+        'calls', calls,
+        'total_exec_time', total_exec_time,
+        'query_id', composite_key,
+        'rows', "rows"
+    )
+) AS qrt_stats
+FROM (
+    SELECT
+        CONCAT(queryid, '_', userid, '_', dbid) AS composite_key,
+        calls,
+        total_exec_time,
+        "rows"
+    FROM pg_stat_statements
+    WHERE query !~* 'BEGIN|COMMIT|pg_|dbtune|^\s*SELECT\s+\$1\s*$|version'
+) AS f;
 `
 
 func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
@@ -88,20 +92,26 @@ func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *age
 			query := `
 /*dbtune*/
 SELECT JSON_OBJECT_AGG(
-	CONCAT(queryid, '_', userid, '_', dbid), 
-	JSON_BUILD_OBJECT(
-		'calls',calls,
-		'total_exec_time',total_exec_time,
-		'query_id', CONCAT(queryid, '_', userid, '_', dbid),
-		'query',query,
-		'rows',rows
-	)
-)
-AS qrt_stats
-FROM (SELECT * FROM pg_stat_statements
-	WHERE query !~ 'BEGIN|COMMIT|\.pg_\.|\.dbtune\.|^SELECT \$1$|\.version\.'
-	ORDER BY calls DESC)
-AS f`
+    composite_key,
+    JSON_BUILD_OBJECT(
+        'calls', calls,
+        'total_exec_time', total_exec_time,
+        'query_id', composite_key,
+        'query', query,
+        'rows', "rows"
+    )
+) AS qrt_stats
+FROM (
+    SELECT
+        CONCAT(queryid, '_', userid, '_', dbid) AS composite_key,
+        calls,
+        total_exec_time,
+        query,
+        "rows"
+    FROM pg_stat_statements
+    WHERE query !~* 'BEGIN|COMMIT|pg_|dbtune|^\s*SELECT\s+\$1\s*$|version'
+) AS f;
+`
 			err = pgPool.QueryRow(ctx, query).Scan(&jsonResult)
 		} else {
 			// Query without query text
