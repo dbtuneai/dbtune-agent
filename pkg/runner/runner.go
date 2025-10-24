@@ -102,7 +102,7 @@ func Runner(adapter agent.AgentLooper) {
 			if err != nil {
 				errorPayload := agent.ErrorPayload{
 					ErrorMessage: "Failed to apply configuration: " + err.Error(),
-					ErrorType:    "config_error",
+					ErrorType:    "config_apply_error",
 					Timestamp:    time.Now().UTC().Format(time.RFC3339),
 				}
 				adapter.SendError(errorPayload)
