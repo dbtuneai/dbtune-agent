@@ -53,35 +53,35 @@ func CreateServerURLs() (ServerURLs, error) {
 
 // PostHeartbeat generates the URL for posting a heartbeat.
 func (s ServerURLs) PostHeartbeat() string {
-	return fmt.Sprintf("%s/api/v1/databases/%s/agents/heartbeat", s.ServerUrl, s.DbID)
+	return fmt.Sprintf("%s/api/v1/agent/heartbeat?uuid=%s", s.ServerUrl, s.DbID)
 }
 
 // PostSystemInfo generates the URL for posting system info.
 func (s ServerURLs) PostSystemInfo() string {
-	return fmt.Sprintf("%s/api/v1/databases/%s/system-info", s.ServerUrl, s.DbID)
+	return fmt.Sprintf("%s/api/v1/agent/system-info?uuid=%s", s.ServerUrl, s.DbID)
 }
 
 // PostMetrics generates the URL for posting metrics.
 func (s ServerURLs) PostMetrics() string {
-	return fmt.Sprintf("%s/api/v1/databases/%s/post-metrics", s.ServerUrl, s.DbID)
+	return fmt.Sprintf("%s/api/v1/agent/metrics?uuid=%s", s.ServerUrl, s.DbID)
 }
 
 // PostActiveConfig generates the URL for posting active configurations.
 func (s ServerURLs) PostActiveConfig() string {
-	return fmt.Sprintf("%s/api/v1/databases/%s/configurations", s.ServerUrl, s.DbID)
+	return fmt.Sprintf("%s/api/v1/agent/configurations?uuid=%s", s.ServerUrl, s.DbID)
 }
 
 // GetKnobRecommendations generates the URL for getting knob recommendations.
 func (s ServerURLs) GetKnobRecommendations() string {
-	return fmt.Sprintf("%s/api/v1/databases/%s/configurations?status=recommended", s.ServerUrl, s.DbID)
+	return fmt.Sprintf("%s/api/v1/agent/configurations?uuid=%s&status=recommended", s.ServerUrl, s.DbID)
 }
 
 // PostGuardrailSignal generates the URL for posting a guardrail signal.
 func (s ServerURLs) PostGuardrailSignal() string {
-	return fmt.Sprintf("%s/api/v1/databases/%s/guardrail", s.ServerUrl, s.DbID)
+	return fmt.Sprintf("%s/api/v1/agent/guardrails?uuid=%s", s.ServerUrl, s.DbID)
 }
 
 // PostError generates the URL for posting errors.
 func (s ServerURLs) PostError() string {
-	return fmt.Sprintf("%s/api/v1/databases/%s/log-entries", s.ServerUrl, s.DbID)
+	return fmt.Sprintf("%s/api/v1/agent/log-entries?uuid=%s", s.ServerUrl, s.DbID)
 }
