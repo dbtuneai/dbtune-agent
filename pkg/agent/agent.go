@@ -25,7 +25,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-type ConfigArraySchema []interface{}
+type ConfigArraySchema []any
 
 // TODO: extract PostgreSQL specific types + methods to utils/separate place
 type PGConfigRow struct {

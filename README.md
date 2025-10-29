@@ -11,6 +11,7 @@ The DBtune agent is a lightweight, extensible monitoring and configuration manag
 - Support for multiple PostgreSQL deployment types:
   - Standalone PostgreSQL servers
   - Docker containers
+  - CloudNativePG (CNPG) Kubernetes operator
   - Amazon Aurora
   - Amazon RDS (closed Beta)
   - Google Cloud Platform Cloud SQL for PostgreSQL
@@ -200,6 +201,13 @@ rds-aurora:
 cloudsql:
   DBT_GCP_PROJECT_ID: "<your-gcp-project-id>"
   DBT_GCP_DATABASE_NAME: "<name-of-your-gcp-cloud-sql-instance>"
+
+# CloudNativePG (CNPG) settings
+cnpg:
+  namespace: "<your-kubernetes-namespace>" # Required: Namespace where CNPG cluster is deployed
+  pod_name: "<your-pod-name>" # Required: Specific pod to monitor (one agent per pod)
+  container_name: "postgres" # Optional: Container name within the pod (defaults to "postgres")
+  kubeconfig_path: "/path/to/kubeconfig" # Optional: Path to kubeconfig file (uses in-cluster config or ~/.kube/config if not specified)
 ```
 
 ### Environment variables
@@ -212,6 +220,12 @@ export DBT_DBTUNE_SERVER_URL=http://localhost:8000
 export DBT_DBTUNE_API_KEY=your-api-key
 export DBT_DBTUNE_DATABASE_ID=your-database-id
 export DBT_POSTGRESQL_INCLUDE_QUERIES=true
+
+# CNPG-specific environment variables
+export DBT_CNPG_NAMESPACE=<your-kubernetes-namespace>
+export DBT_CNPG_POD_NAME=<your-pod-name>
+export DBT_CNPG_CONTAINER_NAME=postgres  # Optional, defaults to "postgres"
+export DBT_CNPG_KUBECONFIG_PATH=/path/to/kubeconfig  # Optional
 ```
 
 ## Core metrics

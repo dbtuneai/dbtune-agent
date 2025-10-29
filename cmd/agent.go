@@ -10,6 +10,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/aiven"
 	"github.com/dbtuneai/agent/pkg/checks"
 	"github.com/dbtuneai/agent/pkg/cloudsql"
+	"github.com/dbtuneai/agent/pkg/cnpg"
 	"github.com/dbtuneai/agent/pkg/docker"
 	"github.com/dbtuneai/agent/pkg/pgprem"
 	"github.com/dbtuneai/agent/pkg/rds"
@@ -18,7 +19,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-const AVAILABLE_FLAGS = "--docker, --aurora, --rds, --aiven, --local, --cloudsql"
+const AVAILABLE_FLAGS = "--docker, --aurora, --rds, --aiven, --local, --cloudsql, --cnpg"
 
 func main() {
 	// Define flags
@@ -28,6 +29,7 @@ func main() {
 	useAiven := flag.Bool("aiven", false, "Use Aiven PostgreSQL adapter")
 	useLocal := flag.Bool("local", false, "Use local PostgreSQL adapter")
 	useCloudSQL := flag.Bool("cloudsql", false, "Use Cloud SQL adapter")
+	useCNPG := flag.Bool("cnpg", false, "Use CNPG adapter")
 	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
 
@@ -105,6 +107,11 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to create local PostgreSQL adapter: %v", err)
 		}
+	case *useCNPG:
+		adapter, err = cnpg.CreateCNPGAdapter()
+		if err != nil {
+			log.Fatalf("Failed to create CNPG adapter: %v", err)
+		}
 	default:
 		log.Println("No explicit provider specified, detecting config present...")
 		log.Println("To explicitly specify a provider, please use one of the following flags: " + AVAILABLE_FLAGS)
@@ -129,8 +136,12 @@ func main() {
 			)
 
 		} else if cloudsql.DetectConfigFromEnv() {
-			log.Println("Google Cloud Sql configuration deteceted in config file")
+			log.Println("Google Cloud SQL configuration detected from environment variables")
 			adapter, err = cloudsql.CreateCloudSQLAdapter()
+
+		} else if cnpg.DetectConfigFromEnv() {
+			log.Println("CNPG configuration detected from environment variables")
+			adapter, err = cnpg.CreateCNPGAdapter()
 
 		} else if aiven.DetectConfigFromConfigFile() {
 			log.Println("Aiven PostgreSQL configuration detected in config file")
@@ -152,6 +163,9 @@ func main() {
 		} else if cloudsql.DetectConfigFromConfigFile() {
 			log.Println("Google Cloud SQL configuration detected in config file")
 			adapter, err = cloudsql.CreateCloudSQLAdapter()
+		} else if cnpg.DetectConfigFromConfigFile() {
+			log.Println("CNPG configuration detected in config file")
+			adapter, err = cnpg.CreateCNPGAdapter()
 		} else {
 			// NOTE: This was the previous behavior, which is consistent with our configuration.
 			// All config files have the `postgres:` subheader, which is all the local Postgres
