@@ -27,6 +27,7 @@ type AzureFlexAdapter struct {
 }
 
 func (adapter *AzureFlexAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+	ctx := context.Background()
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
 		return err
@@ -47,7 +48,36 @@ func (adapter *AzureFlexAdapter) ApplyConfig(proposedConfig *agent.ProposedConfi
 		// we have to apply the parameters one by one, in principle each of these
 		// updates could fail, if one does we bail out early and let the backend
 		// realise that the wrong config has been applied and go back to the baseline
-		err = ApplyParameter(context.Background(), paramsClient, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, knobConfig)
+		err = ApplyParameter(ctx, paramsClient, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, knobConfig)
+		if err != nil {
+			return err
+		}
+	}
+
+	// once all parameters have been applied, check if we need to restart the server
+	if proposedConfig.KnobApplication == "restart" {
+		// Restart the service
+		adapter.Logger().Warn("Restarting service")
+		restartResp, err := clientFactory.NewServersClient().BeginRestart(ctx, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, nil)
+		if err != nil {
+			return err
+		}
+
+		// wait for restart to complete
+		for !(restartResp.Done()) {
+			// if the network is flakey, Poll will just sit for ages, this timeout
+			// stops that from happening. Since it is a polling loop it will retry
+			// anyway. Obviously it could be bad if it retries indefinitely
+			// We are basically assuming that at some point we will get a response
+			timeoutCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+			defer cancel()
+			_, err := restartResp.Poll(timeoutCtx)
+			if err != nil {
+				fmt.Printf("Error: %v", err)
+			}
+		}
+
+		_, err = restartResp.Result(ctx)
 		if err != nil {
 			return err
 		}
@@ -103,33 +133,6 @@ func (adapter *AzureFlexAdapter) GetActiveConfig() (agent.ConfigArraySchema, err
 	}
 
 	return config, err
-	// TODO: the is another way we could get this, via the API - that returns _more_ parameters
-	// so should probably workout what is different and what to use
-	// cred, err := azidentity.NewDefaultAzureCredential(nil)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// clientFactory, err := armpostgresqlflexibleservers.NewClientFactory("a574f78e-5a47-4071-a37c-cc0199fd8e10", cred, nil)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// paramsClient := clientFactory.NewConfigurationsClient()
-
-	// paramPager := paramsClient.NewListByServerPager("ms-flex-testing", "david-test", nil)
-
-	// for paramPager.More() {
-	// 	page, err := paramPager.NextPage(ctx)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	fmt.Printf("Config page: %v", len(page.ConfigurationListResult.Value))
-	// 	for _, config := range(page.ConfigurationListResult.Value) {
-
-	// 	}
-	// }
-
 }
 
 func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
@@ -155,7 +158,6 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 
 	// TODO: there are probably loads of ways this horror show could break
 	skuSegments := strings.Split(sku, "_")
-	machineType := skuSegments[0]
 	machineSeries := skuSegments[1][0:1]
 	digitFinder, err := regexp.Compile("[0-9]+")
 	nCores, err := strconv.Atoi(digitFinder.FindString(skuSegments[1]))
@@ -176,10 +178,6 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 			memGb = 8 * nCores
 		}
 	}
-
-	fmt.Printf("%s", sku)
-	fmt.Printf("%s", machineType)
-	fmt.Printf("%s", machineSeries)
 
 	version, err := metrics.PGVersion.AsFlatValue(string(majorVersion) + "." + minorVersion)
 	if err != nil {
@@ -307,16 +305,6 @@ func (adapter *AzureFlexAdapter) Collectors() []agent.MetricCollector {
 			Key:        "memory_used",
 			MetricType: "float",
 			Collector:  AsCollector(MemoryPercent(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName), metrics.NodeMemoryUsedPercentage),
-		},
-		{
-			Key:        "read_iops",
-			MetricType: "int",
-			Collector:  AsCollector(DiskReadIOPS(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName), metrics.NodeDiskIOPSReadPerSecond),
-		},
-		{
-			Key:        "write_iops",
-			MetricType: "int",
-			Collector:  AsCollector(DiskWriteIOPS(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName), metrics.NodeDiskIOPSWritePerSecond),
 		},
 	}
 	// majorVersion := strings.Split(adapter.PGVersion, ".")
@@ -447,114 +435,6 @@ func MemoryPercent(subscriptionId string, resourceGroupName string, serverName s
 		result := resp.Value[0].Timeseries[0].Data[dataLen-1].Average
 		if result == nil {
 			return 0.0, fmt.Errorf("Metric response for Memory: Average was nil")
-		}
-		return *result, nil
-	}
-}
-
-func DiskReadIOPS(subscriptionId string, resourceGroupName string, serverName string) func() (float64, error) {
-	return func() (float64, error) {
-		cred, err := azidentity.NewDefaultAzureCredential(nil)
-		if err != nil {
-			return 0.0, err
-		}
-
-		clientFactory, err := armmonitor.NewClientFactory(subscriptionId, cred, nil)
-		if err != nil {
-			return 0.0, err
-		}
-
-		client := clientFactory.NewMetricsClient()
-
-		ctx := context.TODO()
-		resourceURI := fmt.Sprintf(
-			"/subscriptions/%s/resourcegroups/%s/providers/Microsoft.DBforPostgreSQL/flexibleServers/%s",
-			subscriptionId,
-			resourceGroupName,
-			serverName,
-		)
-		opts := armmonitor.MetricsClientListOptions{
-			Metricnames:     to.Ptr("read_iops"),
-			Metricnamespace: to.Ptr("Microsoft.DBforPostgreSQL/flexibleServers"),
-			// Aggregation:     to.Ptr("average"),
-			Interval: to.Ptr("PT1M"),
-			Timespan: to.Ptr(fmt.Sprintf("%s/%s", time.Now().UTC().Add(-10*time.Minute).Format("2006-01-02T15:04:05.999Z"), time.Now().UTC().Format("2006-01-02T15:04:05.999Z"))),
-		}
-		resp, err := client.List(ctx, resourceURI, &opts)
-		if err != nil {
-			return 0.0, err
-		}
-		fmt.Println("NO PROBLEMS!!!")
-		if len(resp.Value) == 0 {
-			return 0.0, fmt.Errorf("Metric response for IOPS: Value was length 0")
-		}
-		if len(resp.Value[0].Timeseries) == 0 {
-			return 0.0, fmt.Errorf("Metric response for IOPS: Timeseries was length 0")
-		}
-		dataLen := len(resp.Value[0].Timeseries[0].Data)
-		if dataLen == 0 {
-			return 0.0, fmt.Errorf("Metric response for IOPS: Data was length 0")
-		}
-		for i, dataPoint := range resp.Value[0].Timeseries[0].Data {
-			fmt.Printf("Read IOPS: %d: %+v\n", i, *dataPoint)
-		}
-		result := resp.Value[0].Timeseries[0].Data[dataLen-1].Average
-		if result == nil {
-			return 0.0, fmt.Errorf("Metric response for IOPS: Average was nil")
-		}
-		return *result, nil
-	}
-}
-
-func DiskWriteIOPS(subscriptionId string, resourceGroupName string, serverName string) func() (float64, error) {
-	return func() (float64, error) {
-		cred, err := azidentity.NewDefaultAzureCredential(nil)
-		if err != nil {
-			return 0.0, err
-		}
-
-		clientFactory, err := armmonitor.NewClientFactory(subscriptionId, cred, nil)
-		if err != nil {
-			return 0.0, err
-		}
-
-		client := clientFactory.NewMetricsClient()
-
-		ctx := context.TODO()
-		resourceURI := fmt.Sprintf(
-			"/subscriptions/%s/resourcegroups/%s/providers/Microsoft.DBforPostgreSQL/flexibleServers/%s",
-			subscriptionId,
-			resourceGroupName,
-			serverName,
-		)
-		opts := armmonitor.MetricsClientListOptions{
-			Metricnames:     to.Ptr("write_iops"),
-			Metricnamespace: to.Ptr("Microsoft.DBforPostgreSQL/flexibleServers"),
-			// Aggregation:     to.Ptr("average"),
-			Interval: to.Ptr("PT1M"),
-			Timespan: to.Ptr(fmt.Sprintf("%s/%s", time.Now().UTC().Add(-5*time.Minute).Format("2006-01-02T15:04:05.999Z"), time.Now().UTC().Format("2006-01-02T15:04:05.999Z"))),
-		}
-		resp, err := client.List(ctx, resourceURI, &opts)
-		if err != nil {
-			return 0.0, err
-		}
-		fmt.Println("NO PROBLEMS!!!")
-		if len(resp.Value) == 0 {
-			return 0.0, fmt.Errorf("Metric response for IOPS: Value was length 0")
-		}
-		if len(resp.Value[0].Timeseries) == 0 {
-			return 0.0, fmt.Errorf("Metric response for IOPS: Timeseries was length 0")
-		}
-		dataLen := len(resp.Value[0].Timeseries[0].Data)
-		if dataLen == 0 {
-			return 0.0, fmt.Errorf("Metric response for IOPS: Data was length 0")
-		}
-		for i, dataPoint := range resp.Value[0].Timeseries[0].Data {
-			fmt.Printf("Write IOPS: %d: %+v\n", i, *dataPoint)
-		}
-		result := resp.Value[0].Timeseries[0].Data[dataLen-1].Average
-		if result == nil {
-			return 0.0, fmt.Errorf("Metric response for IOPS: Average was nil")
 		}
 		return *result, nil
 	}
