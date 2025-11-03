@@ -19,7 +19,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-const AVAILABLE_FLAGS = "--docker, --aurora, --rds, --aiven, --local, --cloudsql"
+const AVAILABLE_FLAGS = "--docker, --aurora, --rds, --aiven, --local, --cloudsql, --azure-flex"
 
 func main() {
 	// Define flags
@@ -29,7 +29,7 @@ func main() {
 	useAiven := flag.Bool("aiven", false, "Use Aiven PostgreSQL adapter")
 	useLocal := flag.Bool("local", false, "Use local PostgreSQL adapter")
 	useCloudSQL := flag.Bool("cloudsql", false, "Use Cloud SQL adapter")
-	useAzureFlex := flag.Bool("azure-flex", true, "Use Azure Flexible Server")
+	useAzureFlex := flag.Bool("azure-flex", false, "Use Azure Flexible Server")
 	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
 
@@ -121,6 +121,10 @@ func main() {
 			log.Println("Aiven PostgreSQL adapter detected from environment variables")
 			adapter, err = aiven.CreateAivenPostgreSQLAdapter()
 
+		} else if azureflex.DetectConfigFromEnv() {
+			log.Println("Azure Flexible Server for PostgreSQL configuration detected environment variables")
+			adapter, err = azureflex.CreateAzureFlexAdapter()
+
 		} else if docker.DetectConfigFromEnv() {
 			log.Println("Docker container adapter detected from environment variables")
 			adapter, err = docker.CreateDockerContainerAdapter()
@@ -142,6 +146,10 @@ func main() {
 		} else if aiven.DetectConfigFromConfigFile() {
 			log.Println("Aiven PostgreSQL configuration detected in config file")
 			adapter, err = aiven.CreateAivenPostgreSQLAdapter()
+
+		} else if azureflex.DetectConfigFromConfigFile() {
+			log.Println("Azure Flexible Server for PostgreSQL configuration detected in config file")
+			adapter, err = azureflex.CreateAzureFlexAdapter()
 
 		} else if docker.DetectConfigFromConfigFile() {
 			log.Println("Docker container configuration detected in config file")
