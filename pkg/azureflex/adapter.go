@@ -24,6 +24,7 @@ type AzureFlexAdapter struct {
 	agent.CommonAgent
 	AzureFlexConfig Config
 	PGDriver        *pgxpool.Pool
+	GuardrailConfig guardrails.Config
 }
 
 func (adapter *AzureFlexAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
@@ -99,7 +100,6 @@ func ApplyParameter(ctx context.Context, paramsClient *armpostgresqlflexibleserv
 	}
 	updateResp, err := paramsClient.BeginPut(ctx, resourceGroupName, serverName, config.Name, update, nil)
 	if err != nil {
-		fmt.Printf("Error: %v", err)
 		return err
 	}
 
@@ -205,7 +205,23 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return systemInfo, nil
 }
 
-func (*AzureFlexAdapter) Guardrails() *guardrails.Signal {
+func (adapter *AzureFlexAdapter) Guardrails() *guardrails.Signal {
+	memoryUsagePercent, err := MemoryPercent(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName)()
+	if err != nil {
+		adapter.Logger().Errorf("Failed to get memory metric for guardrail: %v", err)
+		return nil
+	}
+
+	adapter.Logger().Debugf("Memory usage: %f%%", memoryUsagePercent)
+
+	// If memory usage is greater than 90% (default), trigger critical guardrail
+	if memoryUsagePercent > adapter.GuardrailConfig.MemoryThreshold {
+		return &guardrails.Signal{
+			Level: guardrails.Critical,
+			Type:  guardrails.Memory,
+		}
+	}
+
 	return nil
 }
 
@@ -226,11 +242,17 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 		return nil, err
 	}
 
+	guardrailConfig, err := guardrails.ConfigFromViper(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate settings for guardrails %w", err)
+	}
+
 	common := agent.CreateCommonAgent()
 	adpt := AzureFlexAdapter{
 		CommonAgent:     *common,
 		AzureFlexConfig: config,
 		PGDriver:        pgPool,
+		GuardrailConfig: guardrailConfig,
 	}
 
 	adpt.InitCollectors(adpt.Collectors())
@@ -370,7 +392,6 @@ func CPUUtilization(subscriptionId string, resourceGroupName string, serverName 
 		if err != nil {
 			return 0.0, err
 		}
-		fmt.Println("NO PROBLEMS!!!")
 		if len(resp.Value) == 0 {
 			return 0.0, fmt.Errorf("Metric response for CPU: Value was length 0")
 		}
@@ -421,7 +442,6 @@ func MemoryPercent(subscriptionId string, resourceGroupName string, serverName s
 		if err != nil {
 			return 0.0, err
 		}
-		fmt.Println("NO PROBLEMS!!!")
 		if len(resp.Value) == 0 {
 			return 0.0, fmt.Errorf("Metric response for Memory: Value was length 0")
 		}
