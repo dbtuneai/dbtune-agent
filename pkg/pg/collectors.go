@@ -113,9 +113,10 @@ func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *age
 		// Build map from rows
 		queryStats := make(map[string]utils.CachedPGStatStatement)
 		for rows.Next() {
-			// Note: All ID fields are int64 to handle different PostgreSQL versions
-			// queryid can be negative (signed hash), userid/dbid can be large positive values
-			var queryid, userid, dbid int64
+			// queryid is bigint (int64) - can be negative hash value
+			// userid and dbid are OID types - must use uint32 for proper scanning
+			var queryid int64
+			var userid, dbid uint32
 			var calls int
 			var totalExecTime float64
 			var rowCount int64
