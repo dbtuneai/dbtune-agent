@@ -13,9 +13,10 @@ const (
 )
 
 type Config struct {
-	ConnectionURL  string `mapstructure:"connection_url" validate:"required"`
-	ServiceName    string `mapstructure:"service_name"`
-	IncludeQueries bool   `mapstructure:"include_queries"`
+	ConnectionURL          string `mapstructure:"connection_url" validate:"required"`
+	ServiceName            string `mapstructure:"service_name"`
+	IncludeQueries         bool   `mapstructure:"include_queries"`
+	MaximumQueryTextLength int    `mapstructure:"maximum_query_text_length"`
 }
 
 func ConfigFromViper(key *string) (Config, error) {
@@ -34,9 +35,11 @@ func ConfigFromViper(key *string) (Config, error) {
 	dbtuneConfig.BindEnv("connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
 	dbtuneConfig.BindEnv("service_name", "DBT_POSTGRESQL_SERVICE_NAME")
 	dbtuneConfig.BindEnv("include_queries", "DBT_POSTGRESQL_INCLUDE_QUERIES")
+	dbtuneConfig.BindEnv("maximum_query_text_length", "DBT_POSTGRESQL_MAXIMUM_QUERY_TEXT_LENGTH")
 
-	// Set default for include_queries to true when using environment variables
+	// Set defaults
 	dbtuneConfig.SetDefault("include_queries", true)
+	dbtuneConfig.SetDefault("maximum_query_text_length", 50_000)
 
 	var pgConfig Config
 	err := dbtuneConfig.Unmarshal(&pgConfig)

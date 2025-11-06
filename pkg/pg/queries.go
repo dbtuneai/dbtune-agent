@@ -6,13 +6,13 @@ import (
 	"regexp"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
 )
 
 // PGVersion returns the version of the PostgreSQL instance
 const PGVersionQuery = `
-/*dbtune*/
 SELECT version();
 `
 
@@ -20,7 +20,7 @@ SELECT version();
 func PGVersion(pgPool *pgxpool.Pool) (string, error) {
 	var pgVersion string
 	versionRegex := regexp.MustCompile(`PostgreSQL (\d+\.\d+)`)
-	err := pgPool.QueryRow(context.Background(), PGVersionQuery).Scan(&pgVersion)
+	err := utils.QueryRowWithPrefix(pgPool, context.Background(), PGVersionQuery).Scan(&pgVersion)
 	if err != nil {
 		return "", err
 	}
@@ -30,13 +30,12 @@ func PGVersion(pgPool *pgxpool.Pool) (string, error) {
 }
 
 const MaxConnectionsQuery = `
-/*dbtune*/
 SELECT setting::integer FROM pg_settings WHERE  name = 'max_connections';
 `
 
 func MaxConnections(pgPool *pgxpool.Pool) (uint32, error) {
 	var maxConnections uint32
-	err := pgPool.QueryRow(context.Background(), MaxConnectionsQuery).Scan(&maxConnections)
+	err := utils.QueryRowWithPrefix(pgPool, context.Background(), MaxConnectionsQuery).Scan(&maxConnections)
 	if err != nil {
 		return 0, fmt.Errorf("error getting max connections: %v", err)
 	}
@@ -45,16 +44,14 @@ func MaxConnections(pgPool *pgxpool.Pool) (uint32, error) {
 }
 
 const SELECT_NUMERIC_SETTINGS = `
-	/*dbtune*/
-	SELECT name, setting::numeric as setting, unit, vartype, context 
-	FROM pg_settings 
+	SELECT name, setting::numeric as setting, unit, vartype, context
+	FROM pg_settings
 	WHERE vartype IN ('real', 'integer');
 `
 
 const SELECT_NON_NUMERIC_SETTINGS = `
-	/*dbtune*/
-	SELECT name, setting, unit, vartype, context 
-	FROM pg_settings 
+	SELECT name, setting, unit, vartype, context
+	FROM pg_settings
 	WHERE vartype NOT IN ('real', 'integer');
 `
 
@@ -66,7 +63,7 @@ func GetActiveConfig(
 	var configRows agent.ConfigArraySchema
 
 	// Query for numeric types (real and integer)
-	numericRows, err := pool.Query(ctx, SELECT_NUMERIC_SETTINGS)
+	numericRows, err := utils.QueryWithPrefix(pool, ctx, SELECT_NUMERIC_SETTINGS)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +79,7 @@ func GetActiveConfig(
 	}
 
 	// Query for non-numeric types
-	nonNumericRows, err := pool.Query(ctx, SELECT_NON_NUMERIC_SETTINGS)
+	nonNumericRows, err := utils.QueryWithPrefix(pool, ctx, SELECT_NON_NUMERIC_SETTINGS)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +98,6 @@ func GetActiveConfig(
 }
 
 const ReloadConfigQuery = `
-/*dbtune*/
 SELECT pg_reload_conf();
 `
 
@@ -114,7 +110,6 @@ func ReloadConfig(pgPool *pgxpool.Pool) error {
 }
 
 const AlterSystemQuery = `
-/*dbtune*/
 ALTER SYSTEM SET %s = %s;
 `
 
@@ -127,7 +122,6 @@ func AlterSystem(pgPool *pgxpool.Pool, name string, value string) error {
 }
 
 const AlterDatabaseQuery = `
-/*dbtune*/
 ALTER DATABASE %s SET %s = %s;
 `
 
@@ -140,13 +134,12 @@ func AlterDatabase(pgPool *pgxpool.Pool, dbname string, name string, value strin
 }
 
 const DataDirectoryQuery = `
-/*dbtune*/
 SHOW data_directory;
 `
 
 func DataDirectory(pgPool *pgxpool.Pool) (string, error) {
 	var dataDir string
-	err := pgPool.QueryRow(context.Background(), DataDirectoryQuery).Scan(&dataDir)
+	err := utils.QueryRowWithPrefix(pgPool, context.Background(), DataDirectoryQuery).Scan(&dataDir)
 	if err != nil {
 		return "", err
 	}
@@ -154,7 +147,6 @@ func DataDirectory(pgPool *pgxpool.Pool) (string, error) {
 }
 
 const Select1Query = `
-/*dbtune*/
 SELECT 1;
 `
 
@@ -164,7 +156,6 @@ func Select1(pgPool *pgxpool.Pool) error {
 }
 
 const CheckPGStatStatementsQuery = `
-/*dbtune*/
 SELECT COUNT(*) FROM pg_stat_statements;
 `
 

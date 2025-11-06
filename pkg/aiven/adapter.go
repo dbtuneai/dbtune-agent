@@ -13,6 +13,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
+	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
 
@@ -569,7 +570,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 		Context: "service",
 	})
 
-	numericRows, err := adapter.PGDriver.Query(context.Background(), pg.SELECT_NUMERIC_SETTINGS)
+	numericRows, err := utils.QueryWithPrefix(adapter.PGDriver, context.Background(), pg.SELECT_NUMERIC_SETTINGS)
 
 	if err != nil {
 		return nil, err
@@ -606,7 +607,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 	}
 
 	// Query for non-numeric types
-	nonNumericRows, err := adapter.PGDriver.Query(context.Background(), pg.SELECT_NON_NUMERIC_SETTINGS)
+	nonNumericRows, err := utils.QueryWithPrefix(adapter.PGDriver, context.Background(), pg.SELECT_NON_NUMERIC_SETTINGS)
 	if err != nil {
 		return nil, err
 	}

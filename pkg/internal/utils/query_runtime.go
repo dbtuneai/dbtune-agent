@@ -1,10 +1,45 @@
 package utils
 
 import (
+	"context"
 	"sort"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var diffLimit = 500
+
+// QueryWithPrefix executes a query with the /*dbtune*/ prefix.
+// It trims any leading whitespace/newlines from the query and ensures
+// it starts with /*dbtune*/ to prevent filtering issues.
+func QueryWithPrefix(pool *pgxpool.Pool, ctx context.Context, query string, args ...any) (pgx.Rows, error) {
+	// Trim leading whitespace and newlines
+	trimmedQuery := strings.TrimSpace(query)
+
+	// Ensure the query starts with /*dbtune*/
+	if !strings.HasPrefix(trimmedQuery, "/*dbtune*/") {
+		trimmedQuery = "/*dbtune*/ " + trimmedQuery
+	}
+
+	return pool.Query(ctx, trimmedQuery, args...)
+}
+
+// QueryRowWithPrefix executes a query that returns a single row with the /*dbtune*/ prefix.
+// It trims any leading whitespace/newlines from the query and ensures
+// it starts with /*dbtune*/ to prevent filtering issues.
+func QueryRowWithPrefix(pool *pgxpool.Pool, ctx context.Context, query string, args ...any) pgx.Row {
+	// Trim leading whitespace and newlines
+	trimmedQuery := strings.TrimSpace(query)
+
+	// Ensure the query starts with /*dbtune*/
+	if !strings.HasPrefix(trimmedQuery, "/*dbtune*/") {
+		trimmedQuery = "/*dbtune*/ " + trimmedQuery
+	}
+
+	return pool.QueryRow(ctx, trimmedQuery, args...)
+}
 
 type CachedPGStatStatement struct {
 	QueryID       string  `json:"query_id"`
@@ -26,7 +61,13 @@ func CalculateQueryRuntime(prev, curr map[string]CachedPGStatStatement) float64 
 		// Get the previous stats, defaulting to zero if not found
 		prevStat, exists := prev[queryId]
 		if !exists {
-			prevStat = CachedPGStatStatement{QueryID: queryId, Calls: 0, TotalExecTime: 0.0, Rows: 0}
+			prevStat = CachedPGStatStatement{
+				QueryID:       queryId,
+				Query:         currStat.Query,
+				Calls:         0,
+				TotalExecTime: 0.0,
+				Rows:          0,
+			}
 		}
 
 		// Calculate the difference in calls and execution time
