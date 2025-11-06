@@ -171,6 +171,7 @@ postgresql:
   # Check the postgres.go adapter to see which commands are getting executed.
   service_name: postgresql-17 # (required) name of the service in case of restarts
   include_queries: true # (required) to include query text when sending stats
+  maximum_query_text_length: 50000 # (default: 50_000) maximum length of query text to send to DBtune if enabled
 
 dbtune:
   server_url: https://app.dbtune.com # Optional: DBtune server endpoint (change for self-hosted)
