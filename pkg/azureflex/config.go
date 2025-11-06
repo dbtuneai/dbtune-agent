@@ -43,8 +43,9 @@ func ConfigFromViper() (Config, error) {
 
 func DetectConfigFromEnv() bool {
 	envKeysToDetect := []string{
-		"DBT_GCP_PROJECT_ID",
-		"DBT_GCP_DATABSE_NAME",
+		"DBT_AZURE_FLEX_SUBSCRIPTION_ID",
+		"DBT_AZURE_FLEX_RESOURCE_GROUP_NAME",
+		"DBT_AZURE_FLEX_SERVER_NAME",
 	}
 	for _, envKey := range envKeysToDetect {
 		if os.Getenv(envKey) != "" {
