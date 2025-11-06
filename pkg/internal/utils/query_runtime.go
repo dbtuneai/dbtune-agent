@@ -6,39 +6,41 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	// DBTuneQueryPrefix is the comment prefix added to all dbtune queries
+	// to identify and filter them in pg_stat_statements
+	DBTuneQueryPrefix = "/*dbtune*/"
 )
 
 var diffLimit = 500
 
-// QueryWithPrefix executes a query with the /*dbtune*/ prefix.
-// It trims any leading whitespace/newlines from the query and ensures
-// it starts with /*dbtune*/ to prevent filtering issues.
-func QueryWithPrefix(pool *pgxpool.Pool, ctx context.Context, query string, args ...any) (pgx.Rows, error) {
-	// Trim leading whitespace and newlines
+// addPrefixToQuery trims leading whitespace from the query and ensures
+// it starts with the dbtune prefix to prevent filtering issues.
+func addPrefixToQuery(query string) string {
 	trimmedQuery := strings.TrimSpace(query)
-
-	// Ensure the query starts with /*dbtune*/
-	if !strings.HasPrefix(trimmedQuery, "/*dbtune*/") {
-		trimmedQuery = "/*dbtune*/ " + trimmedQuery
+	if !strings.HasPrefix(trimmedQuery, DBTuneQueryPrefix) {
+		trimmedQuery = DBTuneQueryPrefix + " " + trimmedQuery
 	}
-
-	return pool.Query(ctx, trimmedQuery, args...)
+	return trimmedQuery
 }
 
-// QueryRowWithPrefix executes a query that returns a single row with the /*dbtune*/ prefix.
-// It trims any leading whitespace/newlines from the query and ensures
-// it starts with /*dbtune*/ to prevent filtering issues.
+// QueryWithPrefix executes a query with the dbtune prefix.
+func QueryWithPrefix(pool *pgxpool.Pool, ctx context.Context, query string, args ...any) (pgx.Rows, error) {
+	return pool.Query(ctx, addPrefixToQuery(query), args...)
+}
+
+// QueryRowWithPrefix executes a query that returns a single row with the dbtune prefix.
 func QueryRowWithPrefix(pool *pgxpool.Pool, ctx context.Context, query string, args ...any) pgx.Row {
-	// Trim leading whitespace and newlines
-	trimmedQuery := strings.TrimSpace(query)
+	return pool.QueryRow(ctx, addPrefixToQuery(query), args...)
+}
 
-	// Ensure the query starts with /*dbtune*/
-	if !strings.HasPrefix(trimmedQuery, "/*dbtune*/") {
-		trimmedQuery = "/*dbtune*/ " + trimmedQuery
-	}
-
-	return pool.QueryRow(ctx, trimmedQuery, args...)
+// ExecWithPrefix executes a command with the dbtune prefix.
+func ExecWithPrefix(pool *pgxpool.Pool, ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
+	return pool.Exec(ctx, addPrefixToQuery(query), args...)
 }
 
 type CachedPGStatStatement struct {

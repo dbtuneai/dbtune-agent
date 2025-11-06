@@ -102,7 +102,7 @@ SELECT pg_reload_conf();
 `
 
 func ReloadConfig(pgPool *pgxpool.Pool) error {
-	_, err := pgPool.Exec(context.Background(), ReloadConfigQuery)
+	_, err := utils.ExecWithPrefix(pgPool, context.Background(), ReloadConfigQuery)
 	if err != nil {
 		return err
 	}
@@ -114,7 +114,7 @@ ALTER SYSTEM SET %s = %s;
 `
 
 func AlterSystem(pgPool *pgxpool.Pool, name string, value string) error {
-	_, err := pgPool.Exec(context.Background(), fmt.Sprintf(AlterSystemQuery, name, value))
+	_, err := utils.ExecWithPrefix(pgPool, context.Background(), fmt.Sprintf(AlterSystemQuery, name, value))
 	if err != nil {
 		return err
 	}
@@ -126,7 +126,7 @@ ALTER DATABASE %s SET %s = %s;
 `
 
 func AlterDatabase(pgPool *pgxpool.Pool, dbname string, name string, value string) error {
-	_, err := pgPool.Exec(context.Background(), fmt.Sprintf(AlterDatabaseQuery, dbname, name, value))
+	_, err := utils.ExecWithPrefix(pgPool, context.Background(), fmt.Sprintf(AlterDatabaseQuery, dbname, name, value))
 	if err != nil {
 		return err
 	}
@@ -151,7 +151,7 @@ SELECT 1;
 `
 
 func Select1(pgPool *pgxpool.Pool) error {
-	_, err := pgPool.Exec(context.Background(), Select1Query)
+	_, err := utils.ExecWithPrefix(pgPool, context.Background(), Select1Query)
 	return err
 }
 
@@ -160,6 +160,6 @@ SELECT COUNT(*) FROM pg_stat_statements;
 `
 
 func CheckPGStatStatements(pgPool *pgxpool.Pool) error {
-	_, err := pgPool.Exec(context.Background(), CheckPGStatStatementsQuery)
+	_, err := utils.ExecWithPrefix(pgPool, context.Background(), CheckPGStatStatementsQuery)
 	return err
 }

@@ -15,7 +15,7 @@ import (
 
 const MaximumQueryLength = 1024
 
-const PgStatStatementsQueryBase = `
+var PgStatStatementsQueryBase = fmt.Sprintf(`
 SELECT
 	queryid,
 	userid,
@@ -24,10 +24,10 @@ SELECT
 	total_exec_time,
 	rows
 FROM pg_stat_statements
-WHERE NOT starts_with(query, '/*dbtune*/')
-`
+WHERE NOT starts_with(query, '%s')
+`, utils.DBTuneQueryPrefix)
 
-const PgStatStatementsQueryWithTextFmt = `
+var PgStatStatementsQueryWithTextFmt = fmt.Sprintf(`
 SELECT
 	queryid,
 	userid,
@@ -35,10 +35,10 @@ SELECT
 	calls,
 	total_exec_time,
 	rows,
-	LEFT(query, %d) as query
+	LEFT(query, %%d) as query
 FROM pg_stat_statements
-WHERE NOT starts_with(query, '/*dbtune*/')
-`
+WHERE NOT starts_with(query, '%s')
+`, utils.DBTuneQueryPrefix)
 
 // Helper function reformat and emit a single metric
 func EmitMetric(state *agent.MetricsState, metric metrics.MetricDef, value any) error {
