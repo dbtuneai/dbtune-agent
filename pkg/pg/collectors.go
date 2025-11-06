@@ -15,6 +15,9 @@ import (
 
 const MaximumQueryLength = 1024
 
+// PgStatStatementsQueryBase queries pg_stat_statements excluding system queries.
+// Filters out: dbtune queries (using fast starts_with), transactions (BEGIN/COMMIT/ROLLBACK),
+// pg_* system queries, parameterized health checks (SELECT $1), version checks, SET/SHOW statements
 var PgStatStatementsQueryBase = fmt.Sprintf(`
 SELECT
 	queryid,
@@ -25,8 +28,12 @@ SELECT
 	rows
 FROM pg_stat_statements
 WHERE NOT starts_with(query, '%s')
+  AND query !~* '^\\s*(BEGIN|COMMIT|ROLLBACK|SET |SHOW |SELECT (pg_|\\$1$|version\\s*\\(\\s*\\)))\\s*;?\\s*$'
 `, utils.DBTuneQueryPrefix)
 
+// PgStatStatementsQueryWithTextFmt is like PgStatStatementsQueryBase but includes query text.
+// The first %s is replaced with the dbtune prefix (/*dbtune*/)
+// The %%d is a format placeholder for the maximum query text length (filled in at runtime)
 var PgStatStatementsQueryWithTextFmt = fmt.Sprintf(`
 SELECT
 	queryid,
@@ -38,6 +45,7 @@ SELECT
 	LEFT(query, %%d) as query
 FROM pg_stat_statements
 WHERE NOT starts_with(query, '%s')
+  AND query !~* '^\\s*(BEGIN|COMMIT|ROLLBACK|SET |SHOW |SELECT (pg_|\\$1$|version\\s*\\(\\s*\\)))\\s*;?\\s*$'
 `, utils.DBTuneQueryPrefix)
 
 // Helper function reformat and emit a single metric
