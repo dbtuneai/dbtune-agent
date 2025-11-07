@@ -68,7 +68,7 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  pg.PGStatStatements(pgDriver),
+			Collector:  pg.PGStatStatements(pgDriver, pgAdapter.pgConfig.IncludeQueries, pgAdapter.pgConfig.MaximumQueryTextLength),
 		},
 		{
 			Key:        "database_transactions_per_second",

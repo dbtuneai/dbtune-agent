@@ -26,6 +26,7 @@ type AzureFlexAdapter struct {
 	AzureFlexConfig Config
 	PGDriver        *pgxpool.Pool
 	GuardrailConfig guardrails.Config
+	pgConfig        pg.Config
 	PGVersion       string
 }
 
@@ -62,6 +63,7 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 		AzureFlexConfig: config,
 		PGDriver:        pgPool,
 		GuardrailConfig: guardrailConfig,
+		pgConfig:        pgConfig,
 		PGVersion:       pgVersion,
 	}
 
@@ -343,7 +345,7 @@ func (adapter *AzureFlexAdapter) Collectors() []agent.MetricCollector {
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  pg.PGStatStatements(pool),
+			Collector:  pg.PGStatStatements(pool, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
 		},
 		{
 			Key:        "database_transactions_per_second",

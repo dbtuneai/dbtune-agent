@@ -13,6 +13,39 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// PgStatStatementsQueryBase queries pg_stat_statements excluding system queries.
+// Filters out: dbtune queries (using fast starts_with), transactions (BEGIN/COMMIT/ROLLBACK),
+// pg_* system queries, parameterized health checks (SELECT $1), version checks, SET/SHOW statements
+var PgStatStatementsQueryBase = fmt.Sprintf(`
+SELECT
+	queryid,
+	userid,
+	dbid,
+	calls,
+	total_exec_time,
+	rows
+FROM pg_stat_statements
+WHERE NOT starts_with(query, '%s')
+  AND query !~* '^\\s*(BEGIN|COMMIT|ROLLBACK|SET |SHOW |SELECT (pg_|\\$1$|version\\s*\\(\\s*\\)))\\s*;?\\s*$'
+`, utils.DBTuneQueryPrefix)
+
+// PgStatStatementsQueryWithTextFmt is like PgStatStatementsQueryBase but includes query text.
+// The first %s is replaced with the dbtune prefix (/*dbtune*/)
+// The %%d is a format placeholder for the maximum query text length (filled in at runtime)
+var PgStatStatementsQueryWithTextFmt = fmt.Sprintf(`
+SELECT
+	queryid,
+	userid,
+	dbid,
+	calls,
+	total_exec_time,
+	rows,
+	LEFT(query, %%d) as query
+FROM pg_stat_statements
+WHERE NOT starts_with(query, '%s')
+  AND query !~* '^\\s*(BEGIN|COMMIT|ROLLBACK|SET |SHOW |SELECT (pg_|\\$1$|version\\s*\\(\\s*\\)))\\s*;?\\s*$'
+`, utils.DBTuneQueryPrefix)
+
 // Helper function reformat and emit a single metric
 func EmitMetric(state *agent.MetricsState, metric metrics.MetricDef, value any) error {
 	entry, err := metric.AsFlatValue(value)
@@ -57,60 +90,63 @@ func EmitCumulativeMetricsMap[T Number](state *agent.MetricsState, mappings []Me
 	return nil
 }
 
-const PgStatStatementsQuery = `
-/*dbtune*/
-SELECT JSON_OBJECT_AGG(
-	CONCAT(queryid, '_', userid, '_', dbid), 
-	JSON_BUILD_OBJECT(
-		'calls',calls,
-		'total_exec_time',total_exec_time,
-		'query_id', CONCAT(queryid, '_', userid, '_', dbid),
-		'rows',rows
-	)
-)
-AS qrt_stats
-FROM (SELECT * FROM pg_stat_statements WHERE query NOT LIKE '%dbtune%' ORDER BY calls DESC)
-AS f
-`
-
-func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
-	// Get config when collecter creater
-	pgConfig, _ := ConfigFromViper(nil)
+func PGStatStatements(pgPool *pgxpool.Pool, includeQueries bool, maxQueryTextLength int) func(ctx context.Context, state *agent.MetricsState) error {
+	// Build query based on config
+	query := PgStatStatementsQueryBase
+	if includeQueries {
+		query = fmt.Sprintf(PgStatStatementsQueryWithTextFmt, maxQueryTextLength)
+	}
 
 	return func(ctx context.Context, state *agent.MetricsState) error {
-		var jsonResult string
-		var err error
-
-		if pgConfig.IncludeQueries {
-			// Query with query text
-			query := `
-/*dbtune*/
-SELECT JSON_OBJECT_AGG(
-	CONCAT(queryid, '_', userid, '_', dbid), 
-	JSON_BUILD_OBJECT(
-		'calls',calls,
-		'total_exec_time',total_exec_time,
-		'query_id', CONCAT(queryid, '_', userid, '_', dbid),
-		'query',query,
-		'rows',rows
-	)
-)
-AS qrt_stats
-FROM (SELECT * FROM pg_stat_statements WHERE query NOT LIKE '%dbtune%' ORDER BY calls DESC)
-AS f`
-			err = pgPool.QueryRow(ctx, query).Scan(&jsonResult)
-		} else {
-			// Query without query text
-			err = pgPool.QueryRow(ctx, PgStatStatementsQuery).Scan(&jsonResult)
-		}
+		rows, err := utils.QueryWithPrefix(pgPool, ctx, query)
 
 		if err != nil {
 			return err
 		}
+		defer rows.Close()
 
-		var queryStats map[string]utils.CachedPGStatStatement
-		err = json.Unmarshal([]byte(jsonResult), &queryStats)
-		if err != nil {
+		// Build map from rows
+		queryStats := make(map[string]utils.CachedPGStatStatement)
+		for rows.Next() {
+			// queryid is bigint (int64) - can be negative hash value
+			// userid and dbid are OID types - must use uint32 for proper scanning
+			var queryid int64
+			var userid, dbid uint32
+			var calls int
+			var totalExecTime float64
+			var rowCount int64
+			var query *string
+
+			if includeQueries {
+				err = rows.Scan(&queryid, &userid, &dbid, &calls, &totalExecTime, &rowCount, &query)
+			} else {
+				err = rows.Scan(&queryid, &userid, &dbid, &calls, &totalExecTime, &rowCount)
+			}
+
+			if err != nil {
+				return err
+			}
+
+			// Construct composite key
+			compositeKey := fmt.Sprintf("%d_%d_%d", queryid, userid, dbid)
+
+			// Build the struct
+			stat := utils.CachedPGStatStatement{
+				QueryID:       compositeKey,
+				Calls:         calls,
+				TotalExecTime: totalExecTime,
+				Rows:          rowCount,
+			}
+
+			if includeQueries && query != nil {
+				stat.Query = *query
+			}
+
+			queryStats[compositeKey] = stat
+		}
+
+		// Check for errors from iterating over rows
+		if err = rows.Err(); err != nil {
 			return err
 		}
 
@@ -158,7 +194,6 @@ AS f`
 }
 
 const ActiveConnectionsQuery = `
-/*dbtune*/
 SELECT COUNT(*) AS active_connections
 FROM pg_stat_activity
 WHERE state = 'active'
@@ -167,7 +202,7 @@ WHERE state = 'active'
 func ActiveConnections(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
 		var result int
-		err := pgPool.QueryRow(ctx, ActiveConnectionsQuery).Scan(&result)
+		err := utils.QueryRowWithPrefix(pgPool, ctx, ActiveConnectionsQuery).Scan(&result)
 		if err != nil {
 			return err
 		}
@@ -183,7 +218,6 @@ func ActiveConnections(pgPool *pgxpool.Pool) func(ctx context.Context, state *ag
 }
 
 const TransactionsPerSecondQuery = `
-/*dbtune*/
 SELECT SUM(xact_commit)::bigint
 AS server_xact_commits
 FROM pg_stat_database;
@@ -192,7 +226,7 @@ FROM pg_stat_database;
 func TransactionsPerSecond(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
 		var serverXactCommits int64
-		err := pgPool.QueryRow(ctx, TransactionsPerSecondQuery).Scan(&serverXactCommits)
+		err := utils.QueryRowWithPrefix(pgPool, ctx, TransactionsPerSecondQuery).Scan(&serverXactCommits)
 		if err != nil {
 			return err
 		}
@@ -239,7 +273,6 @@ func TransactionsPerSecond(pgPool *pgxpool.Pool) func(ctx context.Context, state
 }
 
 const DatabaseSizeQuery = `
-/*dbtune*/
 SELECT sum(pg_database_size(datname)) as total_size_bytes FROM pg_database;
 `
 
@@ -247,7 +280,7 @@ SELECT sum(pg_database_size(datname)) as total_size_bytes FROM pg_database;
 func DatabaseSize(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
 		var totalSizeBytes int64
-		err := pgPool.QueryRow(ctx, DatabaseSizeQuery).Scan(&totalSizeBytes)
+		err := utils.QueryRowWithPrefix(pgPool, ctx, DatabaseSizeQuery).Scan(&totalSizeBytes)
 		if err != nil {
 			return err
 		}
@@ -264,14 +297,13 @@ func DatabaseSize(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.M
 
 // https://stackoverflow.com/a/25012622
 const AutovacuumQuery = `
-/*dbtune*/
-SELECT COUNT(*) FROM pg_stat_activity WHERE query LIKE 'autovacuum:%';
+SELECT COUNT(*) FROM pg_stat_activity WHERE starts_with(query, 'autovacuum:');
 `
 
 func Autovacuum(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
 		var result int
-		err := pgPool.QueryRow(ctx, AutovacuumQuery).Scan(&result)
+		err := utils.QueryRowWithPrefix(pgPool, ctx, AutovacuumQuery).Scan(&result)
 		if err != nil {
 			return err
 		}
@@ -287,14 +319,13 @@ func Autovacuum(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.Met
 }
 
 const UptimeMinutesQuery = `
-/*dbtune*/
 SELECT EXTRACT(EPOCH FROM (current_timestamp - pg_postmaster_start_time())) / 60 as uptime_minutes;
 `
 
 func UptimeMinutes(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
 		var uptime float64
-		err := pgPool.QueryRow(ctx, UptimeMinutesQuery).Scan(&uptime)
+		err := utils.QueryRowWithPrefix(pgPool, ctx, UptimeMinutesQuery).Scan(&uptime)
 		if err != nil {
 			return err
 		}
@@ -310,10 +341,9 @@ func UptimeMinutes(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.
 }
 
 const WaitEventsQuery = `
-/*dbtune*/
 WITH RECURSIVE
 current_waits AS (
-	SELECT 
+	SELECT
 		wait_event_type,
 		count(*) as count
 	FROM pg_stat_activity
@@ -321,7 +351,7 @@ current_waits AS (
 	GROUP BY wait_event_type
 ),
 all_wait_types AS (
-	VALUES 
+	VALUES
 		('Activity'),
 		('BufferPin'),
 		('Client'),
@@ -333,18 +363,18 @@ all_wait_types AS (
 		('Timeout')
 ),
 wait_counts AS (
-	SELECT 
+	SELECT
 		awt.column1 as wait_event_type,
 		COALESCE(cw.count, 0) as current_count
 	FROM all_wait_types awt
 	LEFT JOIN current_waits cw ON awt.column1 = cw.wait_event_type
 )
-SELECT 
+SELECT
 	wait_event_type,
 	current_count
 FROM wait_counts
 UNION ALL
-SELECT 
+SELECT
 	'TOTAL' as wait_event_type,
 	sum(current_count) as current_count
 FROM wait_counts;
@@ -352,7 +382,7 @@ FROM wait_counts;
 
 func WaitEvents(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-		rows, err := pgPool.Query(ctx, WaitEventsQuery)
+		rows, err := utils.QueryWithPrefix(pgPool, ctx, WaitEventsQuery)
 		if err != nil {
 			return err
 		}
@@ -375,7 +405,6 @@ func WaitEvents(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.Met
 }
 
 const PGStatDatabaseQuery = `
-/*dbtune*/
 SELECT
     blks_read,
     blks_hit,
@@ -400,7 +429,7 @@ func PGStatDatabase(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent
 	return func(ctx context.Context, state *agent.MetricsState) error {
 		var blksRead, blksHit, tupReturned, tupFetched, tupInserted, tupUpdated, tupDeleted, tempFiles, tempBytes, deadlocks int64
 		var idleInTransactionTime float64
-		err := pgPool.QueryRow(ctx, PGStatDatabaseQuery).Scan(
+		err := utils.QueryRowWithPrefix(pgPool, ctx, PGStatDatabaseQuery).Scan(
 			&blksRead,
 			&blksHit,
 			&tupReturned,
@@ -491,7 +520,6 @@ func PGStatDatabase(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent
 }
 
 const PGStatUserTablesQuery = `
-/*dbtune*/
 SELECT JSON_OBJECT_AGG(
 	CONCAT(relname, '_', relid),
 	JSON_BUILD_OBJECT(
@@ -519,7 +547,7 @@ FROM pg_stat_user_tables
 func PGStatUserTables(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
 		var jsonResult string
-		err := pgPool.QueryRow(ctx, PGStatUserTablesQuery).Scan(&jsonResult)
+		err := utils.QueryRowWithPrefix(pgPool, ctx, PGStatUserTablesQuery).Scan(&jsonResult)
 		if err != nil {
 			if err.Error() == "can't scan into dest[0]: cannot scan NULL into *string" {
 				return errors.New("pg_stat_user_tables returned no data, likely this means there are no user tables in the database")
@@ -623,7 +651,6 @@ func PGStatUserTables(pgPool *pgxpool.Pool) func(ctx context.Context, state *age
 }
 
 const PGStatBGWriterQuery = `
-/*dbtune*/
 SELECT
     buffers_clean,
 	maxwritten_clean,
@@ -635,7 +662,7 @@ FROM pg_stat_bgwriter;
 func PGStatBGwriter(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
 		var buffersClean, maxWrittenClean, buffersAlloc int64
-		err := pgPool.QueryRow(ctx, PGStatBGWriterQuery).Scan(
+		err := utils.QueryRowWithPrefix(pgPool, ctx, PGStatBGWriterQuery).Scan(
 			&buffersClean,
 			&maxWrittenClean,
 			&buffersAlloc,
@@ -669,7 +696,6 @@ func PGStatBGwriter(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent
 }
 
 const PGStatWalQuery = `
-/*dbtune*/
 SELECT
     wal_records,
 	wal_fpi,
@@ -682,7 +708,7 @@ FROM pg_stat_wal;
 func PGStatWAL(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
 		var WalRecords, WalFpi, WalBytes, WalBuffersFull int64
-		err := pgPool.QueryRow(ctx, PGStatWalQuery).Scan(
+		err := utils.QueryRowWithPrefix(pgPool, ctx, PGStatWalQuery).Scan(
 			&WalRecords,
 			&WalFpi,
 			&WalBytes,
@@ -719,7 +745,6 @@ func PGStatWAL(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.Metr
 }
 
 const PGStatCheckpointerQuery = `
-/*dbtune*/
 SELECT
     num_timed,
 	num_requested,
@@ -735,7 +760,7 @@ func PGStatCheckpointer(pgPool *pgxpool.Pool) func(ctx context.Context, state *a
 	return func(ctx context.Context, state *agent.MetricsState) error {
 		var numTimed, numRequested, BuffersWritten int64
 		var writeTime, syncTime float64
-		err := pgPool.QueryRow(ctx, PGStatCheckpointerQuery).Scan(
+		err := utils.QueryRowWithPrefix(pgPool, ctx, PGStatCheckpointerQuery).Scan(
 			&numTimed,
 			&numRequested,
 			&writeTime,

@@ -18,6 +18,7 @@ type RDSAdapter struct {
 	agent.CommonAgent
 	Config            Config
 	GuardrailSettings guardrails.Config
+	pgConfig          pg.Config
 	State             State
 	AWSClients        AWSClients
 	PGDriver          *pgxpool.Pool
@@ -83,6 +84,7 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 	adapter := &RDSAdapter{
 		CommonAgent: *commonAgent,
 		Config:      config,
+		pgConfig:    pgConfig,
 		State: State{
 			DBInfo: &dbInfo,
 		},
@@ -202,7 +204,7 @@ func (adapter *RDSAdapter) Collectors(aurora bool) []agent.MetricCollector {
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  pg.PGStatStatements(pool),
+			Collector:  pg.PGStatStatements(pool, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
 		},
 		{
 			Key:        "database_transactions_per_second",

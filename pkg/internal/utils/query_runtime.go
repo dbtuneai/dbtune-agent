@@ -1,10 +1,47 @@
 package utils
 
 import (
+	"context"
 	"sort"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var diffLimit = 500
+const (
+	// DBTuneQueryPrefix is the comment prefix added to all dbtune queries
+	// to identify and filter them in pg_stat_statements
+	DBTuneQueryPrefix = "/*dbtune*/"
+)
+
+var PGSSDiffLimit = 500
+
+// addPrefixToQuery trims leading whitespace from the query and ensures
+// it starts with the dbtune prefix to prevent filtering issues.
+func addPrefixToQuery(query string) string {
+	trimmedQuery := strings.TrimSpace(query)
+	if !strings.HasPrefix(trimmedQuery, DBTuneQueryPrefix) {
+		trimmedQuery = DBTuneQueryPrefix + " " + trimmedQuery
+	}
+	return trimmedQuery
+}
+
+// QueryWithPrefix executes a query with the dbtune prefix.
+func QueryWithPrefix(pool *pgxpool.Pool, ctx context.Context, query string, args ...any) (pgx.Rows, error) {
+	return pool.Query(ctx, addPrefixToQuery(query), args...)
+}
+
+// QueryRowWithPrefix executes a query that returns a single row with the dbtune prefix.
+func QueryRowWithPrefix(pool *pgxpool.Pool, ctx context.Context, query string, args ...any) pgx.Row {
+	return pool.QueryRow(ctx, addPrefixToQuery(query), args...)
+}
+
+// ExecWithPrefix executes a command with the dbtune prefix.
+func ExecWithPrefix(pool *pgxpool.Pool, ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
+	return pool.Exec(ctx, addPrefixToQuery(query), args...)
+}
 
 type CachedPGStatStatement struct {
 	QueryID       string  `json:"query_id"`
@@ -26,7 +63,13 @@ func CalculateQueryRuntime(prev, curr map[string]CachedPGStatStatement) float64 
 		// Get the previous stats, defaulting to zero if not found
 		prevStat, exists := prev[queryId]
 		if !exists {
-			prevStat = CachedPGStatStatement{QueryID: queryId, Calls: 0, TotalExecTime: 0.0, Rows: 0}
+			prevStat = CachedPGStatStatement{
+				QueryID:       queryId,
+				Query:         currStat.Query,
+				Calls:         0,
+				TotalExecTime: 0.0,
+				Rows:          0,
+			}
 		}
 
 		// Calculate the difference in calls and execution time
@@ -93,8 +136,8 @@ func CalculateQueryRuntimeDelta(prev, curr map[string]CachedPGStatStatement) ([]
 	})
 
 	// Limit entries based on the specified limit
-	if len(diffs) > diffLimit {
-		diffs = diffs[:diffLimit]
+	if len(diffs) > PGSSDiffLimit {
+		diffs = diffs[:PGSSDiffLimit]
 	}
 
 	return diffs, totalDiffs
