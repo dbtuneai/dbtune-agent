@@ -26,6 +26,7 @@ type DockerContainerAdapter struct {
 	Config            Config
 	dockerClient      *client.Client
 	GuardrailSettings guardrails.Config
+	pgConfig          pg.Config
 	PGDriver          *pgxpool.Pool
 	PGVersion         string
 }
@@ -68,6 +69,7 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 		Config:            dockerConfig,
 		dockerClient:      cli,
 		GuardrailSettings: guardrailSettings,
+		pgConfig:          pgConfig,
 		PGDriver:          dbpool,
 		PGVersion:         PGVersion,
 	}
@@ -85,7 +87,7 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  pg.PGStatStatements(pgDriver),
+			Collector:  pg.PGStatStatements(pgDriver, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
 		},
 		{
 			Key:        "database_transactions_per_second",

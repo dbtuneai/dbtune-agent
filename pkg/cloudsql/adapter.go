@@ -26,6 +26,7 @@ type CloudSQLAdapter struct {
 	CloudMonitoringClient *CloudMonitoringClient
 	CloudSQLAdminClient   *SqlAdminClient
 	GuardrailSettings     *guardrails.Config
+	pgConfig              pg.Config
 	PGVersion             string
 }
 
@@ -81,6 +82,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 			client: sqladminService,
 		},
 		GuardrailSettings: &guardrailSettings,
+		pgConfig:          pgConfig,
 		PGVersion:         PGVersion,
 	}
 
@@ -247,7 +249,7 @@ func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  pg.PGStatStatements(pool),
+			Collector:  pg.PGStatStatements(pool, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
 		},
 		{
 			Key:        "database_transactions_per_second",

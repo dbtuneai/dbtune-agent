@@ -90,14 +90,11 @@ func EmitCumulativeMetricsMap[T Number](state *agent.MetricsState, mappings []Me
 	return nil
 }
 
-func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
-	// Get config when collecter creater
-	pgConfig, _ := ConfigFromViper(nil)
-
+func PGStatStatements(pgPool *pgxpool.Pool, includeQueries bool, maxQueryTextLength int) func(ctx context.Context, state *agent.MetricsState) error {
 	// Build query based on config
 	query := PgStatStatementsQueryBase
-	if pgConfig.IncludeQueries {
-		query = fmt.Sprintf(PgStatStatementsQueryWithTextFmt, pgConfig.MaximumQueryTextLength)
+	if includeQueries {
+		query = fmt.Sprintf(PgStatStatementsQueryWithTextFmt, maxQueryTextLength)
 	}
 
 	return func(ctx context.Context, state *agent.MetricsState) error {
@@ -120,7 +117,7 @@ func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *age
 			var rowCount int64
 			var query *string
 
-			if pgConfig.IncludeQueries {
+			if includeQueries {
 				err = rows.Scan(&queryid, &userid, &dbid, &calls, &totalExecTime, &rowCount, &query)
 			} else {
 				err = rows.Scan(&queryid, &userid, &dbid, &calls, &totalExecTime, &rowCount)
@@ -141,7 +138,7 @@ func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *age
 				Rows:          rowCount,
 			}
 
-			if pgConfig.IncludeQueries && query != nil {
+			if includeQueries && query != nil {
 				stat.Query = *query
 			}
 

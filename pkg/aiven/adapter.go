@@ -33,6 +33,7 @@ type AivenPostgreSQLAdapter struct {
 	Client            aivenclient.Client
 	State             *State
 	GuardrailSettings guardrails.Config
+	pgConfig          pg.Config
 	PGDriver          *pgPool.Pool
 	PGVersion         string
 }
@@ -98,6 +99,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		Client:            aivenClient,
 		State:             state,
 		GuardrailSettings: guardrailSettings,
+		pgConfig:          pgConfig,
 		PGDriver:          pgPool,
 		PGVersion:         PGVersion,
 	}
@@ -381,7 +383,7 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  pg.PGStatStatements(pgDriver),
+			Collector:  pg.PGStatStatements(pgDriver, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
 		},
 		{
 			Key:        "database_transactions_per_second",
