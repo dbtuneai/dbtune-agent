@@ -13,8 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const MaximumQueryLength = 1024
-
 // PgStatStatementsQueryBase queries pg_stat_statements excluding system queries.
 // Filters out: dbtune queries (using fast starts_with), transactions (BEGIN/COMMIT/ROLLBACK),
 // pg_* system queries, parameterized health checks (SELECT $1), version checks, SET/SHOW statements
