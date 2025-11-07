@@ -16,7 +16,7 @@ const (
 	DBTuneQueryPrefix = "/*dbtune*/"
 )
 
-var diffLimit = 500
+var PGSSDiffLimit = 500
 
 // addPrefixToQuery trims leading whitespace from the query and ensures
 // it starts with the dbtune prefix to prevent filtering issues.
@@ -136,8 +136,8 @@ func CalculateQueryRuntimeDelta(prev, curr map[string]CachedPGStatStatement) ([]
 	})
 
 	// Limit entries based on the specified limit
-	if len(diffs) > diffLimit {
-		diffs = diffs[:diffLimit]
+	if len(diffs) > PGSSDiffLimit {
+		diffs = diffs[:PGSSDiffLimit]
 	}
 
 	return diffs, totalDiffs
