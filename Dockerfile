@@ -1,6 +1,11 @@
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
+
+# Build arguments for version information
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG DATE=unknown
 
 # Copy go mod files first
 COPY go.mod go.sum ./
@@ -12,8 +17,14 @@ RUN go mod download
 COPY pkg/ pkg/
 COPY cmd/ cmd/
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o dbtune-agent ./cmd/agent.go
+# Build the application with version information
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags "\
+        -X github.com/dbtuneai/agent/pkg/version.Version=${VERSION} \
+        -X github.com/dbtuneai/agent/pkg/version.Commit=${COMMIT} \
+        -X github.com/dbtuneai/agent/pkg/version.Date=${DATE} \
+    " \
+    -o dbtune-agent ./cmd/agent.go
 
 # Use a minimal image for the final stage
 FROM alpine:latest

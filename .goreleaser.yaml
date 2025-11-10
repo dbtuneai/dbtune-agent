@@ -37,6 +37,9 @@ dockers:
       - "--label=org.opencontainers.image.revision={{.FullCommit}}"
       - "--label=org.opencontainers.image.version={{.Version}}"
       - "--platform=linux/amd64"
+      - "--build-arg=VERSION={{ .Version }}"
+      - "--build-arg=COMMIT={{ .Commit }}"
+      - "--build-arg=DATE={{ .Date }}"
 
 archives:
   - formats: [tar.gz]
