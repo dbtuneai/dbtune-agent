@@ -245,8 +245,8 @@ var (
 	PGTuplesUpdated  = MetricDef{Key: "pg_tuples_updated", Type: Int}
 	PGTuplesDeleted  = MetricDef{Key: "pg_tuples_deleted", Type: Int}
 
-	PGTempFiles = MetricDef{Key: "pg_tuples_updated", Type: Int}
-	PGTempBytes = MetricDef{Key: "pg_tuples_updated", Type: Int}
+	PGTempFiles = MetricDef{Key: "pg_temp_files", Type: Int}
+	PGTempBytes = MetricDef{Key: "pg_temp_bytes", Type: Int}
 
 	PGIdleInTransactionTime = MetricDef{Key: "pg_idle_in_transaction_time", Type: Float}
 
@@ -266,10 +266,12 @@ var (
 	PGIdxScan     = MetricDef{Key: "pg_idx_scan", Type: IntMap}
 	PGIdxTupFetch = MetricDef{Key: "pg_idx_tup_fetch", Type: IntMap}
 
+	// BG writing
 	PGBGWBuffersClean    = MetricDef{Key: "pg_bg_buffers_clean", Type: Int}
 	PGMBGWaxWrittenClean = MetricDef{Key: "pg_bg_max_written_clean", Type: Int}
 	PGBGWBuffersAlloc    = MetricDef{Key: "pg_bg_buffers_alloc", Type: Int}
 
+	// Checkpointing & WAL
 	PGCPNumTimed       = MetricDef{Key: "pg_cp_num_timed", Type: Int}
 	PGCPNumRequested   = MetricDef{Key: "pg_cp_num_requested", Type: Int}
 	PGCPWriteTime      = MetricDef{Key: "pg_cp_write_time", Type: Float}
