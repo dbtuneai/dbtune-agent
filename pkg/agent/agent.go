@@ -388,8 +388,7 @@ func (a *CommonAgent) SendHeartbeat() error {
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		a.Logger().Infof("Error marshaling JSON: %s", err)
-		fmt.Println("Error marshaling JSON:", err)
+		a.Logger().Errorf("Error marshaling JSON: %s", err)
 		return err
 	}
 
