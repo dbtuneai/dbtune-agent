@@ -27,7 +27,7 @@ SELECT
 FROM pg_stat_statements
 WHERE NOT starts_with(query, '%s')
   AND query !~* '^\\s*(BEGIN|COMMIT|ROLLBACK|SET |SHOW |SELECT (pg_|\\$1$|version\\s*\\(\\s*\\)))\\s*;?\\s*$'
-`, utils.DBTuneQueryPrefix)
+`, utils.DBtuneQueryPrefix)
 
 // PgStatStatementsQueryWithTextFmt is like PgStatStatementsQueryBase but includes query text.
 // The first %s is replaced with the dbtune prefix (/*dbtune*/)
@@ -44,7 +44,7 @@ SELECT
 FROM pg_stat_statements
 WHERE NOT starts_with(query, '%s')
   AND query !~* '^\\s*(BEGIN|COMMIT|ROLLBACK|SET |SHOW |SELECT (pg_|\\$1$|version\\s*\\(\\s*\\)))\\s*;?\\s*$'
-`, utils.DBTuneQueryPrefix)
+`, utils.DBtuneQueryPrefix)
 
 // Helper function reformat and emit a single metric
 func EmitMetric(state *agent.MetricsState, metric metrics.MetricDef, value any) error {
