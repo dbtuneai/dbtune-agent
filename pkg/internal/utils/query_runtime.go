@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	// DBTuneQueryPrefix is the comment prefix added to all dbtune queries
+	// DBtuneQueryPrefix is the comment prefix added to all dbtune queries
 	// to identify and filter them in pg_stat_statements
-	DBTuneQueryPrefix = "/*dbtune*/"
+	DBtuneQueryPrefix = "/*dbtune*/"
 )
 
 var PGSSDiffLimit = 500
@@ -22,8 +22,8 @@ var PGSSDiffLimit = 500
 // it starts with the dbtune prefix to prevent filtering issues.
 func addPrefixToQuery(query string) string {
 	trimmedQuery := strings.TrimSpace(query)
-	if !strings.HasPrefix(trimmedQuery, DBTuneQueryPrefix) {
-		trimmedQuery = DBTuneQueryPrefix + " " + trimmedQuery
+	if !strings.HasPrefix(trimmedQuery, DBtuneQueryPrefix) {
+		trimmedQuery = DBtuneQueryPrefix + " " + trimmedQuery
 	}
 	return trimmedQuery
 }
