@@ -305,7 +305,7 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Failed to convert cpu count: %v", err)
 	}
-	memoryTotalMetric, err := metrics.NodeMemoryTotal.AsFlatValue(memGb * 1000 * 1000 * 1000)
+	memoryTotalMetric, err := metrics.NodeMemoryTotal.AsFlatValue(memGb * 1024 * 1024 * 1024)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to convert memory total: %v", err)
 	}
