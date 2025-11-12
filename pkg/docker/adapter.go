@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 )
 
@@ -29,6 +30,7 @@ type DockerContainerAdapter struct {
 	pgConfig          pg.Config
 	PGDriver          *pgxpool.Pool
 	PGVersion         string
+	resolvedContainerID string // Cached container ID resolved from name pattern
 }
 
 func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
@@ -73,10 +75,67 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 		PGDriver:          dbpool,
 		PGVersion:         PGVersion,
 	}
+
+	// Resolve container name pattern to actual container ID
+	ctx := context.Background()
+	containerID, err := dockerAdapter.resolveContainerID(ctx, dockerConfig.ContainerName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve container '%s': %w", dockerConfig.ContainerName, err)
+	}
+	dockerAdapter.resolvedContainerID = containerID
+
 	collectors := DockerCollectors(dockerAdapter)
 	dockerAdapter.InitCollectors(collectors)
 
 	return dockerAdapter, nil
+}
+
+// resolveContainerID finds a running container matching the name pattern
+// Returns the full container ID if exactly one match is found
+func (d *DockerContainerAdapter) resolveContainerID(ctx context.Context, namePattern string) (string, error) {
+	// Create filter for container name
+	filter := filters.NewArgs()
+	filter.Add("name", namePattern)
+
+	// List containers matching the pattern
+	containers, err := d.dockerClient.ContainerList(ctx, container.ListOptions{
+		Filters: filter,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to list containers matching '%s': %w", namePattern, err)
+	}
+
+	// Validate exactly one container found
+	if len(containers) == 0 {
+		return "", fmt.Errorf("no running containers found matching pattern '%s'", namePattern)
+	}
+
+	if len(containers) > 1 {
+		// Extra safety: check if any names are exact matches
+		for _, c := range containers {
+			for _, name := range c.Names {
+				// Docker prefixes names with '/', so check both
+				if name == namePattern || name == "/"+namePattern {
+					d.Logger().Infof("Found exact match for '%s': %s", namePattern, c.ID)
+					return c.ID, nil
+				}
+			}
+		}
+
+		// Log all matches for debugging
+		var matchedNames []string
+		for _, c := range containers {
+			matchedNames = append(matchedNames, c.Names[0])
+		}
+		return "", fmt.Errorf("ambiguous pattern '%s' matched %d containers: %v. Please use a more specific pattern",
+			namePattern, len(containers), matchedNames)
+	}
+
+	containerID := containers[0].ID
+	d.Logger().Infof("Resolved container pattern '%s' to ID: %s (name: %s)",
+		namePattern, containerID[:12], containers[0].Names[0])
+
+	return containerID, nil
 }
 
 // DockerCollectors returns the list of collectors for Docker, replacing system metrics
@@ -142,7 +201,7 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 		{
 			Key:        "hardware",
 			MetricType: "int",
-			Collector:  DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
+			Collector:  DockerHardwareInfo(adapter.dockerClient, adapter.resolvedContainerID),
 		},
 	}
 	majorVersion := strings.Split(adapter.PGVersion, ".")
@@ -180,7 +239,7 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	}
 
 	// Get container stats
-	stats, err := d.dockerClient.ContainerStats(context.Background(), d.Config.ContainerName, false)
+	stats, err := d.dockerClient.ContainerStats(context.Background(), d.resolvedContainerID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +253,7 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	}
 
 	// Get container info for additional details
-	containerInfo, err := d.dockerClient.ContainerInspect(context.Background(), d.Config.ContainerName)
+	containerInfo, err := d.dockerClient.ContainerInspect(context.Background(), d.resolvedContainerID)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +323,7 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 
 func (d *DockerContainerAdapter) Guardrails() *guardrails.Signal {
 	// Get container stats
-	stats, err := d.dockerClient.ContainerStats(context.Background(), d.Config.ContainerName, false)
+	stats, err := d.dockerClient.ContainerStats(context.Background(), d.resolvedContainerID, false)
 	if err != nil {
 		d.Logger().Warnf("guardrail: could not fetch docker stats: %v", err)
 		return nil
@@ -324,7 +383,7 @@ func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfi
 		d.Logger().Warn("Restarting service")
 
 		// Execute docker restart command
-		err := d.dockerClient.ContainerRestart(ctx, d.Config.ContainerName, container.StopOptions{})
+		err := d.dockerClient.ContainerRestart(ctx, d.resolvedContainerID, container.StopOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to restart PostgreSQL service: %w", err)
 		}
