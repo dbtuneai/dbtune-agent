@@ -268,9 +268,8 @@ type Caches struct {
 }
 
 type MetricCollector struct {
-	Key        string
-	MetricType string
-	Collector  func(ctx context.Context, state *MetricsState) error
+	Key       string
+	Collector func(ctx context.Context, state *MetricsState) error
 }
 
 type MetricsState struct {

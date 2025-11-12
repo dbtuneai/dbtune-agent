@@ -343,70 +343,57 @@ func (adapter *AzureFlexAdapter) Collectors() []agent.MetricCollector {
 	pool := adapter.PGDriver
 	collectors := []agent.MetricCollector{
 		{
-			Key:        "database_average_query_runtime",
-			MetricType: "float",
-			Collector:  pg.PGStatStatements(pool, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
+			Key:       "database_average_query_runtime",
+			Collector: pg.PGStatStatements(pool, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
 		},
 		{
-			Key:        "database_transactions_per_second",
-			MetricType: "int",
-			Collector:  pg.TransactionsPerSecond(pool),
+			Key:       "database_transactions_per_second",
+			Collector: pg.TransactionsPerSecond(pool),
 		},
 		{
-			Key:        "database_active_connections",
-			MetricType: "int",
-			Collector:  pg.ActiveConnections(pool),
+			Key:       "database_active_connections",
+			Collector: pg.ActiveConnections(pool),
 		},
 		{
-			Key:        "system_db_size",
-			MetricType: "int",
-			Collector:  pg.DatabaseSize(pool),
+			Key:       "system_db_size",
+			Collector: pg.DatabaseSize(pool),
 		},
 		{
-			Key:        "database_autovacuum_count",
-			MetricType: "int",
-			Collector:  pg.Autovacuum(pool),
+			Key:       "database_autovacuum_count",
+			Collector: pg.Autovacuum(pool),
 		},
 		{
-			Key:        "server_uptime",
-			MetricType: "float",
-			Collector:  pg.UptimeMinutes(pool),
+			Key:       "server_uptime",
+			Collector: pg.UptimeMinutes(pool),
 		},
 		{
-			Key:        "pg_database",
-			MetricType: "int",
-			Collector:  pg.PGStatDatabase(pool),
+			Key:       "pg_database",
+			Collector: pg.PGStatDatabase(pool),
 		},
 		{
-			Key:        "pg_user_tables",
-			MetricType: "int",
-			Collector:  pg.PGStatUserTables(pool),
+			Key:       "pg_user_tables",
+			Collector: pg.PGStatUserTables(pool),
 		},
 		{
-			Key:        "pg_bgwriter",
-			MetricType: "int",
-			Collector:  pg.PGStatBGwriter(pool),
+			Key:       "pg_bgwriter",
+			Collector: pg.PGStatBGwriter(pool),
 		},
 		{
-			Key:        "pg_wal",
-			MetricType: "int",
-			Collector:  pg.PGStatWAL(pool),
+			Key:       "pg_wal",
+			Collector: pg.PGStatWAL(pool),
 		},
 		{
-			Key:        "database_wait_events",
-			MetricType: "int",
-			Collector:  pg.WaitEvents(pool),
+			Key:       "database_wait_events",
+			Collector: pg.WaitEvents(pool),
 		},
 
 		{
-			Key:        "cpu_utilization",
-			MetricType: "float",
-			Collector:  AsCollector(CPUUtilization(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName), metrics.NodeCPUUsage),
+			Key:       "cpu_utilization",
+			Collector: AsCollector(CPUUtilization(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName), metrics.NodeCPUUsage),
 		},
 		{
-			Key:        "memory_used",
-			MetricType: "float",
-			Collector:  AsCollector(MemoryPercent(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName), metrics.NodeMemoryUsedPercentage),
+			Key:       "memory_used",
+			Collector: AsCollector(MemoryPercent(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName), metrics.NodeMemoryUsedPercentage),
 		},
 	}
 	majorVersion := strings.Split(adapter.PGVersion, ".")
@@ -417,9 +404,8 @@ func (adapter *AzureFlexAdapter) Collectors() []agent.MetricCollector {
 	}
 	if intMajorVersion >= 17 {
 		collectors = append(collectors, agent.MetricCollector{
-			Key:        "pg_checkpointer",
-			MetricType: "int",
-			Collector:  pg.PGStatCheckpointer(pool),
+			Key:       "pg_checkpointer",
+			Collector: pg.PGStatCheckpointer(pool),
 		})
 	}
 	return collectors
