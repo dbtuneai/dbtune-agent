@@ -247,45 +247,9 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 		}
 	}
 
-	var maxConnections int
-	switch machineSeries {
-	case "B":
-		switch nCores {
-		case 1:
-			maxConnections = 50
-		case 2:
-			if machineSubSeries == "s" {
-				maxConnections = 429
-			} else {
-				maxConnections = 859
-			}
-		case 4:
-			maxConnections = 1718
-		case 8:
-			maxConnections = 3437
-		default:
-			maxConnections = 5000
-		}
-	case "D":
-		switch nCores {
-		case 2:
-			maxConnections = 859
-		case 4:
-			maxConnections = 1718
-		case 8:
-			maxConnections = 3437
-		default:
-			maxConnections = 5000
-		}
-	case "E":
-		switch nCores {
-		case 2:
-			maxConnections = 1718
-		case 4:
-			maxConnections = 3437
-		default:
-			maxConnections = 5000
-		}
+	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
+	if err != nil {
+		return nil, err
 	}
 
 	pgVersion, err := pg.PGVersion(adapter.PGDriver)
