@@ -41,8 +41,9 @@ type MetricData struct {
 
 // FormattedMetrics matches the expected payload of DBtune backend
 type FormattedMetrics struct {
-	Metrics   map[string]MetricData `json:"metrics"`
-	Timestamp string                `json:"timestamp"`
+	Version   string                 `json:"version"`
+	Metrics   map[string]interface{} `json:"metrics"`
+	Timestamp string                 `json:"timestamp"`
 }
 
 type FormattedSystemInfo struct {
@@ -136,22 +137,19 @@ func NewMetric(key string, value interface{}, typeStr MetricType) (FlatValue, er
 	}, nil
 }
 
-// TODO: write util tests for this
 // FormatMetrics converts the MetricsState object into a FormattedMetrics object
 // to be used as a metrics payload
 func FormatMetrics(metrics []FlatValue) FormattedMetrics {
-	metricsMap := make(map[string]MetricData)
+	metricsMap := make(map[string]interface{})
 
 	for _, metric := range metrics {
-		metricsMap[metric.Key] = MetricData{
-			Type:  string(metric.Type), // Assuming MetricType is a string type, adjust if necessary
-			Value: metric.Value,
-		}
+		metricsMap[metric.Key] = metric.Value
 	}
 
 	return FormattedMetrics{
+		Version:   "2.0",
 		Metrics:   metricsMap,
-		Timestamp: time.Now().Format(time.RFC3339Nano), // Current timestamp in RFC3339 format
+		Timestamp: time.Now().Format(time.RFC3339Nano),
 	}
 }
 
