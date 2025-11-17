@@ -46,6 +46,7 @@ func ExecWithPrefix(pool *pgxpool.Pool, ctx context.Context, query string, args 
 type CachedPGStatStatement struct {
 	QueryID       string  `json:"query_id"`
 	Query         string  `json:"query,omitempty"`
+	QueryLen      int     `json:"query_len,omitempty"`
 	Calls         int     `json:"calls"`
 	TotalExecTime float64 `json:"total_exec_time"`
 	Rows          int64   `json:"rows"`
@@ -66,6 +67,7 @@ func CalculateQueryRuntime(prev, curr map[string]CachedPGStatStatement) float64 
 			prevStat = CachedPGStatStatement{
 				QueryID:       queryId,
 				Query:         currStat.Query,
+				QueryLen: 	   currStat.QueryLen,
 				Calls:         0,
 				TotalExecTime: 0.0,
 				Rows:          0,
@@ -121,6 +123,7 @@ func CalculateQueryRuntimeDelta(prev, curr map[string]CachedPGStatStatement) ([]
 			diffs = append(diffs, CachedPGStatStatement{
 				QueryID:       queryId,
 				Query:         currStat.Query,
+				QueryLen:      len(currStat.Query),
 				Calls:         callsDiff,
 				TotalExecTime: execTimeDiff,
 				Rows:          rowsDiff,
