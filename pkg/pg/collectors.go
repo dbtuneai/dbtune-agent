@@ -60,7 +60,7 @@ func EmitCumulativeMetricsMap[T Number](state *agent.MetricsState, mappings []Me
 const PgStatStatementsQuery = `
 /*dbtune*/
 SELECT JSON_OBJECT_AGG(
-	CONCAT(queryid, '_', userid, '_', dbid), 
+	CONCAT(queryid, '_', userid, '_', dbid),
 	JSON_BUILD_OBJECT(
 		'calls',calls,
 		'total_exec_time',total_exec_time,
@@ -86,7 +86,7 @@ func PGStatStatements(pgPool *pgxpool.Pool) func(ctx context.Context, state *age
 			query := `
 /*dbtune*/
 SELECT JSON_OBJECT_AGG(
-	CONCAT(queryid, '_', userid, '_', dbid), 
+	CONCAT(queryid, '_', userid, '_', dbid),
 	JSON_BUILD_OBJECT(
 		'calls',calls,
 		'total_exec_time',total_exec_time,
@@ -313,7 +313,7 @@ const WaitEventsQuery = `
 /*dbtune*/
 WITH RECURSIVE
 current_waits AS (
-	SELECT 
+	SELECT
 		wait_event_type,
 		count(*) as count
 	FROM pg_stat_activity
@@ -321,7 +321,7 @@ current_waits AS (
 	GROUP BY wait_event_type
 ),
 all_wait_types AS (
-	VALUES 
+	VALUES
 		('Activity'),
 		('BufferPin'),
 		('Client'),
@@ -333,18 +333,18 @@ all_wait_types AS (
 		('Timeout')
 ),
 wait_counts AS (
-	SELECT 
+	SELECT
 		awt.column1 as wait_event_type,
 		COALESCE(cw.count, 0) as current_count
 	FROM all_wait_types awt
 	LEFT JOIN current_waits cw ON awt.column1 = cw.wait_event_type
 )
-SELECT 
+SELECT
 	wait_event_type,
 	current_count
 FROM wait_counts
 UNION ALL
-SELECT 
+SELECT
 	'TOTAL' as wait_event_type,
 	sum(current_count) as current_count
 FROM wait_counts;

@@ -66,8 +66,6 @@ func CollectContainerMetrics(ctx context.Context, containerClient ContainerClien
 		return fmt.Errorf("failed to get CPU limit: %w", err)
 	}
 
-	fmt.Printf("DEBUG: CPU usage=%d millicores, limit=%d millicores\n", cpuMillicores, cpuLimitMillicores)
-
 	// Calculate CPU usage percentage
 	// Note: CPUUsageMillicores returns instantaneous usage from metrics-server, not cumulative
 	var cpuUsagePercent float64
@@ -131,7 +129,6 @@ func CollectContainerMetrics(ctx context.Context, containerClient ContainerClien
 		// If timestamp hasn't changed, skip reporting to avoid zero deltas from stale data
 		if ioStats.Timestamp != 0 && ioStats.Timestamp == cache.PreviousCAdvisorTimestamp {
 			// Metrics haven't been updated by cAdvisor yet, skip this collection
-			fmt.Printf("DEBUG: cAdvisor metrics unchanged (timestamp=%d), skipping I/O reporting\n", ioStats.Timestamp)
 		} else {
 			// Calculate deltas for I/O operations (only if we have previous data)
 			readsDelta := ioStats.ReadsTotal - cache.PreviousReadsTotal
@@ -254,8 +251,6 @@ func CollectContainerMetrics(ctx context.Context, containerClient ContainerClien
 			state.AddMetric(loadAvgMetric)
 		}
 	}
-
-	// Note: OS info is now collected in GetContainerSystemInfo as it's static
 
 	// Update cache with current CPU and memory values
 	cache.PreviousCPUMillicores = cpuMillicores

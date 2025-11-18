@@ -9,11 +9,33 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/guardrails"
+	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/kubernetes"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/jackc/pgx/v5/pgxpool"
 	log "github.com/sirupsen/logrus"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+)
+
+const (
+	// CNPG Kubernetes API constants
+	CNPGAPIGroup     = "postgresql.cnpg.io"
+	CNPGAPIVersion   = "v1"
+	CNPGResourceName = "clusters"
+
+	// CNPG label for cluster identification
+	CNPGClusterLabel = "cnpg.io/cluster"
+
+	// CNPG parameters path in the Cluster CRD spec
+	CNPGParametersPath = "spec.postgresql.parameters"
+
+	// Configuration application limits
+	ConfigApplyMaxRetries           = 5
+	ConfigApplyRetryDelay           = 5 * time.Second
+	MaxWaitTimePodReadyTransitions  = 20 * time.Minute
+	PollIntervalPodReadyTransitions = 2 * time.Second
 )
 
 type CNPGAdapter struct {
@@ -87,8 +109,91 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 
 func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
 	// https://cloudnative-pg.io/documentation/1.27/postgresql_conf/#changing-configuration
-	// TODO: Implement configuration application for CNPG
+	ctx := context.Background()
+	logger := adapter.Logger()
+
+	// Get cluster name from pod's CNPG cluster label
+	clusterName, err := adapter.getClusterName(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get cluster name: %w", err)
+	}
+	logger.Infof("Applying configuration to CNPG cluster: %s", clusterName)
+
+	// Parse and validate all knobs upfront
+	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
+	if err != nil {
+		return fmt.Errorf("failed to parse knob configurations: %w", err)
+	}
+
+	if len(parsedKnobs) == 0 {
+		logger.Info("No configuration changes to apply")
+		return nil
+	}
+
+	// Build parameters map for the patch
+	parametersMap := make(map[string]string)
+	for _, knob := range parsedKnobs {
+		// CNPG requires all parameter values to be strings
+		parametersMap[knob.Name] = knob.SettingValue
+		logger.Infof("Will set %s = %s", knob.Name, knob.SettingValue)
+	}
+
+	// Apply the patch using generic Kubernetes patching function
+	err = kubernetes.PatchCRDParameters(kubernetes.CRDPatchRequest{
+		Ctx:    ctx,
+		Client: adapter.K8sClient,
+		GVR: schema.GroupVersionResource{
+			Group:    CNPGAPIGroup,
+			Version:  CNPGAPIVersion,
+			Resource: CNPGResourceName,
+		},
+		ResourceName:   clusterName,
+		ParametersPath: CNPGParametersPath,
+		Parameters:     parametersMap,
+		MaxRetries:     ConfigApplyMaxRetries,
+		RetryDelay:     ConfigApplyRetryDelay,
+		Logger:         logger,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to apply configuration patch: %w", err)
+	}
+
+	// Wait for pod to transition through not ready and back to ready
+	// This ensures the configuration has been applied and the pod has reloaded
+	logger.Info("Waiting for pod ready state transitions...")
+	podClient := adapter.K8sClient.PodClient(adapter.Config.PodName)
+	err = podClient.WaitForPodReadyTransitions(
+		ctx,
+		MaxWaitTimePodReadyTransitions,
+		PollIntervalPodReadyTransitions,
+		logger,
+	)
+	if err != nil {
+		return fmt.Errorf("pod did not complete ready state transitions: %w", err)
+	}
+
+	logger.Info("Pod has completed ready state transitions - configuration applied")
+
+	// Update state to track when we last applied config
+	adapter.State.LastAppliedConfig = time.Now()
+
 	return nil
+}
+
+// getClusterName retrieves the CNPG cluster name from the pod's labels
+func (adapter *CNPGAdapter) getClusterName(ctx context.Context) (string, error) {
+	pod, err := adapter.K8sClient.Clientset.CoreV1().Pods(adapter.Config.Namespace).
+		Get(ctx, adapter.Config.PodName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to get pod %s: %w", adapter.Config.PodName, err)
+	}
+
+	clusterName, ok := pod.Labels[CNPGClusterLabel]
+	if !ok {
+		return "", fmt.Errorf("pod %s does not have %s label", adapter.Config.PodName, CNPGClusterLabel)
+	}
+
+	return clusterName, nil
 }
 
 func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {

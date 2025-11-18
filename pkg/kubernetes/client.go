@@ -11,8 +11,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/metrics"
+	log "github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
@@ -498,6 +500,10 @@ type DiskInfo struct {
 	UsedBytes uint64
 	// Usage percentage (0-100)
 	UsedPercent float64
+	// Filesystem type (e.g., "ext4", "xfs", "overlay")
+	FilesystemType string
+	// Storage class name (e.g., "standard", "fast-ssd")
+	StorageClassName string
 }
 
 // DiskInfo returns disk usage information for the container from cAdvisor.
@@ -507,7 +513,57 @@ func (cc *ContainerClient) DiskInfo(ctx context.Context) (*DiskInfo, error) {
 		return nil, err
 	}
 
-	return parseContainerDiskMetrics(metrics, cc.ContainerName, cc.PodName, cc.Namespace)
+	info, err := parseContainerDiskMetrics(metrics, cc.ContainerName, cc.PodName, cc.Namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	// Try to get storage class from PVC
+	storageClass, err := cc.getStorageClassName(ctx)
+	if err == nil {
+		info.StorageClassName = storageClass
+	}
+
+	return info, nil
+}
+
+// getStorageClassName returns the storage class name for the container's PVC.
+func (cc *ContainerClient) getStorageClassName(ctx context.Context) (string, error) {
+	pod, err := getPod(ctx, cc.Clientset, cc.Namespace, cc.PodName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get pod %s: %w", cc.PodName, err)
+	}
+
+	// Find the container in the pod spec
+	container := findContainer(pod.Spec.Containers, cc.ContainerName)
+	if container == nil {
+		return "", fmt.Errorf("container %s not found in pod %s", cc.ContainerName, cc.PodName)
+	}
+
+	// Look for volume mounts in the container
+	for _, volumeMount := range container.VolumeMounts {
+		// Find the corresponding volume in the pod spec
+		for _, volume := range pod.Spec.Volumes {
+			if volume.Name == volumeMount.Name && volume.PersistentVolumeClaim != nil {
+				// Get the PVC
+				pvc, err := cc.Clientset.CoreV1().PersistentVolumeClaims(cc.Namespace).Get(
+					ctx,
+					volume.PersistentVolumeClaim.ClaimName,
+					metav1.GetOptions{},
+				)
+				if err != nil {
+					continue // Try next volume
+				}
+
+				// Return the storage class name
+				if pvc.Spec.StorageClassName != nil {
+					return *pvc.Spec.StorageClassName, nil
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no PVC found for container %s in pod %s", cc.ContainerName, cc.PodName)
 }
 
 // LoadAverage returns the system load average from the node.
@@ -631,11 +687,6 @@ func (cc *ContainerClient) GetContainerSystemInfo(ctx context.Context) ([]metric
 
 		if platformVerMetric, err := metrics.NodeOSPlatformVer.AsFlatValue(osInfo.KernelVersion); err == nil {
 			systemInfo = append(systemInfo, platformVerMetric)
-		}
-
-		// Use container runtime as storage type indicator
-		if storageTypeMetric, err := metrics.NodeStorageType.AsFlatValue(osInfo.ContainerRuntime); err == nil {
-			systemInfo = append(systemInfo, storageTypeMetric)
 		}
 	}
 
@@ -778,11 +829,19 @@ func parseContainerDiskMetrics(metricsData []byte, containerName, podName, names
 			if val := extractMetricValue(line); val >= 0 {
 				info.TotalBytes = uint64(val)
 				found = true
+				// Extract filesystem type from the fstype label
+				if info.FilesystemType == "" {
+					info.FilesystemType = extractLabel(line, "fstype")
+				}
 			}
 		} else if strings.HasPrefix(line, "container_fs_usage_bytes{") {
 			if val := extractMetricValue(line); val >= 0 {
 				info.UsedBytes = uint64(val)
 				found = true
+				// Extract filesystem type from the fstype label
+				if info.FilesystemType == "" {
+					info.FilesystemType = extractLabel(line, "fstype")
+				}
 			}
 		}
 	}
@@ -797,6 +856,28 @@ func parseContainerDiskMetrics(metricsData []byte, containerName, podName, names
 	}
 
 	return info, nil
+}
+
+// extractLabel extracts a label value from a Prometheus metric line.
+// Example: extractLabel('container_fs_usage_bytes{fstype="ext4",pod="test"}', "fstype") returns "ext4"
+func extractLabel(line string, labelName string) string {
+	// Find the label in the format: labelName="value"
+	searchStr := labelName + `="`
+	startIdx := strings.Index(line, searchStr)
+	if startIdx == -1 {
+		return ""
+	}
+
+	// Move past the 'labelName="' part
+	startIdx += len(searchStr)
+
+	// Find the closing quote
+	endIdx := strings.Index(line[startIdx:], `"`)
+	if endIdx == -1 {
+		return ""
+	}
+
+	return line[startIdx : startIdx+endIdx]
 }
 
 // extractMetricValue extracts the numeric value from a Prometheus metric line.
@@ -835,4 +916,68 @@ func extractMetricTimestamp(line string) int64 {
 	}
 
 	return timestamp
+}
+
+// IsPodReady checks if a pod has the Ready condition set to True
+func (pc *PodClient) IsPodReady(ctx context.Context) (bool, error) {
+	pod, err := getPod(ctx, pc.Clientset, pc.Namespace, pc.PodName)
+	if err != nil {
+		return false, fmt.Errorf("failed to get pod %s: %w", pc.PodName, err)
+	}
+
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == v1.PodReady {
+			return condition.Status == v1.ConditionTrue, nil
+		}
+	}
+
+	return false, nil
+}
+
+// WaitForPodReadyTransitions waits for the pod to become not ready and then ready again.
+// This is useful after configuration changes that require pod restart/reload.
+// maxWait is the maximum time to wait for the entire process.
+// pollInterval is how often to check the pod status.
+func (pc *PodClient) WaitForPodReadyTransitions(ctx context.Context, maxWait, pollInterval time.Duration, logger *log.Logger) error {
+	deadline := time.Now().Add(maxWait)
+
+	// Phase 1: Wait for pod to become not ready
+	logger.Debug("Waiting for pod to become not ready...")
+	notReadyDetected := false
+	for time.Now().Before(deadline) {
+		ready, err := pc.IsPodReady(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to check pod ready status: %w", err)
+		}
+
+		if !ready {
+			logger.Debug("Pod transitioned to not ready state")
+			notReadyDetected = true
+			break
+		}
+
+		time.Sleep(pollInterval)
+	}
+
+	if !notReadyDetected {
+		return fmt.Errorf("pod did not become not ready within timeout")
+	}
+
+	// Phase 2: Wait for pod to become ready again
+	logger.Debug("Waiting for pod to become ready again...")
+	for time.Now().Before(deadline) {
+		ready, err := pc.IsPodReady(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to check pod ready status: %w", err)
+		}
+
+		if ready {
+			logger.Debug("Pod transitioned back to ready state")
+			return nil
+		}
+
+		time.Sleep(pollInterval)
+	}
+
+	return fmt.Errorf("pod did not become ready again within timeout")
 }
