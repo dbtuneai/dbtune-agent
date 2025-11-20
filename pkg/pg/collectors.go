@@ -110,11 +110,15 @@ func PGStatStatements(pgPool *pgxpool.Pool, includeQueries bool, maxQueryTextLen
 		for rows.Next() {
 			// queryid is bigint (int64) - can be negative hash value
 			// userid and dbid are OID types - must use uint32 for proper scanning
-			var queryid int64
-			var userid, dbid uint32
-			var calls int
-			var totalExecTime float64
-			var rowCount int64
+			//
+			// NOTE(eddie): Because pg_stat_statments is a view, it's possible that all columns could be
+			// null (they shouldn't be, but as soon as one of them is, this will constantly break)
+			// THIS IS NOT THE EXPECTED CASE, but can happen.
+			var queryid *int64
+			var userid, dbid *uint32
+			var calls *int
+			var totalExecTime *float64
+			var rowCount *int64
 			var query *string
 
 			if includeQueries {
@@ -127,15 +131,25 @@ func PGStatStatements(pgPool *pgxpool.Pool, includeQueries bool, maxQueryTextLen
 				return err
 			}
 
+			// These we use to build an identifier
+			identifiersHasNull := (queryid == nil || userid == nil || dbid == nil)
+
+			// These we use for calculations
+			fieldValuesHasNull := (calls == nil || totalExecTime == nil || rowCount == nil)
+
+			if (identifiersHasNull || fieldValuesHasNull ){
+				continue
+			}
+
 			// Construct composite key
-			compositeKey := fmt.Sprintf("%d_%d_%d", queryid, userid, dbid)
+			compositeKey := fmt.Sprintf("%d_%d_%d", *queryid, *userid, *dbid)
 
 			// Build the struct
 			stat := utils.CachedPGStatStatement{
 				QueryID:       compositeKey,
-				Calls:         calls,
-				TotalExecTime: totalExecTime,
-				Rows:          rowCount,
+				Calls:         *calls,
+				TotalExecTime: *totalExecTime,
+				Rows:          *rowCount,
 			}
 
 			if includeQueries && query != nil {
