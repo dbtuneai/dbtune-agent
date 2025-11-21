@@ -279,16 +279,20 @@ func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
 			Collector: pg.PGStatUserTables(pool),
 		},
 		{
-			Key:        "pg_class",
-			Collector:  pg.PGClass(pool),
+			Key:       "pg_class",
+			Collector: pg.PGClass(pool),
 		},
 		{
-			Key:        "pg_stat_progress_vacuum",
-			Collector:  pg.PGStatProgressVacuum(pool),
+			Key:       "pg_stat_progress_vacuum",
+			Collector: pg.PGStatProgressVacuum(pool),
 		},
 		{
-			Key:        "pg_bgwriter",
-			Collector:  pg.PGStatBGwriter(pool),
+			Key:       "pg_old_transactions",
+			Collector: pg.PGOldTransactions(pool),
+		},
+		{
+			Key:       "pg_bgwriter",
+			Collector: pg.PGStatBGwriter(pool),
 		},
 		{
 			Key:       "pg_wal",

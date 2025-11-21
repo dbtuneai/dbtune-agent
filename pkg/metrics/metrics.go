@@ -294,6 +294,13 @@ var (
 	PGWALBytes         = MetricDef{Key: "pg_wal_bytes", Type: Int}
 	PGWALBuffersFull   = MetricDef{Key: "pg_wal_buffers_full", Type: Int}
 
+	// Old transaction tracking metrics
+	PGOldestTransactionAge             = MetricDef{Key: "pg_oldest_transaction_age", Type: IntMap}
+	PGOldestIdleTransactionAge         = MetricDef{Key: "pg_oldest_idle_transaction_age", Type: IntMap}
+	PGPreparedTransactionAge           = MetricDef{Key: "pg_prepared_transaction_age", Type: IntMap}
+	PGOldestReplicationSlotAge         = MetricDef{Key: "pg_oldest_replication_slot_age", Type: IntMap}
+	PGOldestInactiveReplicationSlotAge = MetricDef{Key: "pg_oldest_inactive_replication_slot_age", Type: IntMap}
+
 	// Performance
 	PerfAverageQueryRuntime   = MetricDef{Key: "perf_average_query_runtime", Type: Float}
 	PerfTransactionsPerSecond = MetricDef{Key: "perf_transactions_per_second", Type: Float}
