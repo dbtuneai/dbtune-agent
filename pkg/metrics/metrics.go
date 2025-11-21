@@ -267,6 +267,18 @@ var (
 	PGIdxTupFetch = MetricDef{Key: "pg_idx_tup_fetch", Type: IntMap}
 
 	// BG writing
+	// pg_class metrics
+	PGUnfrozenAge     = MetricDef{Key: "pg_unfrozen_age", Type: IntMap}
+	PGUnfrozenMXIDAge = MetricDef{Key: "pg_unfrozen_mxid_age", Type: IntMap}
+	PGRelAllVisible   = MetricDef{Key: "pg_relallvisible", Type: IntMap}
+
+	// pg_stat_progress_vacuum metrics
+	PGVacuumPhase            = MetricDef{Key: "pg_vacuum_phase", Type: IntMap}
+	PGVacuumHeapBlksTotal    = MetricDef{Key: "pg_vacuum_heap_blks_total", Type: IntMap}
+	PGVacuumHeapBlksScanned  = MetricDef{Key: "pg_vacuum_heap_blks_scanned", Type: IntMap}
+	PGVacuumHeapBlksVacuumed = MetricDef{Key: "pg_vacuum_heap_blks_vacuumed", Type: IntMap}
+	PGVacuumIndexVacuumCount = MetricDef{Key: "pg_vacuum_index_vacuum_count", Type: IntMap}
+
 	PGBGWBuffersClean    = MetricDef{Key: "pg_bg_buffers_clean", Type: Int}
 	PGMBGWaxWrittenClean = MetricDef{Key: "pg_bg_max_written_clean", Type: Int}
 	PGBGWBuffersAlloc    = MetricDef{Key: "pg_bg_buffers_alloc", Type: Int}

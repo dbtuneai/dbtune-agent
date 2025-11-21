@@ -817,3 +817,169 @@ func PGStatCheckpointer(pgPool *pgxpool.Pool) func(ctx context.Context, state *a
 		return nil
 	}
 }
+
+const PGClassQuery = `
+SELECT JSON_OBJECT_AGG(
+	CONCAT(relname, '_', oid),
+	JSON_BUILD_OBJECT(
+		'xid_age', age(relfrozenxid),
+		'mxid_age', mxid_age(relminmxid),
+		'relallvisible', relallvisible
+	)
+)
+AS stats
+FROM pg_class
+WHERE relkind IN ('r', 'p', 't', 'm')
+AND relname NOT LIKE 'pg_%'
+AND relname NOT LIKE 'sql_%'
+`
+
+// PGClass collects statistics from pg_class for vacuum freeze monitoring.
+// It tracks the unfrozen transaction ID age (age(relfrozenxid)), unfrozen multixact ID age (mxid_age(relminmxid)),
+// and the number of all-visible pages (relallvisible) per table.
+func PGClass(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
+		var jsonResult string
+		err := utils.QueryRowWithPrefix(pgPool, ctx, PGClassQuery).Scan(&jsonResult)
+		if err != nil {
+			if err.Error() == "can't scan into dest[0]: cannot scan NULL into *string" {
+				return errors.New("pg_class returned no data, likely this means there are no user tables in the database")
+			}
+			return err
+		}
+
+		var classStats map[string]utils.PGClass
+		err = json.Unmarshal([]byte(jsonResult), &classStats)
+		if err != nil {
+			return err
+		}
+
+		// Always emit current snapshot values (these are not cumulative)
+		unfrozenAgeMap := make(map[string]int64)
+		unfrozenMXIDAgeMap := make(map[string]int64)
+		relAllVisibleMap := make(map[string]int64)
+
+		for tableKey, stats := range classStats {
+			unfrozenAgeMap[tableKey] = stats.UnfrozenAge
+			unfrozenMXIDAgeMap[tableKey] = stats.UnfrozenMXIDAge
+			relAllVisibleMap[tableKey] = stats.RelAllVisible
+		}
+
+		metricsToEmit := []struct {
+			metric metrics.MetricDef
+			value  any
+		}{
+			{metrics.PGUnfrozenAge, unfrozenAgeMap},
+			{metrics.PGUnfrozenMXIDAge, unfrozenMXIDAgeMap},
+			{metrics.PGRelAllVisible, relAllVisibleMap},
+		}
+
+		for _, m := range metricsToEmit {
+			err = EmitMetric(state, m.metric, m.value)
+			if err != nil {
+				return err
+			}
+		}
+
+		state.Cache.PGClass = classStats
+		return nil
+	}
+}
+
+const PGStatProgressVacuumQuery = `
+SELECT JSON_OBJECT_AGG(
+	CONCAT(relname, '_', relid),
+	JSON_BUILD_OBJECT(
+		'phase', CASE phase
+			WHEN 'initializing' THEN 0
+			WHEN 'scanning heap' THEN 1
+			WHEN 'vacuuming indexes' THEN 2
+			WHEN 'vacuuming heap' THEN 3
+			WHEN 'cleaning up indexes' THEN 4
+			WHEN 'truncating heap' THEN 5
+			WHEN 'performing final cleanup' THEN 6
+			ELSE -1
+		END,
+		'heap_blks_total', heap_blks_total,
+		'heap_blks_scanned', heap_blks_scanned,
+		'heap_blks_vacuumed', heap_blks_vacuumed,
+		'index_vacuum_count', index_vacuum_count
+	)
+)
+AS stats
+FROM pg_stat_progress_vacuum spv
+JOIN pg_class pc ON spv.relid = pc.oid
+WHERE spv.datname = current_database()
+`
+
+// PGStatProgressVacuum collects real-time vacuum progress statistics from pg_stat_progress_vacuum.
+// It tracks heap blocks processed, index vacuum operations, and dead tuple counts for tables currently being vacuumed.
+// Note: This collector only returns data for tables that are actively being vacuumed at the time of collection.
+//
+// Phase mapping:
+// 0 = initializing
+// 1 = scanning heap
+// 2 = vacuuming indexes
+// 3 = vacuuming heap
+// 4 = cleaning up indexes
+// 5 = truncating heap
+// 6 = performing final cleanup
+// -1 = unknown phase
+func PGStatProgressVacuum(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
+		var jsonResult *string
+		err := utils.QueryRowWithPrefix(pgPool, ctx, PGStatProgressVacuumQuery).Scan(&jsonResult)
+		if err != nil {
+			return err
+		}
+
+		// If no vacuums are running, jsonResult will be NULL
+		if jsonResult == nil {
+			// Clear the cache and don't emit any metrics
+			state.Cache.PGStatProgressVacuum = nil
+			return nil
+		}
+
+		var vacuumStats map[string]utils.PGStatProgressVacuum
+		err = json.Unmarshal([]byte(*jsonResult), &vacuumStats)
+		if err != nil {
+			return err
+		}
+
+		// Emit current snapshot values (these represent active vacuums)
+		phaseMap := make(map[string]int64)
+		heapBlksTotalMap := make(map[string]int64)
+		heapBlksScannedMap := make(map[string]int64)
+		heapBlksVacuumedMap := make(map[string]int64)
+		indexVacuumCountMap := make(map[string]int64)
+
+		for tableKey, stats := range vacuumStats {
+			phaseMap[tableKey] = stats.Phase
+			heapBlksTotalMap[tableKey] = stats.HeapBlksTotal
+			heapBlksScannedMap[tableKey] = stats.HeapBlksScanned
+			heapBlksVacuumedMap[tableKey] = stats.HeapBlksVacuumed
+			indexVacuumCountMap[tableKey] = stats.IndexVacuumCount
+		}
+
+		metricsToEmit := []struct {
+			metric metrics.MetricDef
+			value  any
+		}{
+			{metrics.PGVacuumPhase, phaseMap},
+			{metrics.PGVacuumHeapBlksTotal, heapBlksTotalMap},
+			{metrics.PGVacuumHeapBlksScanned, heapBlksScannedMap},
+			{metrics.PGVacuumHeapBlksVacuumed, heapBlksVacuumedMap},
+			{metrics.PGVacuumIndexVacuumCount, indexVacuumCountMap},
+		}
+
+		for _, m := range metricsToEmit {
+			err = EmitMetric(state, m.metric, m.value)
+			if err != nil {
+				return err
+			}
+		}
+
+		state.Cache.PGStatProgressVacuum = vacuumStats
+		return nil
+	}
+}

@@ -257,7 +257,9 @@ type Caches struct {
 	PGWAL          PGWAL
 	PGCheckPointer PGCheckPointer
 
-	PGUserTables map[string]utils.PGUserTables
+	PGUserTables         map[string]utils.PGUserTables
+	PGClass              map[string]utils.PGClass
+	PGStatProgressVacuum map[string]utils.PGStatProgressVacuum
 
 	// Hardware specific cache for guardrails
 	// {

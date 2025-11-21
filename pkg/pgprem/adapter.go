@@ -98,8 +98,16 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 			Collector: pg.PGStatUserTables(pgDriver),
 		},
 		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pgDriver),
+			Key:        "pg_class",
+			Collector:  pg.PGClass(pgDriver),
+		},
+		{
+			Key:        "pg_stat_progress_vacuum",
+			Collector:  pg.PGStatProgressVacuum(pgDriver),
+		},
+		{
+			Key:        "pg_bgwriter",
+			Collector:  pg.PGStatBGwriter(pgDriver),
 		},
 		{
 			Key:       "pg_wal",

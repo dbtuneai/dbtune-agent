@@ -18,3 +18,17 @@ type PGUserTables struct {
 	IdxScan          int64     `json:"idx_scan"`
 	IdxTupFetch      int64     `json:"idx_tup_fetch"`
 }
+
+type PGClass struct {
+	UnfrozenAge     int64 `json:"unfrozen_age"`
+	UnfrozenMXIDAge int64 `json:"unfrozen_mxid_age"`
+	RelAllVisible   int64 `json:"relallvisible"`
+}
+
+type PGStatProgressVacuum struct {
+	Phase            int64 `json:"phase"`
+	HeapBlksTotal    int64 `json:"heap_blks_total"`
+	HeapBlksScanned  int64 `json:"heap_blks_scanned"`
+	HeapBlksVacuumed int64 `json:"heap_blks_vacuumed"`
+	IndexVacuumCount int64 `json:"index_vacuum_count"`
+}
