@@ -137,7 +137,7 @@ func PGStatStatements(pgPool *pgxpool.Pool, includeQueries bool, maxQueryTextLen
 			// These we use for calculations
 			fieldValuesHasNull := (calls == nil || totalExecTime == nil || rowCount == nil)
 
-			if (identifiersHasNull || fieldValuesHasNull ){
+			if identifiersHasNull || fieldValuesHasNull {
 				continue
 			}
 
@@ -812,6 +812,353 @@ func PGStatCheckpointer(pgPool *pgxpool.Pool) func(ctx context.Context, state *a
 			SyncTime:       syncTime,
 			BuffersWritten: BuffersWritten,
 			Timestamp:      time.Now(),
+		}
+
+		return nil
+	}
+}
+
+const PGClassQuery = `
+SELECT JSON_OBJECT_AGG(
+	CONCAT(relname, '_', oid),
+	JSON_BUILD_OBJECT(
+		'xid_age', age(relfrozenxid),
+		'mxid_age', mxid_age(relminmxid),
+		'relallvisible', relallvisible
+	)
+)
+AS stats
+FROM pg_class
+WHERE relkind IN ('r', 'p', 't', 'm')
+AND relname NOT LIKE 'pg_%'
+AND relname NOT LIKE 'sql_%'
+`
+
+// PGClass collects statistics from pg_class for vacuum freeze monitoring.
+// It tracks the unfrozen transaction ID age (age(relfrozenxid)), unfrozen multixact ID age (mxid_age(relminmxid)),
+// and the number of all-visible pages (relallvisible) per table.
+func PGClass(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
+		var jsonResult string
+		err := utils.QueryRowWithPrefix(pgPool, ctx, PGClassQuery).Scan(&jsonResult)
+		if err != nil {
+			if err.Error() == "can't scan into dest[0]: cannot scan NULL into *string" {
+				return errors.New("pg_class returned no data, likely this means there are no user tables in the database")
+			}
+			return err
+		}
+
+		var classStats map[string]utils.PGClass
+		err = json.Unmarshal([]byte(jsonResult), &classStats)
+		if err != nil {
+			return err
+		}
+
+		// Always emit current snapshot values (these are not cumulative)
+		unfrozenAgeMap := make(map[string]int64)
+		unfrozenMXIDAgeMap := make(map[string]int64)
+		relAllVisibleMap := make(map[string]int64)
+
+		for tableKey, stats := range classStats {
+			unfrozenAgeMap[tableKey] = stats.UnfrozenAge
+			unfrozenMXIDAgeMap[tableKey] = stats.UnfrozenMXIDAge
+			relAllVisibleMap[tableKey] = stats.RelAllVisible
+		}
+
+		metricsToEmit := []struct {
+			metric metrics.MetricDef
+			value  any
+		}{
+			{metrics.PGUnfrozenAge, unfrozenAgeMap},
+			{metrics.PGUnfrozenMXIDAge, unfrozenMXIDAgeMap},
+			{metrics.PGRelAllVisible, relAllVisibleMap},
+		}
+
+		for _, m := range metricsToEmit {
+			err = EmitMetric(state, m.metric, m.value)
+			if err != nil {
+				return err
+			}
+		}
+
+		state.Cache.PGClass = classStats
+		return nil
+	}
+}
+
+const PGStatProgressVacuumQuery = `
+SELECT JSON_OBJECT_AGG(
+	CONCAT(relname, '_', relid),
+	JSON_BUILD_OBJECT(
+		'phase', CASE phase
+			WHEN 'initializing' THEN 0
+			WHEN 'scanning heap' THEN 1
+			WHEN 'vacuuming indexes' THEN 2
+			WHEN 'vacuuming heap' THEN 3
+			WHEN 'cleaning up indexes' THEN 4
+			WHEN 'truncating heap' THEN 5
+			WHEN 'performing final cleanup' THEN 6
+			ELSE -1
+		END,
+		'heap_blks_total', heap_blks_total,
+		'heap_blks_scanned', heap_blks_scanned,
+		'heap_blks_vacuumed', heap_blks_vacuumed,
+		'index_vacuum_count', index_vacuum_count
+	)
+)
+AS stats
+FROM pg_stat_progress_vacuum spv
+JOIN pg_class pc ON spv.relid = pc.oid
+WHERE spv.datname = current_database()
+`
+
+// PGStatProgressVacuum collects real-time vacuum progress statistics from pg_stat_progress_vacuum.
+// It tracks heap blocks processed, index vacuum operations, and dead tuple counts for tables currently being vacuumed.
+// Note: This collector only returns data for tables that are actively being vacuumed at the time of collection.
+//
+// Phase mapping:
+// 0 = initializing
+// 1 = scanning heap
+// 2 = vacuuming indexes
+// 3 = vacuuming heap
+// 4 = cleaning up indexes
+// 5 = truncating heap
+// 6 = performing final cleanup
+// -1 = unknown phase
+func PGStatProgressVacuum(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
+		var jsonResult *string
+		err := utils.QueryRowWithPrefix(pgPool, ctx, PGStatProgressVacuumQuery).Scan(&jsonResult)
+		if err != nil {
+			return err
+		}
+
+		// If no vacuums are running, jsonResult will be NULL
+		if jsonResult == nil {
+			// Clear the cache and don't emit any metrics
+			state.Cache.PGStatProgressVacuum = nil
+			return nil
+		}
+
+		var vacuumStats map[string]utils.PGStatProgressVacuum
+		err = json.Unmarshal([]byte(*jsonResult), &vacuumStats)
+		if err != nil {
+			return err
+		}
+
+		// Emit current snapshot values (these represent active vacuums)
+		phaseMap := make(map[string]int64)
+		heapBlksTotalMap := make(map[string]int64)
+		heapBlksScannedMap := make(map[string]int64)
+		heapBlksVacuumedMap := make(map[string]int64)
+		indexVacuumCountMap := make(map[string]int64)
+
+		for tableKey, stats := range vacuumStats {
+			phaseMap[tableKey] = stats.Phase
+			heapBlksTotalMap[tableKey] = stats.HeapBlksTotal
+			heapBlksScannedMap[tableKey] = stats.HeapBlksScanned
+			heapBlksVacuumedMap[tableKey] = stats.HeapBlksVacuumed
+			indexVacuumCountMap[tableKey] = stats.IndexVacuumCount
+		}
+
+		metricsToEmit := []struct {
+			metric metrics.MetricDef
+			value  any
+		}{
+			{metrics.PGVacuumPhase, phaseMap},
+			{metrics.PGVacuumHeapBlksTotal, heapBlksTotalMap},
+			{metrics.PGVacuumHeapBlksScanned, heapBlksScannedMap},
+			{metrics.PGVacuumHeapBlksVacuumed, heapBlksVacuumedMap},
+			{metrics.PGVacuumIndexVacuumCount, indexVacuumCountMap},
+		}
+
+		for _, m := range metricsToEmit {
+			err = EmitMetric(state, m.metric, m.value)
+			if err != nil {
+				return err
+			}
+		}
+
+		state.Cache.PGStatProgressVacuum = vacuumStats
+		return nil
+	}
+}
+
+// PGOldTransactions collects information about old transactions and replication slots that may be holding back vacuum.
+// It tracks:
+// 1. Top 5 oldest queries with backend_xmin age > 100M
+// 2. Top 5 idle in transaction sessions with backend_xmin age > 15M
+// 3. Uncommitted prepared transactions
+// 4. Replication slots ordered by xmin age
+// 5. Inactive replication slots
+func PGOldTransactions(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
+		// 1. Top 5 oldest queries with backend_xmin age > 100M
+		oldestTransactionQuery := `
+			SELECT pid, datname, usename, state, backend_xmin, age(backend_xmin) as xmin_age
+			FROM pg_stat_activity
+			WHERE backend_xmin IS NOT NULL
+			  AND age(backend_xmin) > 100000000
+			ORDER BY age(backend_xmin) DESC
+			LIMIT 5
+		`
+		oldestTransactionMap := make(map[string]int64)
+		rows, err := utils.QueryWithPrefix(pgPool, ctx, oldestTransactionQuery)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var pid int
+			var datname, usename, state string
+			var backendXmin *int64
+			var xminAge int64
+			err = rows.Scan(&pid, &datname, &usename, &state, &backendXmin, &xminAge)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			key := fmt.Sprintf("pid_%d_%s_%s", pid, datname, usename)
+			oldestTransactionMap[key] = xminAge
+		}
+		rows.Close()
+
+		// 2. Top 5 idle in transaction with backend_xmin age > 15M
+		oldestIdleTransactionQuery := `
+			SELECT pid, datname, usename, backend_xmin, age(backend_xmin) as xmin_age
+			FROM pg_stat_activity
+			WHERE backend_xmin IS NOT NULL
+			  AND state = 'idle in transaction'
+			  AND age(backend_xmin) > 15000000
+			ORDER BY age(backend_xmin) DESC
+			LIMIT 5
+		`
+		oldestIdleTransactionMap := make(map[string]int64)
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, oldestIdleTransactionQuery)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var pid int
+			var datname, usename string
+			var backendXmin *int64
+			var xminAge int64
+			err = rows.Scan(&pid, &datname, &usename, &backendXmin, &xminAge)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			key := fmt.Sprintf("pid_%d_%s_%s", pid, datname, usename)
+			oldestIdleTransactionMap[key] = xminAge
+		}
+		rows.Close()
+
+		// 3. Uncommitted prepared transactions
+		preparedTransactionsQuery := `
+			SELECT gid, database, age(transaction) as xact_age
+			FROM pg_prepared_xacts
+			WHERE age(transaction) > 10000000
+			ORDER BY age(transaction) DESC
+			LIMIT 5
+		`
+		preparedTransactionsMap := make(map[string]int64)
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, preparedTransactionsQuery)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var gid, database string
+			var xactAge int64
+			err = rows.Scan(&gid, &database, &xactAge)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			key := fmt.Sprintf("%s_%s", gid, database)
+			preparedTransactionsMap[key] = xactAge
+		}
+		rows.Close()
+
+		// 4. Replication slots ordered by xmin age
+		replicationSlotsQuery := `
+			SELECT slot_name, slot_type, database, xmin, age(xmin) as xmin_age
+			FROM pg_replication_slots
+			WHERE xmin IS NOT NULL
+			ORDER BY age(xmin) DESC
+			LIMIT 5
+		`
+		replicationSlotsMap := make(map[string]int64)
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, replicationSlotsQuery)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var slotName, slotType string
+			var database *string
+			var xmin *int64
+			var xminAge int64
+			err = rows.Scan(&slotName, &slotType, &database, &xmin, &xminAge)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			dbName := "null"
+			if database != nil {
+				dbName = *database
+			}
+			key := fmt.Sprintf("%s_%s_%s", slotName, slotType, dbName)
+			replicationSlotsMap[key] = xminAge
+		}
+		rows.Close()
+
+		// 5. Inactive replication slots (active = false)
+		inactiveReplicationSlotsQuery := `
+			SELECT slot_name, slot_type, database, age(xmin) as xmin_age
+			FROM pg_replication_slots
+			WHERE active = false
+			  AND xmin IS NOT NULL
+			ORDER BY age(xmin) DESC
+			LIMIT 5
+		`
+		inactiveReplicationSlotsMap := make(map[string]int64)
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, inactiveReplicationSlotsQuery)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var slotName, slotType string
+			var database *string
+			var xminAge int64
+			err = rows.Scan(&slotName, &slotType, &database, &xminAge)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			dbName := "null"
+			if database != nil {
+				dbName = *database
+			}
+			key := fmt.Sprintf("%s_%s_%s", slotName, slotType, dbName)
+			inactiveReplicationSlotsMap[key] = xminAge
+		}
+		rows.Close()
+
+		// Emit all metrics
+		metricsToEmit := []struct {
+			metric metrics.MetricDef
+			value  any
+		}{
+			{metrics.PGOldestTransactionAge, oldestTransactionMap},
+			{metrics.PGOldestIdleTransactionAge, oldestIdleTransactionMap},
+			{metrics.PGPreparedTransactionAge, preparedTransactionsMap},
+			{metrics.PGOldestReplicationSlotAge, replicationSlotsMap},
+			{metrics.PGOldestInactiveReplicationSlotAge, inactiveReplicationSlotsMap},
+		}
+
+		for _, m := range metricsToEmit {
+			err = EmitMetric(state, m.metric, m.value)
+			if err != nil {
+				return err
+			}
 		}
 
 		return nil

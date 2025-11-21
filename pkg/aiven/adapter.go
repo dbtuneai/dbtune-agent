@@ -413,6 +413,18 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 			Collector: pg.PGStatUserTables(pgDriver),
 		},
 		{
+			Key:       "pg_class",
+			Collector: pg.PGClass(pgDriver),
+		},
+		{
+			Key:       "pg_stat_progress_vacuum",
+			Collector: pg.PGStatProgressVacuum(pgDriver),
+		},
+		{
+			Key:       "pg_old_transactions",
+			Collector: pg.PGOldTransactions(pgDriver),
+		},
+		{
 			Key:       "pg_bgwriter",
 			Collector: pg.PGStatBGwriter(pgDriver),
 		},
