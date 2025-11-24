@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 )
 
@@ -148,6 +149,41 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 	return collectors
 }
 
+func (d *DockerContainerAdapter) resolveContainerIDFromNameSubstring(ctx context.Context, namePattern string) (string, error) {
+	// Create filter for container name
+	filter := filters.NewArgs()
+	filter.Add("name", namePattern)
+
+	// List containers matching the pattern
+	containers, err := d.dockerClient.ContainerList(ctx, container.ListOptions{
+		Filters: filter,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to list containers matching '%s': %w", namePattern, err)
+	}
+
+	// Validate exactly one container found
+	if len(containers) == 0 {
+		return "", fmt.Errorf("no running containers found matching pattern '%s'", namePattern)
+	}
+
+	if len(containers) > 1 {
+		// Log all matches for debugging
+		var matchedNames []string
+		for _, c := range containers {
+			matchedNames = append(matchedNames, c.Names[0])
+		}
+		return "", fmt.Errorf("ambiguous pattern '%s' matched %d containers: %v. Please use a more specific pattern",
+			namePattern, len(containers), matchedNames)
+	}
+
+	containerID := containers[0].ID
+	d.Logger().Infof("Resolved container pattern '%s' to ID: %s (name: %s)",
+		namePattern, containerID[:12], containers[0].Names[0])
+
+	return containerID, nil
+}
+
 func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	d.Logger().Println("Collecting system info for Docker container")
 
@@ -166,8 +202,21 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 		return nil, err
 	}
 
+	var containerID string
+
+	if !d.Config.SwarmMode {
+		containerID = d.Config.ContainerName
+	} else {
+		// In Swarm mode, we need to find the actual container ID from the service name
+		containerID, err = d.resolveContainerIDFromNameSubstring(context.Background(), d.Config.ContainerName)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
 	// Get container stats
-	stats, err := d.dockerClient.ContainerStats(context.Background(), d.Config.ContainerName, false)
+	stats, err := d.dockerClient.ContainerStats(context.Background(), containerID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +230,7 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	}
 
 	// Get container info for additional details
-	containerInfo, err := d.dockerClient.ContainerInspect(context.Background(), d.Config.ContainerName)
+	containerInfo, err := d.dockerClient.ContainerInspect(context.Background(), containerID)
 	if err != nil {
 		return nil, err
 	}
@@ -250,8 +299,22 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 }
 
 func (d *DockerContainerAdapter) Guardrails() *guardrails.Signal {
+	var containerID string
+	var err error
+
+	if !d.Config.SwarmMode {
+		containerID = d.Config.ContainerName
+	} else {
+		// In Swarm mode, we need to find the actual container ID from the service name
+		containerID, err = d.resolveContainerIDFromNameSubstring(context.Background(), d.Config.ContainerName)
+		if err != nil {
+			d.Logger().Warnf("guardrail: could not resolve container ID: %v", err)
+			return nil
+		}
+	}
+
 	// Get container stats
-	stats, err := d.dockerClient.ContainerStats(context.Background(), d.Config.ContainerName, false)
+	stats, err := d.dockerClient.ContainerStats(context.Background(), containerID, false)
 	if err != nil {
 		d.Logger().Warnf("guardrail: could not fetch docker stats: %v", err)
 		return nil
@@ -294,6 +357,19 @@ func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfi
 
 	ctx := context.Background()
 
+	var containerID string
+	var err error
+
+	if !d.Config.SwarmMode {
+		containerID = d.Config.ContainerName
+	} else {
+		// In Swarm mode, we need to find the actual container ID from the service name
+		containerID, err = d.resolveContainerIDFromNameSubstring(ctx, d.Config.ContainerName)
+		if err != nil {
+			return fmt.Errorf("could not resolve container ID: %w", err)
+		}
+	}
+
 	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
 	if err != nil {
 		return err
@@ -311,7 +387,7 @@ func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfi
 		d.Logger().Warn("Restarting service")
 
 		// Execute docker restart command
-		err := d.dockerClient.ContainerRestart(ctx, d.Config.ContainerName, container.StopOptions{})
+		err := d.dockerClient.ContainerRestart(ctx, containerID, container.StopOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to restart PostgreSQL service: %w", err)
 		}
