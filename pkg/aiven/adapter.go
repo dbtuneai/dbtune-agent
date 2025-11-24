@@ -389,8 +389,8 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 			Collector: pg.TransactionsPerSecond(pgDriver),
 		},
 		{
-			Key:       "database_active_connections",
-			Collector: pg.ActiveConnections(pgDriver),
+			Key:       "database_connections",
+			Collector: pg.Connections(pgDriver),
 		},
 		{
 			Key:       "system_db_size",

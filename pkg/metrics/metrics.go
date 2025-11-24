@@ -235,6 +235,8 @@ var (
 	PGStatStatementsDelta      = MetricDef{Key: "pg_stat_statements_delta", Type: PgssDelta}
 	PGStatStatementsDeltaCount = MetricDef{Key: "pg_stat_statements_delta_count", Type: Int}
 	PGActiveConnections        = MetricDef{Key: "pg_active_connections", Type: Int}
+	PGIdleConnections          = MetricDef{Key: "pg_idle_connections", Type: Int}
+	PGIdleInTransactionConnections = MetricDef{Key: "pg_idle_in_transaction_connections", Type: Int}
 	PGInstanceSize             = MetricDef{Key: "pg_instance_size", Type: Bytes}
 	PGAutoVacuumCount          = MetricDef{Key: "pg_autovacuum_count", Type: Int}
 	PGCacheHitRatio            = MetricDef{Key: "pg_cache_hit_ratio", Type: Percentage}

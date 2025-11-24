@@ -74,8 +74,8 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 			Collector: pg.TransactionsPerSecond(pgDriver),
 		},
 		{
-			Key:       "database_active_connections",
-			Collector: pg.ActiveConnections(pgDriver),
+			Key:       "database_connections",
+			Collector: pg.Connections(pgDriver),
 		},
 		{
 			Key:       "system_db_size",

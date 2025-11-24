@@ -255,8 +255,8 @@ func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
 			Collector: pg.TransactionsPerSecond(pool),
 		},
 		{
-			Key:       "database_active_connections",
-			Collector: pg.ActiveConnections(pool),
+			Key:       "database_connections",
+			Collector: pg.Connections(pool),
 		},
 		{
 			Key:       "system_db_size",

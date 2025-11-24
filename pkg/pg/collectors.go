@@ -207,28 +207,42 @@ func PGStatStatements(pgPool *pgxpool.Pool, includeQueries bool, maxQueryTextLen
 	}
 }
 
-const ActiveConnectionsQuery = `
-SELECT COUNT(*) AS active_connections
+const ConnectionStatsQuery = `
+SELECT 
+    COUNT(*) FILTER (WHERE state = 'active') AS active_connections,
+    COUNT(*) FILTER (WHERE state = 'idle') AS idle_connections,
+    COUNT(*) FILTER (WHERE state = 'idle in transaction') AS idle_in_transaction_connections
 FROM pg_stat_activity
-WHERE state = 'active'
 `
 
-func ActiveConnections(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
-	return func(ctx context.Context, state *agent.MetricsState) error {
-		var result int
-		err := utils.QueryRowWithPrefix(pgPool, ctx, ActiveConnectionsQuery).Scan(&result)
-		if err != nil {
-			return err
-		}
+func Connections(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+    return func(ctx context.Context, state *agent.MetricsState) error {
+        var active, idle, idleInTransaction int
+        err := utils.QueryRowWithPrefix(pgPool, ctx, ConnectionStatsQuery).Scan(&active, &idle, &idleInTransaction)
+        if err != nil {
+            return err
+        }
 
-		metricEntry, err := metrics.PGActiveConnections.AsFlatValue(result)
-		if err != nil {
-			return err
-		}
-		state.AddMetric(metricEntry)
+        activeEntry, err := metrics.PGActiveConnections.AsFlatValue(active)
+        if err != nil {
+            return err
+        }
+        state.AddMetric(activeEntry)
 
-		return nil
-	}
+        idleEntry, err := metrics.PGIdleConnections.AsFlatValue(idle)
+        if err != nil {
+            return err
+        }
+        state.AddMetric(idleEntry)
+
+        idleInTransactionEntry, err := metrics.PGIdleInTransactionConnections.AsFlatValue(idleInTransaction)
+        if err != nil {
+            return err
+        }
+        state.AddMetric(idleInTransactionEntry)
+
+        return nil
+    }
 }
 
 const TransactionsPerSecondQuery = `
