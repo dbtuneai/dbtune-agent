@@ -2,8 +2,6 @@ package pg
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -534,24 +532,21 @@ func PGStatDatabase(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent
 }
 
 const PGStatUserTablesQuery = `
-SELECT JSON_OBJECT_AGG(
-	CONCAT(relname, '_', relid),
-	JSON_BUILD_OBJECT(
-        'last_autovacuum',last_autovacuum,
-        'last_autoanalyze',last_autoanalyze,
-        'autovacuum_count',autovacuum_count,
-        'autoanalyze_count',autoanalyze_count,
-        'n_live_tup',n_live_tup,
-        'n_dead_tup',n_dead_tup,
-        'n_mod_since_analyze',n_mod_since_analyze,
-        'n_ins_since_vacuum',n_ins_since_vacuum,
-        'seq_scan',seq_scan,
-        'seq_tup_read',seq_tup_read,
-        'idx_scan',idx_scan,
-        'idx_tup_fetch',idx_tup_fetch
-    )
-)
-as stats
+SELECT
+	relname,
+	relid,
+	last_autovacuum,
+	last_autoanalyze,
+	autovacuum_count,
+	autoanalyze_count,
+	n_live_tup,
+	n_dead_tup,
+	n_mod_since_analyze,
+	n_ins_since_vacuum,
+	seq_scan,
+	seq_tup_read,
+	idx_scan,
+	idx_tup_fetch
 FROM pg_stat_user_tables
 `
 
@@ -560,25 +555,63 @@ FROM pg_stat_user_tables
 // and sequential/index scans, providing insights into table activity and performance over time.
 func PGStatUserTables(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-		var jsonResult string
-		err := utils.QueryRowWithPrefix(pgPool, ctx, PGStatUserTablesQuery).Scan(&jsonResult)
+		rows, err := utils.QueryWithPrefix(pgPool, ctx, PGStatUserTablesQuery)
 		if err != nil {
-			if err.Error() == "can't scan into dest[0]: cannot scan NULL into *string" {
-				return errors.New("pg_stat_user_tables returned no data, likely this means there are no user tables in the database")
-			}
 			return err
 		}
 
-		var tableStats map[string]utils.PGUserTables
-		err = json.Unmarshal([]byte(jsonResult), &tableStats)
-		if err != nil {
-			return err
+		tableStats := make(map[string]utils.PGUserTables)
+		for rows.Next() {
+			var relname string
+			var relid uint32
+			var lastAutoVacuum, lastAutoAnalyze *time.Time
+			var autoVacuumCount, autoAnalyzeCount, nLiveTup, nDeadTup int64
+			var nModSinceAnalyze, nInsSinceVacuum, seqScan, seqTupRead int64
+			var idxScan, idxTupFetch int64
+
+			err = rows.Scan(
+				&relname, &relid,
+				&lastAutoVacuum, &lastAutoAnalyze,
+				&autoVacuumCount, &autoAnalyzeCount,
+				&nLiveTup, &nDeadTup,
+				&nModSinceAnalyze, &nInsSinceVacuum,
+				&seqScan, &seqTupRead,
+				&idxScan, &idxTupFetch,
+			)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+
+			tableKey := fmt.Sprintf("%s_%d", relname, relid)
+			stats := utils.PGUserTables{
+				Name:             relname,
+				Relid:            relid,
+				AutoVacuumCount:  autoVacuumCount,
+				AutoAnalyzeCount: autoAnalyzeCount,
+				NLiveTup:         nLiveTup,
+				NDeadTup:         nDeadTup,
+				NModSinceAnalyze: nModSinceAnalyze,
+				NInsSinceVacuum:  nInsSinceVacuum,
+				SeqScan:          seqScan,
+				SeqTupRead:       seqTupRead,
+				IdxScan:          idxScan,
+				IdxTupFetch:      idxTupFetch,
+			}
+			if lastAutoVacuum != nil {
+				stats.LastAutoVacuum = *lastAutoVacuum
+			}
+			if lastAutoAnalyze != nil {
+				stats.LastAutoAnalyze = *lastAutoAnalyze
+			}
+			tableStats[tableKey] = stats
 		}
+		rows.Close()
 
 		// tableStats should now be a mapping from strings ('{name}_{id}') to values
 		// some of those values are cumulative other are not.
 
-		if state.Cache.PGUserTables != nil {
+		if state.Cache.PGUserTables != nil && len(tableStats) > 0 {
 			// Prepare maps for each metric
 			lastAutoVacuumMap := make(map[string]time.Time)
 			lastAutoAnalyzeMap := make(map[string]time.Time)
@@ -819,15 +852,12 @@ func PGStatCheckpointer(pgPool *pgxpool.Pool) func(ctx context.Context, state *a
 }
 
 const PGClassQuery = `
-SELECT JSON_OBJECT_AGG(
-	CONCAT(relname, '_', oid),
-	JSON_BUILD_OBJECT(
-		'xid_age', age(relfrozenxid),
-		'mxid_age', mxid_age(relminmxid),
-		'relallvisible', relallvisible
-	)
-)
-AS stats
+SELECT
+	relname,
+	oid,
+	age(relfrozenxid) as xid_age,
+	mxid_age(relminmxid) as mxid_age,
+	relallvisible
 FROM pg_class
 WHERE relkind IN ('r', 'p', 't', 'm')
 AND relname NOT LIKE 'pg_%'
@@ -839,20 +869,31 @@ AND relname NOT LIKE 'sql_%'
 // and the number of all-visible pages (relallvisible) per table.
 func PGClass(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-		var jsonResult string
-		err := utils.QueryRowWithPrefix(pgPool, ctx, PGClassQuery).Scan(&jsonResult)
+		rows, err := utils.QueryWithPrefix(pgPool, ctx, PGClassQuery)
 		if err != nil {
-			if err.Error() == "can't scan into dest[0]: cannot scan NULL into *string" {
-				return errors.New("pg_class returned no data, likely this means there are no user tables in the database")
-			}
 			return err
 		}
 
-		var classStats map[string]utils.PGClass
-		err = json.Unmarshal([]byte(jsonResult), &classStats)
-		if err != nil {
-			return err
+		classStats := make(map[string]utils.PGClass)
+		for rows.Next() {
+			var relname string
+			var oid uint32
+			var xidAge, mxidAge, relallvisible int64
+
+			err = rows.Scan(&relname, &oid, &xidAge, &mxidAge, &relallvisible)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+
+			tableKey := fmt.Sprintf("%s_%d", relname, oid)
+			classStats[tableKey] = utils.PGClass{
+				UnfrozenAge:     xidAge,
+				UnfrozenMXIDAge: mxidAge,
+				RelAllVisible:   relallvisible,
+			}
 		}
+		rows.Close()
 
 		// Always emit current snapshot values (these are not cumulative)
 		unfrozenAgeMap := make(map[string]int64)
@@ -886,26 +927,23 @@ func PGClass(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.Metric
 }
 
 const PGStatProgressVacuumQuery = `
-SELECT JSON_OBJECT_AGG(
-	CONCAT(relname, '_', relid),
-	JSON_BUILD_OBJECT(
-		'phase', CASE phase
-			WHEN 'initializing' THEN 0
-			WHEN 'scanning heap' THEN 1
-			WHEN 'vacuuming indexes' THEN 2
-			WHEN 'vacuuming heap' THEN 3
-			WHEN 'cleaning up indexes' THEN 4
-			WHEN 'truncating heap' THEN 5
-			WHEN 'performing final cleanup' THEN 6
-			ELSE -1
-		END,
-		'heap_blks_total', heap_blks_total,
-		'heap_blks_scanned', heap_blks_scanned,
-		'heap_blks_vacuumed', heap_blks_vacuumed,
-		'index_vacuum_count', index_vacuum_count
-	)
-)
-AS stats
+SELECT
+	pc.relname,
+	spv.relid,
+	CASE phase
+		WHEN 'initializing' THEN 0
+		WHEN 'scanning heap' THEN 1
+		WHEN 'vacuuming indexes' THEN 2
+		WHEN 'vacuuming heap' THEN 3
+		WHEN 'cleaning up indexes' THEN 4
+		WHEN 'truncating heap' THEN 5
+		WHEN 'performing final cleanup' THEN 6
+		ELSE -1
+	END as phase,
+	heap_blks_total,
+	heap_blks_scanned,
+	heap_blks_vacuumed,
+	index_vacuum_count
 FROM pg_stat_progress_vacuum spv
 JOIN pg_class pc ON spv.relid = pc.oid
 WHERE spv.datname = current_database()
@@ -926,23 +964,37 @@ WHERE spv.datname = current_database()
 // -1 = unknown phase
 func PGStatProgressVacuum(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-		var jsonResult *string
-		err := utils.QueryRowWithPrefix(pgPool, ctx, PGStatProgressVacuumQuery).Scan(&jsonResult)
+		rows, err := utils.QueryWithPrefix(pgPool, ctx, PGStatProgressVacuumQuery)
 		if err != nil {
 			return err
 		}
 
-		// If no vacuums are running, jsonResult will be NULL
-		if jsonResult == nil {
-			// Clear the cache and don't emit any metrics
-			state.Cache.PGStatProgressVacuum = nil
+		vacuumStats := make(map[string]utils.PGStatProgressVacuum)
+		for rows.Next() {
+			var relname string
+			var relid uint32
+			var phase, heapBlksTotal, heapBlksScanned, heapBlksVacuumed, indexVacuumCount int64
+
+			err = rows.Scan(&relname, &relid, &phase, &heapBlksTotal, &heapBlksScanned, &heapBlksVacuumed, &indexVacuumCount)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+
+			tableKey := fmt.Sprintf("%s_%d", relname, relid)
+			vacuumStats[tableKey] = utils.PGStatProgressVacuum{
+				Phase:            phase,
+				HeapBlksTotal:    heapBlksTotal,
+				HeapBlksScanned:  heapBlksScanned,
+				HeapBlksVacuumed: heapBlksVacuumed,
+				IndexVacuumCount: indexVacuumCount,
+			}
+		}
+		rows.Close()
+
+		// If no vacuums are running, don't emit any metrics
+		if len(vacuumStats) == 0 {
 			return nil
-		}
-
-		var vacuumStats map[string]utils.PGStatProgressVacuum
-		err = json.Unmarshal([]byte(*jsonResult), &vacuumStats)
-		if err != nil {
-			return err
 		}
 
 		// Emit current snapshot values (these represent active vacuums)
