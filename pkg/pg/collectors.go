@@ -881,7 +881,6 @@ func PGClass(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.Metric
 			}
 		}
 
-		state.Cache.PGClass = classStats
 		return nil
 	}
 }
@@ -979,10 +978,53 @@ func PGStatProgressVacuum(pgPool *pgxpool.Pool) func(ctx context.Context, state 
 			}
 		}
 
-		state.Cache.PGStatProgressVacuum = vacuumStats
 		return nil
 	}
 }
+
+const PGOldestTransactionQuery = `
+SELECT pid, datname, usename, state, backend_xmin, age(backend_xmin) as xmin_age
+FROM pg_stat_activity
+WHERE backend_xmin IS NOT NULL
+  AND age(backend_xmin) > 100000000
+ORDER BY age(backend_xmin) DESC
+LIMIT 5
+`
+
+const PGOldestIdleTransactionQuery = `
+SELECT pid, datname, usename, backend_xmin, age(backend_xmin) as xmin_age
+FROM pg_stat_activity
+WHERE backend_xmin IS NOT NULL
+  AND state = 'idle in transaction'
+  AND age(backend_xmin) > 15000000
+ORDER BY age(backend_xmin) DESC
+LIMIT 5
+`
+
+const PGPreparedTransactionsQuery = `
+SELECT gid, database, age(transaction) as xact_age
+FROM pg_prepared_xacts
+WHERE age(transaction) > 10000000
+ORDER BY age(transaction) DESC
+LIMIT 5
+`
+
+const PGReplicationSlotsQuery = `
+SELECT slot_name, slot_type, database, xmin, age(xmin) as xmin_age
+FROM pg_replication_slots
+WHERE xmin IS NOT NULL
+ORDER BY age(xmin) DESC
+LIMIT 5
+`
+
+const PGInactiveReplicationSlotsQuery = `
+SELECT slot_name, slot_type, database, age(xmin) as xmin_age
+FROM pg_replication_slots
+WHERE active = false
+  AND xmin IS NOT NULL
+ORDER BY age(xmin) DESC
+LIMIT 5
+`
 
 // PGOldTransactions collects information about old transactions and replication slots that may be holding back vacuum.
 // It tracks:
@@ -994,16 +1036,8 @@ func PGStatProgressVacuum(pgPool *pgxpool.Pool) func(ctx context.Context, state 
 func PGOldTransactions(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
 		// 1. Top 5 oldest queries with backend_xmin age > 100M
-		oldestTransactionQuery := `
-			SELECT pid, datname, usename, state, backend_xmin, age(backend_xmin) as xmin_age
-			FROM pg_stat_activity
-			WHERE backend_xmin IS NOT NULL
-			  AND age(backend_xmin) > 100000000
-			ORDER BY age(backend_xmin) DESC
-			LIMIT 5
-		`
 		oldestTransactionMap := make(map[string]int64)
-		rows, err := utils.QueryWithPrefix(pgPool, ctx, oldestTransactionQuery)
+		rows, err := utils.QueryWithPrefix(pgPool, ctx, PGOldestTransactionQuery)
 		if err != nil {
 			return err
 		}
@@ -1023,17 +1057,8 @@ func PGOldTransactions(pgPool *pgxpool.Pool) func(ctx context.Context, state *ag
 		rows.Close()
 
 		// 2. Top 5 idle in transaction with backend_xmin age > 15M
-		oldestIdleTransactionQuery := `
-			SELECT pid, datname, usename, backend_xmin, age(backend_xmin) as xmin_age
-			FROM pg_stat_activity
-			WHERE backend_xmin IS NOT NULL
-			  AND state = 'idle in transaction'
-			  AND age(backend_xmin) > 15000000
-			ORDER BY age(backend_xmin) DESC
-			LIMIT 5
-		`
 		oldestIdleTransactionMap := make(map[string]int64)
-		rows, err = utils.QueryWithPrefix(pgPool, ctx, oldestIdleTransactionQuery)
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, PGOldestIdleTransactionQuery)
 		if err != nil {
 			return err
 		}
@@ -1053,15 +1078,8 @@ func PGOldTransactions(pgPool *pgxpool.Pool) func(ctx context.Context, state *ag
 		rows.Close()
 
 		// 3. Uncommitted prepared transactions
-		preparedTransactionsQuery := `
-			SELECT gid, database, age(transaction) as xact_age
-			FROM pg_prepared_xacts
-			WHERE age(transaction) > 10000000
-			ORDER BY age(transaction) DESC
-			LIMIT 5
-		`
 		preparedTransactionsMap := make(map[string]int64)
-		rows, err = utils.QueryWithPrefix(pgPool, ctx, preparedTransactionsQuery)
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, PGPreparedTransactionsQuery)
 		if err != nil {
 			return err
 		}
@@ -1079,15 +1097,8 @@ func PGOldTransactions(pgPool *pgxpool.Pool) func(ctx context.Context, state *ag
 		rows.Close()
 
 		// 4. Replication slots ordered by xmin age
-		replicationSlotsQuery := `
-			SELECT slot_name, slot_type, database, xmin, age(xmin) as xmin_age
-			FROM pg_replication_slots
-			WHERE xmin IS NOT NULL
-			ORDER BY age(xmin) DESC
-			LIMIT 5
-		`
 		replicationSlotsMap := make(map[string]int64)
-		rows, err = utils.QueryWithPrefix(pgPool, ctx, replicationSlotsQuery)
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, PGReplicationSlotsQuery)
 		if err != nil {
 			return err
 		}
@@ -1111,16 +1122,8 @@ func PGOldTransactions(pgPool *pgxpool.Pool) func(ctx context.Context, state *ag
 		rows.Close()
 
 		// 5. Inactive replication slots (active = false)
-		inactiveReplicationSlotsQuery := `
-			SELECT slot_name, slot_type, database, age(xmin) as xmin_age
-			FROM pg_replication_slots
-			WHERE active = false
-			  AND xmin IS NOT NULL
-			ORDER BY age(xmin) DESC
-			LIMIT 5
-		`
 		inactiveReplicationSlotsMap := make(map[string]int64)
-		rows, err = utils.QueryWithPrefix(pgPool, ctx, inactiveReplicationSlotsQuery)
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, PGInactiveReplicationSlotsQuery)
 		if err != nil {
 			return err
 		}
