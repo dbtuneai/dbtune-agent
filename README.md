@@ -15,7 +15,7 @@ The DBtune agent is a lightweight, extensible monitoring and configuration manag
 - AWS RDS PostgreSQL -
   [docs](https://docs.dbtune.com/aws-rds),
   [config](pkg/rds/CONFIG.md)
-- Google Cloud Platform Cloud SQL for PostgreSQL -
+- Google Cloud SQL -
   [docs](https://docs.dbtune.com/google-cloud-sql),
   [config](pkg/cloudsql/CONFIG.md)
 - Aiven -
