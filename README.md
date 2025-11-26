@@ -38,17 +38,17 @@ docker pull --platform linux/amd64 public.ecr.aws/dbtune/dbtune/agent:latest
 # Run with a dbtune.yaml
 docker run \
     -v $(pwd)/dbtune.yaml:/app/dbtune.yaml \
-		--name dbtune-agent \
-		public.ecr.aws/dbtune/dbtune/agent:latest
-		
+    --name dbtune-agent \
+    public.ecr.aws/dbtune/dbtune/agent:latest
+        
 # OR... run with environment variables.
 docker run \
-	  -e DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database \
-	  -e DBT_DBTUNE_SERVER_URL=https://app.dbtune.com \
-	  -e DBT_DBTUNE_API_KEY=your-api-key \
-	  -e DBT_DBTUNE_DATABASE_ID=your-database-id \
-	  -e DBT_POSTGRESQL_INCLUDE_QUERIES=true \
-		  public.ecr.aws/dbtune/dbtune/agent:latest
+    -e DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database \
+    -e DBT_DBTUNE_SERVER_URL=https://app.dbtune.com \
+    -e DBT_DBTUNE_API_KEY=your-api-key \
+    -e DBT_DBTUNE_DATABASE_ID=your-database-id \
+    -e DBT_POSTGRESQL_INCLUDE_QUERIES=true \
+    public.ecr.aws/dbtune/dbtune/agent:latest
 ```
 
 ### Binary
@@ -119,10 +119,8 @@ To build the DBtune agent from source, you'll need Go 1.23.1 or later installed 
 git clone https://github.com/dbtuneai/dbtune-agent.git
 cd dbtune-agent
 
-# Download dependencies
+# Download dependencies and build
 go mod download
-
-# Build the binary
 go build -o dbtune-agent ./cmd/agent.go
 ```
 
