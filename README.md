@@ -50,55 +50,64 @@ This file will be used/referenced for the pre-built binary, docker and build fro
 #### Pre-built Binary
 1. Download the latest release for your platform from our [releases page](https://github.com/dbtuneai/dbtune-agent/releases)
 2. Run the agent via `./dbtune-agent` in a terminal where the binary was downloaded/expanded and your `dbtune.yaml` file exists.
-3. (Optional) Install a systemd service for dbtune-agent. Create a systemd service with the following config and save it as `/etc/systemd/system/dbtune-agent.service`.
+3. (Optional) Install a systemd service for dbtune-agent.
+<details>
 
-	```
-	[Unit]
-	Description=DBtune agent
-	After=network.target
+<summary>(Optional) Install a systemd service for dbtune-agent</summary>
 
-	[Service]
-	User=dbtune   # User that runs the dbtune-agent, can be root
-	Group=dbtune  # Group to run the dbtune-agent with
-	WorkingDirectory=/usr/local/bin
-	ExecStart=/usr/local/bin/dbtune-agent
-	Restart=always
-	RestartSec=5s
-	StandardOutput=journal
-	StandardError=journal
+    Create a systemd service with the following config and save it as `/etc/systemd/system/dbtune-agent.service`.
 
-	[Install]
-	WantedBy=multi-user.target
-	```
+  	```
+  	[Unit]
+  	Description=DBtune agent
+  	After=network.target
+  
+  	[Service]
+  	User=dbtune   # User that runs the dbtune-agent, can be root
+  	Group=dbtune  # Group to run the dbtune-agent with
+  	WorkingDirectory=/usr/local/bin
+  	ExecStart=/usr/local/bin/dbtune-agent
+  	Restart=always
+  	RestartSec=5s
+  	StandardOutput=journal
+  	StandardError=journal
+  
+  	[Install]
+  	WantedBy=multi-user.target
+  	```
+  
+  Make sure the user and group that you specify in the systemd service has rights to access postgres data files and also is allowed to use sudo without a password to do a systemd restart of the postgresql service e.g. `sudo systemctl restart postgres`.
+  
+  Reload the unit files and enable the dbtune-agent.service:
+  ```bash
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now dbtune-agent
+  ```
+  
+  Once started you can check and verify that the dbtune-agent is running by looking at the journal, for example: `journalctl -u dbtune-agent -f`
 
-Make sure the user and group that you specify in the systemd service has rights to access postgres data files and also is allowed to use sudo without a password to do a systemd restart of the postgresql service e.g. `sudo systemctl restart postgres`.
-
-Reload the unit files and enable the dbtune-agent.service:
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now dbtune-agent
-```
-
-Once started you can check and verify that the dbtune-agent is running by looking at the journal, for example: `journalctl -u dbtune-agent -f`
+</details>
 
 #### Docker
 1. Pull our Docker image:
 
-	```
-	docker pull public.ecr.aws/dbtune/dbtune/agent:latest
+	```bash
+	docker pull --platform linux/amd64 public.ecr.aws/dbtune/dbtune/agent:latest
 	```
 
 2. Run the agent via `docker`
+
  	- With mounted config file
 
-		```
+		```bash
 		docker run -v $(pwd)/dbtune.yaml:/app/dbtune.yaml \
 		    --name dbtune-agent \
 		     public.ecr.aws/dbtune/dbtune/agent:latest
 		```
+		
  	- With environment variables
 
-		```
+		```bash
 		docker run \
 			  -e DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database \
 			  -e DBT_DBTUNE_SERVER_URL=https://app.dbtune.com \
@@ -215,36 +224,9 @@ export DBT_DBTUNE_DATABASE_ID=your-database-id
 export DBT_POSTGRESQL_INCLUDE_QUERIES=true
 ```
 
-## Core metrics
+## Metric collection
 
-The agent collects essential metrics required for DBtune's optimization engine, you can find more information about the metrics in our [Notion page](https://dbtune.notion.site/DBtune-Collected-Metrics-17b1ecfc272180cc9f2cd7faeab2c503?pvs=4).
-
-### Required system metrics
-
-- CPU usage
-- Memory utilization
-- Disk I/O (reads/writes per second)
-
-### Essential PostgreSQL metrics
-
-- Query performance statistics
-  - Transactions per second
-  - Query runtime distribution
-  - Cache hit ratios
-- Resource utilization
-  - Active connections
-  - Connection states
-  - Database size
-- Background processes
-  - Autovacuum statistics
-  - Background writer statistics
-- Wait events and locks
-
-### Configuration information
-
-- PostgreSQL version and settings
-- System configuration
-- Hardware specifications
+The agent collects essential metrics required for DBtune's optimization engine, you can find more information about the metrics [here](https://docs.dbtune.com/agent-monitoring-and-privacy).
 
 ## How to contribute
 
