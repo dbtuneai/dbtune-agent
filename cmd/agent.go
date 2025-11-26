@@ -243,7 +243,6 @@ func main() {
 	}
 	log.Println("Successfully fetched metrics")
 
-
 	runner.Runner(adapter)
 
 }
