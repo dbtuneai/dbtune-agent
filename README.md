@@ -25,11 +25,9 @@ The DBtune agent is a lightweight, extensible monitoring and configuration manag
   [docs](https://docs.dbtune.com/azure-flex-server),
   [config](pkg/azureflex/CONFIG.md)
 
----
-
 ## Quick start
 You can use the binary or our docker image to run the `dbtune-agent`.
-[Configuration](#Configuration) is done with a `dbtune.yaml`.
+[Configuration](#Configuration) is done with a `dbtune.yaml` and is required for running.
 [See here for more advanced deployment options](#advanced-deployments)
 
 ### Docker
@@ -54,19 +52,16 @@ docker run \
 ```
 
 ### Binary
-You can use our one below to fetch the latest binary for your system, from our [releases page](https://github.com/dbtuneai/dbtune-agent/releases).
-
-> Alternatively, you can [build from source](#build-from-source).
+You can use the one-liner below to fetch the latest binary for your system, from our [releases page](https://github.com/dbtuneai/dbtune-agent/releases).
 
 ```bash
 curl https://raw.githubusercontent.com/dbtuneai/dbtune-agent/refs/heads/main/setup.sh > /tmp/dbtune-agent.sh && sh /tmp/dbtune-agent.sh
-
 ./dbtune-agent
 ```
 
-You can further deploy this as a [systemd service](#systemd).
+Alternatively, you can [build from source](#build-from-source).
 
----
+You can further deploy this as a [systemd service](#systemd).
 
 ## Configuration
 Configuration can be done via a `dbtune.yaml` file, which is looked up in the following places,
@@ -115,11 +110,9 @@ export DBT_POSTGRESQL_INCLUDE_QUERIES=true
 export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database 
 ```
 
----
-
 ## Advanced deployments
 
-#### Build from source
+### Build from source
 To build the DBtune agent from source, you'll need Go 1.23.1 or later installed on your system.
 
 ```bash
@@ -167,8 +160,6 @@ Once started you can check and verify that the dbtune-agent is running by lookin
 
 ### AWS Fargate / ECS
 Follow these [README](fargate/README.md) instructions to run the agent under AWS Fargate as a service.
-
----
 
 ## Metric collection
 
