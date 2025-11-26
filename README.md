@@ -4,225 +4,171 @@
 
 The DBtune agent is a lightweight, extensible monitoring and configuration management tool for PostgreSQL databases. It collects system metrics, database performance data, and manages database configurations through a centralized DBtune software as a service.
 
-## Features
+## PostgreSQL providers supported
 
-- Real-time metric collection and monitoring
-- Automatic configuration management and optimization
-- Support for multiple PostgreSQL deployment types:
-  - Standalone PostgreSQL servers
-  - Docker containers
-  - Amazon Aurora
-  - Amazon RDS (closed Beta)
-  - Google Cloud Platform Cloud SQL for PostgreSQL
-  - Azure Flexible Server (coming soon)
-- Extensible adapter architecture for custom deployments
-- Concurrent metric collection with error handling
-- Configuration through YAML or environment variables
+- PostgreSQL -
+  [docs](https://docs.dbtune.com/postgresql),
+  [config](pkg/pgprem/CONFIG.md)
+- AWS Aurora PostgreSQL -
+  [docs](https://docs.dbtune.com/aws-aurora),
+  [config](pkg/rds/CONFIG.md)
+- AWS RDS PostgreSQL -
+  [docs](https://docs.dbtune.com/aws-rds),
+  [config](pkg/rds/CONFIG.md)
+- Google Cloud Platform Cloud SQL for PostgreSQL -
+  [docs](https://docs.dbtune.com/google-cloud-sql),
+  [config](pkg/cloudsql/CONFIG.md)
+- Aiven -
+  [docs](https://docs.dbtune.com/aiven),
+  [config](pkg/aiven/CONFIG.md)
+- Azure Flexible Server -
+  [docs](https://docs.dbtune.com/azure-flex-server),
+  [config](pkg/azureflex/CONFIG.md)
+
+---
 
 ## Quick start
+You can use the binary or our docker image to run the `dbtune-agent`.
+[Configuration](#Configuration) is done with a `dbtune.yaml`.
+[See here for more advanced deployment options](#advanced-deployments)
 
-There are multiple ways to run the DBtune agent:
-
-- Download and run the pre-built binary
-- Use our official Docker image
-- Build from source (requires Go 1.23.1 or later)
-- AWS Fargate / ECS
-
-### Installation
-
-Create a configuration file called `dbtune.yaml` file with the following contents (check the [configuration section](#configuration) for more details):
-
-```yaml
-debug: false
-postgresql:
-  connection_url: postgresql://user:password@localhost:5432/database
-  service_name: postgresql
-  include_queries: true
-dbtune:
-  server_url: https://app.dbtune.com
-  api_key: your-api-key
-  database_id: your-database-id
-```
-
-This file will be used/referenced for the pre-built binary, docker and build from source installation methods.
-
-
-#### Pre-built Binary
-1. Download the latest release for your platform from our [releases page](https://github.com/dbtuneai/dbtune-agent/releases)
-2. Run the agent via `./dbtune-agent` in a terminal where the binary was downloaded/expanded and your `dbtune.yaml` file exists.
-3. (Optional) Install a systemd service for dbtune-agent.
-<details>
-
-<summary>(Optional) Install a systemd service for dbtune-agent</summary>
-
-    Create a systemd service with the following config and save it as `/etc/systemd/system/dbtune-agent.service`.
-
-  	```
-  	[Unit]
-  	Description=DBtune agent
-  	After=network.target
-  
-  	[Service]
-  	User=dbtune   # User that runs the dbtune-agent, can be root
-  	Group=dbtune  # Group to run the dbtune-agent with
-  	WorkingDirectory=/usr/local/bin
-  	ExecStart=/usr/local/bin/dbtune-agent
-  	Restart=always
-  	RestartSec=5s
-  	StandardOutput=journal
-  	StandardError=journal
-  
-  	[Install]
-  	WantedBy=multi-user.target
-  	```
-  
-  Make sure the user and group that you specify in the systemd service has rights to access postgres data files and also is allowed to use sudo without a password to do a systemd restart of the postgresql service e.g. `sudo systemctl restart postgres`.
-  
-  Reload the unit files and enable the dbtune-agent.service:
-  ```bash
-  sudo systemctl daemon-reload
-  sudo systemctl enable --now dbtune-agent
-  ```
-  
-  Once started you can check and verify that the dbtune-agent is running by looking at the journal, for example: `journalctl -u dbtune-agent -f`
-
-</details>
-
-#### Docker
-1. Pull our Docker image:
-
-	```bash
-	docker pull --platform linux/amd64 public.ecr.aws/dbtune/dbtune/agent:latest
-	```
-
-2. Run the agent via `docker`
-
- 	- With mounted config file
-
-		```bash
-		docker run -v $(pwd)/dbtune.yaml:/app/dbtune.yaml \
-		    --name dbtune-agent \
-		     public.ecr.aws/dbtune/dbtune/agent:latest
-		```
-		
- 	- With environment variables
-
-		```bash
-		docker run \
-			  -e DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database \
-			  -e DBT_DBTUNE_SERVER_URL=https://app.dbtune.com \
-			  -e DBT_DBTUNE_API_KEY=your-api-key \
-			  -e DBT_DBTUNE_DATABASE_ID=your-database-id \
-			  -e DBT_POSTGRESQL_INCLUDE_QUERIES=true \
-			  public.ecr.aws/dbtune/dbtune/agent:latest
-
-		```
-
-#### Build from source
-
-To build the DBtune agent from source, you'll need Go 1.23.1 or later installed on your system.
-
-**Prerequisites:**
-- Go 1.23.1 or later ([download from golang.org](https://golang.org/dl/))
-- Git (to clone the repository)
-
-**Build steps:**
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/dbtuneai/dbtune-agent.git
-   cd dbtune-agent
-   ```
-
-2. Download dependencies:
-   ```bash
-   go mod download
-   ```
-
-3. Build the binary:
-   ```bash
-   go build -o dbtune-agent ./cmd/agent.go
-   ```
-
-4. Run the agent:
-   ```bash
-   ./dbtune-agent
-   ```
-
-**Installation:**
-
-After building, you can install the binary system-wide:
+### Docker
 
 ```bash
-# Copy to a directory in your PATH
-sudo cp dbtune-agent /usr/local/bin/
+docker pull --platform linux/amd64 public.ecr.aws/dbtune/dbtune/agent:latest
+
+# Run with a dbtune.yaml
+docker run \
+    -v $(pwd)/dbtune.yaml:/app/dbtune.yaml \
+		--name dbtune-agent \
+		public.ecr.aws/dbtune/dbtune/agent:latest
+		
+# OR... run with environment variables.
+docker run \
+	  -e DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database \
+	  -e DBT_DBTUNE_SERVER_URL=https://app.dbtune.com \
+	  -e DBT_DBTUNE_API_KEY=your-api-key \
+	  -e DBT_DBTUNE_DATABASE_ID=your-database-id \
+	  -e DBT_POSTGRESQL_INCLUDE_QUERIES=true \
+		  public.ecr.aws/dbtune/dbtune/agent:latest
 ```
 
-#### AWS Fargate / ECS
-Follow these [README](fargate/README.md) instructions to run the agent under AWS Fargate as a service.
+### Binary
+You can use our one below to fetch the latest binary for your system, from our [releases page](https://github.com/dbtuneai/dbtune-agent/releases).
+
+> Alternatively, you can [build from source](#build-from-source).
+
+```bash
+curl https://raw.githubusercontent.com/dbtuneai/dbtune-agent/refs/heads/main/setup.sh > /tmp/dbtune-agent.sh && sh /tmp/dbtune-agent.sh
+
+./dbtune-agent
+```
+
+You can further deploy this as a [systemd service](#systemd).
+
+---
 
 ## Configuration
-
-### Configuration via YAML
-
-Create the dbtune-agent configuration and store it where dbtune-agent can access it. The dbtune-agent searches for configuration to be in one of these 3 locations, ordered by priority:
+Configuration can be done via a `dbtune.yaml` file, which is looked up in the following places,
+ordered by priority:
 * `/etc/dbtune.yaml`
 * `/etc/dbtune/dbtune.yaml`
 * `./dbtune.yaml` (Relative to the path from which `dbtune-agent` was executed)
 
+Each PostgreSQL provider has [different configuration options](#PostgreSQL-providers-supported), so please refer to their specific configuration options.
+Please also take note of any pre-requisites required for the `dbtune-agent` to be able to read
+system metrics.
+
+The shared options for the `dbtune.yaml` are listed below:
+
 ```yaml
-# Basic configuration
+# dbtune.yaml
 postgresql:
-  connection_url: postgresql://user:password@localhost:5432/database # Required: Database connection string
-  # Restart specific variable
-  # This variable is about restarting postgresql service with the default PostgreSQL adapter.
-  # It might need to run as root depending on your system and service setup.
-  # Check the postgres.go adapter to see which commands are getting executed.
-  service_name: postgresql-17 # (required) name of the service in case of restarts
-  include_queries: true # (required) to include query text when sending stats
-  maximum_query_text_length: 50000 # (default: 50_000) maximum length of query text to send to DBtune if enabled
+  connection_url: postgresql://user:password@localhost:5432/database # Connection url to your database
+  include_queries: true # Whether to include place-holdered query text when transmitting to DBtune.
+                        # This is provided so that you can identify you queries by their text.
+                        # DBtune does not require this info, and will instead display query ids
+                        # if this is disabled.
 
-dbtune:
-  server_url: https://app.dbtune.com # Optional: DBtune server endpoint (change for self-hosted)
-  api_key: your-api-key # Required: Your DBtune API key
-  database_id: your-database-id # Required: Unique identifier for your database
-
-# Optional settings
-debug: false # Enable debug logging
-
+# Optional
 guardrail_settings:
-  memory_threshold: 90  # percentage of total memory (90 is 90% of total memory).
+  memory_threshold: 90  # The percentage at which the dbtune-agent triggers a memory gaurdrail
+                        # DBtune will act to prevent an OOM if this threshold is reached
+                        # during tuning.
+dbtune:
+  server_url: https://app.dbtune.com
+  api_key:  "" # Provided when you create a database on DBtune
+  database_id: "" # Provided when you create a database on DBtune
 
-# Docker-specific settings (only needed for Docker deployments)
-docker:
-  container_name: "postgres" # Name of your PostgreSQL container
-
-# Aurora-specific settings
-rds-aurora:
-  AWS_REGION: "<your-aws-region>"
-  # AWS credentials are optional
-  # If not provided, the agent will use the default AWS credential chain, which includes WebIdentity tokens
-  AWS_ACCESS_KEY_ID: "<your-aws-access-key-id>"
-  AWS_SECRET_ACCESS_KEY: "<your-aws-secret-access-key>"
-  RDS_DATABASE_IDENTIFIER: "<your-rds-database-identifier>" # The Writer instance of the Aurora cluster
-  RDS_PARAMETER_GROUP_NAME: "<your-rds-parameter-group-name>" # Be sure to define a custom one and not to use the default.postgresXX one
-
-cloudsql:
-  DBT_GCP_PROJECT_ID: "<your-gcp-project-id>"
-  DBT_GCP_DATABASE_NAME: "<name-of-your-gcp-cloud-sql-instance>"
+debug: false
 ```
 
-### Environment variables
-
-All configuration options can be set through environment variables, prefixed with `DBT_` and following a screaming snake case format:
+The shared options for environment variables are listed below:
 
 ```bash
-export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database
-export DBT_DBTUNE_SERVER_URL=http://localhost:8000
-export DBT_DBTUNE_API_KEY=your-api-key
-export DBT_DBTUNE_DATABASE_ID=your-database-id
+export DBT_DBTUNE_SERVER_URL="https://app.dbtune.com"
+export DBT_DBTUNE_API_KEY=""
+export DBT_DBTUNE_DATABASE_ID=""
 export DBT_POSTGRESQL_INCLUDE_QUERIES=true
+
+# Your database specific
+export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database 
 ```
+
+---
+
+## Advanced deployments
+
+#### Build from source
+To build the DBtune agent from source, you'll need Go 1.23.1 or later installed on your system.
+
+```bash
+git clone https://github.com/dbtuneai/dbtune-agent.git
+cd dbtune-agent
+
+# Download dependencies
+go mod download
+
+# Build the binary
+go build -o dbtune-agent ./cmd/agent.go
+```
+
+### Systemd
+Create a systemd service with the following config and save it as `/etc/systemd/system/dbtune-agent.service`.
+
+```bash
+[Unit]
+Description=DBtune agent
+After=network.target
+
+[Service]
+User=dbtune   # User that runs the dbtune-agent, can be root
+Group=dbtune  # Group to run the dbtune-agent with
+WorkingDirectory=/usr/local/bin
+ExecStart=/usr/local/bin/dbtune-agent
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Make sure the user and group that you specify in the systemd service has rights to access postgres data files and also is allowed to use sudo without a password to do a systemd restart of the postgresql service e.g. `sudo systemctl restart postgres`.
+
+Reload the unit files and enable the dbtune-agent.service:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now dbtune-agent
+```
+
+Once started you can check and verify that the dbtune-agent is running by looking at the journal, for example: `journalctl -u dbtune-agent -f`
+
+### AWS Fargate / ECS
+Follow these [README](fargate/README.md) instructions to run the agent under AWS Fargate as a service.
+
+---
 
 ## Metric collection
 
@@ -241,4 +187,3 @@ The agent collects essential metrics required for DBtune's optimization engine, 
 ## License
 
 See github.com/dbtuneai/agent//blob/main/LICENSE
-``
