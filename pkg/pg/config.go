@@ -14,7 +14,7 @@ const (
 
 type Config struct {
 	ConnectionURL          string `mapstructure:"connection_url" validate:"required"`
-	ServiceName            string `mapstructure:"service_name"`
+	ServiceName            string `mapstructure:"service_name"` // TODO(eddie): Should be moved under pgprem, as it doesn't apply to all other PG providers
 	IncludeQueries         bool   `mapstructure:"include_queries"`
 	MaximumQueryTextLength int    `mapstructure:"maximum_query_text_length"`
 }
