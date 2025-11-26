@@ -112,7 +112,7 @@ func TestRunWithTicker(t *testing.T) {
 			return nil
 		}
 
-		go runWithTicker(ctx, ticker, "test", logger, fn)
+		go runWithTicker(ctx, ticker, "test", logger, false, fn)
 
 		// Wait for context to be done
 		<-ctx.Done()
@@ -141,7 +141,7 @@ func TestRunWithTicker(t *testing.T) {
 			return expectedErr
 		}
 
-		go runWithTicker(ctx, ticker, "test", logger, fn)
+		go runWithTicker(ctx, ticker, "test", logger, false, fn)
 
 		// Wait for context to be done
 		<-ctx.Done()
@@ -159,8 +159,9 @@ func TestRunner(t *testing.T) {
 	logger := logrus.New()
 
 	// Setup mock expectations
+	// Note: SendHeartbeat is not expected to be called during the short test window
+	// because the heartbeat ticker has skipFirst: true
 	mockAgent.On("Logger").Return(logger)
-	mockAgent.On("SendHeartbeat").Return(nil)
 	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendMetrics", mock.Anything).Return(nil)
 	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, nil)
@@ -190,8 +191,9 @@ func TestRunnerWithErrors(t *testing.T) {
 	logger := logrus.New()
 
 	// Setup mock expectations with errors
+	// Note: SendHeartbeat is not expected to be called during the short test window
+	// because the heartbeat ticker has skipFirst: true
 	mockAgent.On("Logger").Return(logger)
-	mockAgent.On("SendHeartbeat").Return(errors.New("heartbeat error"))
 	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, errors.New("metrics error"))
 	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, errors.New("system info error"))
 	mockAgent.On("SendError", mock.AnythingOfType("agent.ErrorPayload")).Return(nil)
@@ -219,8 +221,9 @@ func TestRunnerWhenGetProposedConfigReturnsAConfigThenApplyConfigShouldBeCalled(
 
 	mockRecommendation := &agent.ProposedConfigResponse{}
 
+	// Note: SendHeartbeat is not expected to be called during the short test window
+	// because the heartbeat ticker has skipFirst: true
 	mockAgent.On("Logger").Return(logger)
-	mockAgent.On("SendHeartbeat").Return(nil)
 	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendMetrics", mock.Anything).Return(nil)
 	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, nil)
@@ -250,8 +253,9 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 	mockAgent := new(MockAgentLooper)
 	logger := logrus.New()
 
+	// Note: SendHeartbeat is not expected to be called during the short test window
+	// because the heartbeat ticker has skipFirst: true
 	mockAgent.On("Logger").Return(logger)
-	mockAgent.On("SendHeartbeat").Return(nil)
 	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendMetrics", mock.Anything).Return(nil)
 	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, nil)
