@@ -21,6 +21,51 @@ import (
 )
 
 const AVAILABLE_FLAGS = "--docker, --aurora, --rds, --aiven, --local, --cloudsql, --azure-flex, --cnpg"
+const DBTUNE_DOC_LINK = "https://docs.dbtune.com/agent-overview"
+const SUPPORT_EMAIL = "support@dbtune.com"
+
+// fatalWithHelp logs a fatal error with standardized help information
+func fatalWithHelp(context string, err error) {
+	log.Fatalf(
+		"%s: %v\n\n"+
+			"This is often due to permission or configuration issues while setting up your agent. "+
+			"Please review your setup and follow our latest documentation at %s. "+
+			"Please reach out to %s if you require help.",
+		context,
+		err,
+		DBTUNE_DOC_LINK,
+		SUPPORT_EMAIL,
+	)
+}
+
+// fatalWithHelpMultipleErrors logs multiple errors with standardized help information
+func fatalWithHelpMultipleErrors(context string, errs []error) {
+	log.Fatalf(
+		"%s:\n%s\n"+
+			"This is often due to permission or configuration issues while setting up your agent. "+
+			"Please review your setup and follow our latest documentation at %s. "+
+			"Please reach out to %s if you require help.",
+		context,
+		formatErrors(errs),
+		DBTUNE_DOC_LINK,
+		SUPPORT_EMAIL,
+	)
+}
+
+// formatErrors formats a slice of errors into a readable string
+func formatErrors(errs []error) string {
+	if len(errs) == 0 {
+		return "no errors"
+	}
+	if len(errs) == 1 {
+		return errs[0].Error()
+	}
+	result := ""
+	for i, err := range errs {
+		result += fmt.Sprintf("  %d. %v\n", i+1, err)
+	}
+	return result
+}
 
 func main() {
 	// Define flags
@@ -68,7 +113,11 @@ func main() {
 	disableChecks := viper.GetBool("disable_checks")
 	if !disableChecks {
 		if err := checks.CheckStartupRequirements(); err != nil {
-			log.Fatalf("Startup check failed: %v", err)
+			log.Fatalf(
+				"Startup check failed when trying to pull metrics from Postgres to send to DBtune: %v,\n\nPlease review you agent setup by referring to our documentation: %s",
+				err,
+				DBTUNE_DOC_LINK,
+			)
 		}
 	} else {
 		log.Println("Startup checks are disabled via configuration (disable_checks=true)")
@@ -82,32 +131,32 @@ func main() {
 	case *useDocker:
 		adapter, err = docker.CreateDockerContainerAdapter()
 		if err != nil {
-			log.Fatalf("Failed to create Docker adapter: %v", err)
+			fatalWithHelp("Failed to create Docker adapter", err)
 		}
 	case *useRDS:
 		adapter, err = rds.CreateRDSAdapter(nil)
 		if err != nil {
-			log.Fatalf("Failed to create Aurora RDS adapter: %v", err)
+			fatalWithHelp("Failed to create RDS adapter", err)
 		}
 	case *useAurora:
 		adapter, err = rds.CreateAuroraRDSAdapter()
 		if err != nil {
-			log.Fatalf("Failed to create Aurora RDS adapter: %v", err)
+			fatalWithHelp("Failed to create Aurora RDS adapter", err)
 		}
 	case *useAiven:
 		adapter, err = aiven.CreateAivenPostgreSQLAdapter()
 		if err != nil {
-			log.Fatalf("Failed to create Aiven PostgreSQL adapter: %v", err)
+			fatalWithHelp("Failed to create Aiven PostgreSQL adapter", err)
 		}
 	case *useCloudSQL:
 		adapter, err = cloudsql.CreateCloudSQLAdapter()
 		if err != nil {
-			log.Fatalf("Failed to create Cloud SQL PostgreSQL adapter: %v", err)
+			fatalWithHelp("Failed to create Cloud SQL PostgreSQL adapter", err)
 		}
 	case *useLocal:
 		adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
 		if err != nil {
-			log.Fatalf("Failed to create local PostgreSQL adapter: %v", err)
+			fatalWithHelp("Failed to create local PostgreSQL adapter", err)
 		}
 	case *useCNPG:
 		adapter, err = cnpg.CreateCNPGAdapter()
@@ -117,7 +166,7 @@ func main() {
 	case *useAzureFlex:
 		adapter, err = azureflex.CreateAzureFlexAdapter()
 		if err != nil {
-			log.Fatalf("Failed to create Azure Database for PostgreSQL - Flexible Server adapter: %v", err)
+			fatalWithHelp("Failed to create Azure Flexible Server adapter", err)
 		}
 	default:
 		log.Println("No explicit provider specified, detecting config present...")
@@ -189,8 +238,26 @@ func main() {
 			adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
 		}
 		if err != nil {
-			log.Fatalf("Failed to create adapter: %v", err)
+			fatalWithHelp("Failed to create adapter", err)
 		}
 	}
+
+	// Sanity check various functions of the adapter
+	log.Println("Checking adapter can get system information...")
+	_, err = adapter.GetSystemInfo()
+	if err != nil {
+		fatalWithHelp("Failed to get database system information", err)
+	}
+	log.Println("Successfully retrieved system information")
+
+	log.Println("Checking adapter can fetch metrics...")
+	_, errors := adapter.GetMetrics()
+	if errors != nil {
+		fatalWithHelpMultipleErrors("Failed to get metrics from database", errors)
+	}
+	log.Println("Successfully fetched metrics")
+
+
 	runner.Runner(adapter)
+
 }
