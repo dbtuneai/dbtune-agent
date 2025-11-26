@@ -30,9 +30,12 @@ func (m *MockAgentLooper) SendHeartbeat() error {
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) GetMetrics() ([]metrics.FlatValue, error) {
+func (m *MockAgentLooper) GetMetrics() ([]metrics.FlatValue, []error) {
 	args := m.Called()
-	return args.Get(0).([]metrics.FlatValue), args.Error(1)
+	if args.Get(1) == nil {
+		return args.Get(0).([]metrics.FlatValue), nil
+	}
+	return args.Get(0).([]metrics.FlatValue), args.Get(1).([]error)
 }
 
 func (m *MockAgentLooper) SendMetrics(metrics []metrics.FlatValue) error {
@@ -194,7 +197,7 @@ func TestRunnerWithErrors(t *testing.T) {
 	// Note: SendHeartbeat is not expected to be called during the short test window
 	// because the heartbeat ticker has skipFirst: true
 	mockAgent.On("Logger").Return(logger)
-	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, errors.New("metrics error"))
+	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, []error{errors.New("metrics error")})
 	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, errors.New("system info error"))
 	mockAgent.On("SendError", mock.AnythingOfType("agent.ErrorPayload")).Return(nil)
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, errors.New("config error"))
