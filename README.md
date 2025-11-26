@@ -30,6 +30,9 @@ You can use the binary or our docker image to run the `dbtune-agent`.
 [Configuration](#Configuration) is done with a `dbtune.yaml` and is required for running.
 [See here for more advanced deployment options](#advanced-deployments)
 
+> [!IMPORTANT]
+> Please check the relevant documentation page for your provider for the pre-requisites required for `dbtune-agent` to operate properly.
+
 ### Docker
 
 ```bash
