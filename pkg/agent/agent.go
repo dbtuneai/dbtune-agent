@@ -113,7 +113,7 @@ type AgentLooper interface {
 	// approach, where the collectors are executed in parallel and the errors are
 	// collected in a channel. The channel is then closed and the results are
 	// returned. Uses the errgroup package to delegate the concurrent execution.
-	GetMetrics() ([]metrics.FlatValue, error)
+	GetMetrics() ([]metrics.FlatValue, []error)
 	SendMetrics([]metrics.FlatValue) error
 
 	// GetSystemInfo returns the system info of the PostgresSQL server
@@ -427,7 +427,7 @@ func (a *CommonAgent) InitCollectors(collectors []MetricCollector) {
 // GetMetrics will have a default implementation to handle gracefully
 // error and send partial metrics rather than failing.
 // It is discouraged for every adapter overriding this one.
-func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
+func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, []error) {
 	a.Logger().Println("Staring metric collection")
 
 	// Cleanup metrics from the previous heartbeat
@@ -499,7 +499,12 @@ func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
 
 	a.Logger().Debug("Metrics collected", a.MetricsState.Metrics)
 
-	return a.MetricsState.Metrics, nil
+	if len(errors) > 0 {
+		return a.MetricsState.Metrics, errors
+	} else {
+		return a.MetricsState.Metrics, nil
+	}
+
 }
 
 func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
