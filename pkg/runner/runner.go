@@ -2,6 +2,8 @@ package runner
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -50,15 +52,22 @@ func Runner(adapter agent.AgentLooper) {
 
 	// Metrics collection goroutine
 	go runWithTicker(ctx, metricsTicker, "metrics", logger, false, func() error {
-		data, err := adapter.GetMetrics()
-		if err != nil {
+		data, errs := adapter.GetMetrics()
+		if errs != nil && len(errs) > 0 {
+			// Format all errors into a single message
+			var errMessages []string
+			for _, err := range errs {
+				errMessages = append(errMessages, err.Error())
+			}
+			combinedError := strings.Join(errMessages, "; ")
+
 			errorPayload := agent.ErrorPayload{
-				ErrorMessage: "Failed to collect metrics: " + err.Error(),
+				ErrorMessage: "Failed to collect metrics: " + combinedError,
 				ErrorType:    "metrics_error",
 				Timestamp:    time.Now().UTC().Format(time.RFC3339),
 			}
 			adapter.SendError(errorPayload)
-			return err
+			return fmt.Errorf("metrics collection failed: %s", combinedError)
 		}
 		return adapter.SendMetrics(data)
 	})

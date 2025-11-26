@@ -67,7 +67,7 @@ func CalculateQueryRuntime(prev, curr map[string]CachedPGStatStatement) float64 
 			prevStat = CachedPGStatStatement{
 				QueryID:       queryId,
 				Query:         currStat.Query,
-				QueryLen: 	   currStat.QueryLen,
+				QueryLen:      currStat.QueryLen,
 				Calls:         0,
 				TotalExecTime: 0.0,
 				Rows:          0,
