@@ -40,7 +40,8 @@ SELECT
 	calls,
 	total_exec_time,
 	rows,
-	LEFT(query, %%d) as query
+	LEFT(query, %%d) as query,
+	LENGTH(query)
 FROM pg_stat_statements
 WHERE NOT starts_with(query, '%s')
   AND query !~* '^\\s*(BEGIN|COMMIT|ROLLBACK|SET |SHOW |SELECT (pg_|\\$1$|version\\s*\\(\\s*\\)))\\s*;?\\s*$'
@@ -120,9 +121,10 @@ func PGStatStatements(pgPool *pgxpool.Pool, includeQueries bool, maxQueryTextLen
 			var totalExecTime *float64
 			var rowCount *int64
 			var query *string
+			var querylen *int
 
 			if includeQueries {
-				err = rows.Scan(&queryid, &userid, &dbid, &calls, &totalExecTime, &rowCount, &query)
+				err = rows.Scan(&queryid, &userid, &dbid, &calls, &totalExecTime, &rowCount, &query, &querylen)
 			} else {
 				err = rows.Scan(&queryid, &userid, &dbid, &calls, &totalExecTime, &rowCount)
 			}
@@ -154,6 +156,7 @@ func PGStatStatements(pgPool *pgxpool.Pool, includeQueries bool, maxQueryTextLen
 
 			if includeQueries && query != nil {
 				stat.Query = *query
+				stat.QueryLen = *querylen
 			}
 
 			queryStats[compositeKey] = stat
