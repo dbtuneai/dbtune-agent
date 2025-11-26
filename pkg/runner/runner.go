@@ -9,12 +9,13 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger *logrus.Logger, fn func() error) {
+func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger *logrus.Logger, skipFirst bool, fn func() error) {
 	// Run immediately
-	if err := fn(); err != nil {
-		logger.Errorf("initial %s error: %v", name, err)
+	if !skipFirst {
+		if err := fn(); err != nil {
+			logger.Errorf("initial %s error: %v", name, err)
+		}
 	}
-
 	// Then run on ticker
 	for {
 		select {
@@ -45,10 +46,10 @@ func Runner(adapter agent.AgentLooper) {
 	defer cancel()
 
 	// Heartbeat goroutine
-	go runWithTicker(ctx, heartbeatTicker, "heartbeat", logger, adapter.SendHeartbeat)
+	go runWithTicker(ctx, heartbeatTicker, "heartbeat", logger, true, adapter.SendHeartbeat)
 
 	// Metrics collection goroutine
-	go runWithTicker(ctx, metricsTicker, "metrics", logger, func() error {
+	go runWithTicker(ctx, metricsTicker, "metrics", logger, false, func() error {
 		data, err := adapter.GetMetrics()
 		if err != nil {
 			errorPayload := agent.ErrorPayload{
@@ -63,7 +64,7 @@ func Runner(adapter agent.AgentLooper) {
 	})
 
 	// System metrics collection goroutine
-	go runWithTicker(ctx, systemMetricsTicker, "system info", logger, func() error {
+	go runWithTicker(ctx, systemMetricsTicker, "system info", logger, false, func() error {
 		data, err := adapter.GetSystemInfo()
 		if err != nil {
 			errorPayload := agent.ErrorPayload{
@@ -78,7 +79,7 @@ func Runner(adapter agent.AgentLooper) {
 	})
 
 	// Config management goroutine
-	go runWithTicker(ctx, configTicker, "config", logger, func() error {
+	go runWithTicker(ctx, configTicker, "config", logger, false, func() error {
 		config, err := adapter.GetActiveConfig()
 		if err != nil {
 			errorPayload := agent.ErrorPayload{
@@ -116,7 +117,7 @@ func Runner(adapter agent.AgentLooper) {
 	// Time is kept in a pointer to keep a persistent reference
 	// May need to refactor this for testing
 	var lastCheck *time.Time
-	go runWithTicker(ctx, guardrailTicker, "guardrail", logger, func() error {
+	go runWithTicker(ctx, guardrailTicker, "guardrail", logger, false, func() error {
 		if lastCheck != nil && time.Since(*lastCheck) < 15*time.Second {
 			return nil
 		}
