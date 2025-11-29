@@ -38,6 +38,23 @@ func ContainerMetricsCollector(client Client, podName string, containerName stri
 	}
 }
 
+// CNPGContainerMetricsCollector returns a collector function that dynamically discovers the CNPG primary pod
+// before collecting metrics. This ensures metrics are always collected from the current primary,
+// even after failovers.
+func CNPGContainerMetricsCollector(client Client, clusterName string, containerName string) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
+		// Dynamically discover the current primary pod
+		primaryPod, err := client.FindCNPGPrimaryPod(ctx, clusterName)
+		if err != nil {
+			return fmt.Errorf("failed to find CNPG primary pod: %w", err)
+		}
+
+		// Collect metrics from the current primary
+		containerClient := client.ContainerClient(primaryPod, containerName)
+		return CollectContainerMetrics(ctx, containerClient, state)
+	}
+}
+
 // CollectContainerMetrics gathers container metrics from Kubernetes
 // It collects CPU and memory usage, as well as I/O statistics, calculating deltas where appropriate
 func CollectContainerMetrics(ctx context.Context, containerClient ContainerClient, state *agent.MetricsState) error {
