@@ -32,10 +32,13 @@ const (
 	CNPGParametersPath = "spec.postgresql.parameters"
 
 	// Configuration application limits
-	ConfigApplyMaxRetries           = 5
-	ConfigApplyRetryDelay           = 5 * time.Second
-	MaxWaitTimePodReadyTransitions  = 20 * time.Minute
-	PollIntervalPodReadyTransitions = 2 * time.Second
+	ConfigApplyMaxRetries = 5
+	ConfigApplyRetryDelay = 5 * time.Second
+
+	// Rolling restart wait times - increased for production scenarios where
+	// replicas may take longer to catch up with WAL during heavy workloads
+	MaxWaitTimeClusterHealthy  = 60 * time.Minute
+	PollIntervalClusterHealthy = 5 * time.Second
 )
 
 type CNPGAdapter struct {
@@ -67,6 +70,24 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
+	// Resolve pod name - either use explicit config or auto-discover primary
+	podName := config.PodName
+	if podName == "" {
+		if config.ClusterName == "" {
+			return nil, fmt.Errorf("either pod_name or cluster_name must be specified in CNPG config")
+		}
+		// Auto-discover primary pod from cluster
+		ctx := context.Background()
+		discoveredPod, err := client.FindCNPGPrimaryPod(ctx, config.ClusterName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to auto-discover primary pod: %w", err)
+		}
+		podName = discoveredPod
+		log.Infof("Auto-discovered primary pod: %s", podName)
+	}
+	// Update config with resolved pod name
+	config.PodName = podName
+
 	// Create PostgreSQL connection pool
 	pgConfig, err := pg.ConfigFromViper(nil)
 	if err != nil {
@@ -95,10 +116,11 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 	}
 
 	// Initialize collectors
+	// Use cluster name (not pod name) so metrics always come from current primary
 	adapter.InitCollectors(Collectors(
 		dbpool,
 		client,
-		config.PodName,
+		config.ClusterName,
 		config.ContainerName,
 		pgVersion,
 		adapter.Logger(),
@@ -112,12 +134,23 @@ func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResp
 	ctx := context.Background()
 	logger := adapter.Logger()
 
+	// Check for failover before applying new configuration
+	// This ensures we don't apply tuning parameters after a failover has occurred
+	if err := adapter.CheckForFailover(ctx); err != nil {
+		if failoverErr, ok := err.(*FailoverDetectedError); ok {
+			// Failover detected - revert to baseline and terminate session
+			return adapter.HandleFailoverDetected(ctx, failoverErr)
+		}
+		// Other error checking failover status - log but continue
+		logger.Warnf("Failed to check for failover: %v", err)
+	}
+
 	// Get cluster name from pod's CNPG cluster label
 	clusterName, err := adapter.getClusterName(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster name: %w", err)
 	}
-	logger.Infof("Applying configuration to CNPG cluster: %s", clusterName)
+	logger.Infof("Applying configuration to CNPG cluster: %s (knob_application: %s)", clusterName, proposedConfig.KnobApplication)
 
 	// Parse and validate all knobs upfront
 	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
@@ -130,13 +163,40 @@ func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResp
 		return nil
 	}
 
+	// Initialize tuning session on first config application BEFORE applying any changes
+	// This captures the TRUE baseline (before tuning starts)
+	// This also validates that the cluster is healthy before starting tuning
+	if !adapter.State.IsTuningActive() {
+		err := adapter.InitializeTuningSession(ctx)
+		if err != nil {
+			return fmt.Errorf("cannot start tuning session: %w", err)
+		}
+	}
+
 	// Build parameters map for the patch
+	// CNPG requires memory parameters in human-readable format (e.g., "2GB" not "262144")
 	parametersMap := make(map[string]string)
 	for _, knob := range parsedKnobs {
-		// CNPG requires all parameter values to be strings
-		parametersMap[knob.Name] = knob.SettingValue
-		logger.Infof("Will set %s = %s", knob.Name, knob.SettingValue)
+		// Skip CNPG-managed parameters that should not be modified by tuning
+		// CRITICAL: Backend sends these (e.g., shared_preload_libraries="")
+		// which would break the cluster by removing pg_stat_statements!
+		if IsCNPGManagedParameter(knob.Name) {
+			logger.Warnf("Skipping CNPG-managed parameter: %s (value: %s)", knob.Name, knob.SettingValue)
+			continue
+		}
+
+		// Convert PostgreSQL values to CNPG format (handles memory unit conversion)
+		cnpgValue := ConvertToCNPGFormat(knob.Name, knob.SettingValue, nil)
+		parametersMap[knob.Name] = cnpgValue
+		if cnpgValue != knob.SettingValue {
+			logger.Infof("Will set %s = %s (converted from %s)", knob.Name, cnpgValue, knob.SettingValue)
+		} else {
+			logger.Infof("Will set %s = %s", knob.Name, cnpgValue)
+		}
 	}
+
+	// Determine if restart is needed based on KnobApplication field
+	requiresRestart := proposedConfig.KnobApplication == "restart"
 
 	// Apply the patch using generic Kubernetes patching function
 	err = kubernetes.PatchCRDParameters(kubernetes.CRDPatchRequest{
@@ -158,24 +218,62 @@ func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResp
 		return fmt.Errorf("failed to apply configuration patch: %w", err)
 	}
 
-	// Wait for pod to transition through not ready and back to ready
-	// This ensures the configuration has been applied and the pod has reloaded
-	logger.Info("Waiting for pod ready state transitions...")
-	podClient := adapter.K8sClient.PodClient(adapter.Config.PodName)
-	err = podClient.WaitForPodReadyTransitions(
-		ctx,
-		MaxWaitTimePodReadyTransitions,
-		PollIntervalPodReadyTransitions,
-		logger,
-	)
-	if err != nil {
-		return fmt.Errorf("pod did not complete ready state transitions: %w", err)
+	if requiresRestart {
+		// Trigger rolling restart for restart-required parameters
+		err = kubernetes.TriggerCNPGRollingRestart(ctx, adapter.K8sClient, clusterName, logger)
+		if err != nil {
+			return fmt.Errorf("failed to trigger rolling restart: %w", err)
+		}
+
+		// Wait for cluster to become healthy
+		err = kubernetes.WaitForCNPGClusterHealthy(
+			ctx,
+			adapter.K8sClient,
+			clusterName,
+			MaxWaitTimeClusterHealthy,
+			PollIntervalClusterHealthy,
+			logger,
+		)
+		if err != nil {
+			return fmt.Errorf("cluster did not become healthy after rolling restart: %w", err)
+		}
+
+		// Re-discover the current primary pod (may have changed during restart)
+		newPrimaryPod, err := adapter.K8sClient.FindCNPGPrimaryPod(ctx, clusterName)
+		if err != nil {
+			return fmt.Errorf("failed to find primary pod after restart: %w", err)
+		}
+		if newPrimaryPod != adapter.Config.PodName {
+			logger.Infof("Primary pod changed from %s to %s after rolling restart", adapter.Config.PodName, newPrimaryPod)
+			adapter.Config.PodName = newPrimaryPod
+		}
+
+		// Wait for PostgreSQL to accept connections
+		logger.Info("Waiting for PostgreSQL to accept connections...")
+		err = pg.WaitPostgresReady(adapter.PGDriver)
+		if err != nil {
+			return fmt.Errorf("PostgreSQL did not become ready after restart: %w", err)
+		}
+		logger.Info("PostgreSQL is accepting connections - configuration applied")
+	} else {
+		// For reload-only parameters, CNPG automatically reloads config
+		logger.Info("Configuration patch applied (reload-only parameters, no restart needed)")
+		time.Sleep(2 * time.Second)
+
+		// Verify pod is still ready
+		podClient := adapter.K8sClient.PodClient(adapter.Config.PodName)
+		ready, err := podClient.IsPodReady(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to verify pod status after config reload: %w", err)
+		}
+		if !ready {
+			return fmt.Errorf("pod became not ready after config reload")
+		}
+		logger.Info("Configuration reload completed successfully")
 	}
 
-	logger.Info("Pod has completed ready state transitions - configuration applied")
-
 	// Update state to track when we last applied config
-	adapter.State.LastAppliedConfig = time.Now()
+	adapter.State.UpdateLastAppliedConfig()
 
 	return nil
 }
@@ -222,7 +320,13 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	}
 	flatValues = append(flatValues, maxConnectionsMetric)
 
-	containerClient := adapter.K8sClient.ContainerClient(adapter.Config.PodName, adapter.Config.ContainerName)
+	// Dynamically discover current primary pod for system info
+	primaryPod, err := adapter.K8sClient.FindCNPGPrimaryPod(ctx, adapter.Config.ClusterName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find CNPG primary pod: %w", err)
+	}
+
+	containerClient := adapter.K8sClient.ContainerClient(primaryPod, adapter.Config.ContainerName)
 	systemInfo, err := containerClient.GetContainerSystemInfo(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get system info: %w", err)
@@ -234,16 +338,34 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 
 func (adapter *CNPGAdapter) Guardrails() *guardrails.Signal {
 	// Check if enough time has passed since the last guardrail check
-	if time.Since(adapter.State.LastGuardrailCheck) < 5*time.Second {
+	if adapter.State.TimeSinceLastGuardrailCheck() < 5*time.Second {
 		return nil
 	}
 	adapter.Logger().Debugf("Checking Guardrails")
-	adapter.State.LastGuardrailCheck = time.Now()
+	adapter.State.UpdateLastGuardrailCheck()
 
 	// Get pod resources to determine memory limit
 	ctx := context.Background()
 
-	containerClient := adapter.K8sClient.ContainerClient(adapter.Config.PodName, adapter.Config.ContainerName)
+	// Check for failover during active tuning session
+	// This provides continuous failover detection even when ApplyConfig isn't running
+	if err := adapter.CheckForFailover(ctx); err != nil {
+		if failoverErr, ok := err.(*FailoverDetectedError); ok {
+			// Handle failover immediately - send error to backend and terminate session
+			adapter.HandleFailoverDetected(ctx, failoverErr)
+			// Return nil signal since guardrails can't continue during failover
+			return nil
+		}
+	}
+
+	// Dynamically discover current primary pod for guardrail checks
+	primaryPod, err := adapter.K8sClient.FindCNPGPrimaryPod(ctx, adapter.Config.ClusterName)
+	if err != nil {
+		adapter.Logger().Errorf("Failed to find CNPG primary pod for guardrail: %v", err)
+		return nil
+	}
+
+	containerClient := adapter.K8sClient.ContainerClient(primaryPod, adapter.Config.ContainerName)
 
 	memoryBytesTotal, err := containerClient.MemoryLimitBytes(ctx)
 	if err != nil {
@@ -293,7 +415,7 @@ func (adapter *CNPGAdapter) Guardrails() *guardrails.Signal {
 	return nil
 }
 
-func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, podName string, containerName string, PGVersion string, logger *log.Logger) []agent.MetricCollector {
+func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName string, containerName string, PGVersion string, logger *log.Logger) []agent.MetricCollector {
 	collectors := []agent.MetricCollector{
 		// TODO: Re-enable pg_role collector once backend supports it
 		// {
@@ -359,7 +481,7 @@ func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, podName string
 		{
 			Key:        "hardware",
 			MetricType: "int",
-			Collector:  kubernetes.ContainerMetricsCollector(kubeClient, podName, containerName),
+			Collector:  kubernetes.CNPGContainerMetricsCollector(kubeClient, clusterName, containerName),
 		},
 	}
 
