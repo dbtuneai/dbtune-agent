@@ -168,13 +168,31 @@ func (d *DockerContainerAdapter) resolveContainerIDFromNameSubstring(ctx context
 	}
 
 	if len(containers) > 1 {
+		// Find the container with the shortest name (prioritize main service over sidecars/exporters)
+		shortestContainer := containers[0]
+		shortestName := strings.TrimPrefix(containers[0].Names[0], "/")
+		
+		for _, c := range containers[1:] {
+			containerName := strings.TrimPrefix(c.Names[0], "/")
+			if len(containerName) < len(shortestName) {
+				shortestContainer = c
+				shortestName = containerName
+			}
+		}
+		
 		// Log all matches for debugging
 		var matchedNames []string
 		for _, c := range containers {
 			matchedNames = append(matchedNames, c.Names[0])
 		}
-		return "", fmt.Errorf("ambiguous pattern '%s' matched %d containers: %v. Please use a more specific pattern",
-			namePattern, len(containers), matchedNames)
+		d.Logger().Infof("Pattern '%s' matched %d containers: %v. Selected shortest name: %s",
+			namePattern, len(containers), matchedNames, shortestContainer.Names[0])
+		
+		containerID := shortestContainer.ID
+		d.Logger().Infof("Resolved container pattern '%s' to ID: %s (name: %s)",
+			namePattern, containerID[:12], shortestContainer.Names[0])
+		
+		return containerID, nil
 	}
 
 	containerID := containers[0].ID
