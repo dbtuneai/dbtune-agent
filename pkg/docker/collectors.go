@@ -9,15 +9,27 @@ import (
 	"github.com/dbtuneai/agent/pkg/metrics"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
 )
 
 // DockerHardwareInfo collects hardware metrics from a Docker container using the Docker API
-func DockerHardwareInfo(client *client.Client, containerName string) func(ctx context.Context, state *agent.MetricsState) error {
+func DockerHardwareInfo(adapter *DockerContainerAdapter) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
+		// Resolve container ID (handles both regular and Swarm mode)
+		var containerID string
+		var err error
+
+		if !adapter.Config.SwarmMode {
+			containerID = adapter.Config.ContainerName
+		} else {
+			// In Swarm mode, we need to find the actual container ID from the service name
+			containerID, err = adapter.resolveContainerIDFromNameSubstring(ctx, adapter.Config.ContainerName)
+			if err != nil {
+				return fmt.Errorf("failed to resolve container ID: %w", err)
+			}
+		}
 
 		// Get container stats
-		stats, err := client.ContainerStats(ctx, containerName, false)
+		stats, err := adapter.dockerClient.ContainerStats(ctx, containerID, false)
 		if err != nil {
 			return err
 		}

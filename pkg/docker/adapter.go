@@ -131,7 +131,7 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 		},
 		{
 			Key:       "hardware",
-			Collector: DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
+			Collector: DockerHardwareInfo(adapter),
 		},
 	}
 	majorVersion := strings.Split(adapter.PGVersion, ".")
@@ -270,7 +270,7 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 		return nil, fmt.Errorf("failed to create memory limit metric: %w", err)
 	}
 
-	// CPU info
+	// CPU info - determine available CPU count
 	var cpuCount float64
 	if containerInfo.HostConfig.NanoCPUs > 0 {
 		// Convert from nano CPUs to actual CPU count
@@ -279,8 +279,23 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 		// Convert from quota/period to CPU count
 		cpuCount = float64(containerInfo.HostConfig.CPUQuota) / float64(containerInfo.HostConfig.CPUPeriod)
 	} else {
-		// If no limits set, use the number of CPUs available to the container
-		cpuCount = float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
+		// If no limits set, try to get CPU count from online CPUs or per-CPU usage array
+		if len(statsJSON.CPUStats.CPUUsage.PercpuUsage) > 0 {
+			cpuCount = float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
+		} else {
+			// Fallback: try to get from system info or use a reasonable default
+			// In Docker, if we can't determine CPU count, we might be in a constrained environment
+			// Let's inspect the host to get the actual CPU count
+			hostInfo, err := d.dockerClient.Info(context.Background())
+			if err == nil && hostInfo.NCPU > 0 {
+				cpuCount = float64(hostInfo.NCPU)
+				d.Logger().Infof("Using host CPU count as fallback: %d CPUs", hostInfo.NCPU)
+			} else {
+				// Final fallback - assume single CPU if we can't determine
+				cpuCount = 0.0
+				d.Logger().Warnf("Could not determine CPU count, defaulting to 0")
+			}
+		}
 	}
 	cpuMetric, err := metrics.NodeCPUCount.AsFlatValue(int64(cpuCount))
 	if err != nil {
