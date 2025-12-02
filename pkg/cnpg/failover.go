@@ -20,110 +20,118 @@ func (e *FailoverDetectedError) Error() string {
 	return fmt.Sprintf("failover detected: %s -> %s: %s", e.OldPrimary, e.NewPrimary, e.Message)
 }
 
-// CheckForFailover checks if a failover has occurred since tuning started.
-// Returns FailoverDetectedError if failover is detected, nil otherwise.
+// CheckForFailover checks if a failover has occurred since last check.
+// Returns FailoverDetectedError if primary changed, nil otherwise.
 func (adapter *CNPGAdapter) CheckForFailover(ctx context.Context) error {
-	// Skip check if we haven't started tuning yet
-	if !adapter.State.IsTuningActive() || adapter.State.GetInitialPrimary() == "" {
-		return nil
-	}
-
 	logger := adapter.Logger()
 	clusterName, err := adapter.getClusterName(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster name: %w", err)
 	}
 
-	// Get cluster status to check for failover
+	// Get cluster status to check current primary
 	clusterStatus, err := adapter.K8sClient.GetCNPGClusterStatus(ctx, clusterName)
+	lastKnownPrimary := adapter.State.GetLastKnownPrimary()
+
+	// If we can't get cluster status AND we previously had a primary tracked,
+	// this likely means failover is in progress
 	if err != nil {
-		logger.Warnf("Failed to get cluster status for failover check: %v", err)
-		// Don't fail tuning just because we can't check status
+		if lastKnownPrimary != "" {
+			logger.Warnf("Cannot get cluster status (failover likely in progress): %v", err)
+			return &FailoverDetectedError{
+				OldPrimary: lastKnownPrimary,
+				NewPrimary: "(unknown - failover in progress)",
+				Message:    fmt.Sprintf("cluster status unavailable: %v", err),
+			}
+		}
+		// First check and can't get status - just log and skip
+		logger.Warnf("Failed to get cluster status for initial check: %v", err)
 		return nil
 	}
 
-	// Check if current primary differs from initial primary
-	initialPrimary := adapter.State.GetInitialPrimary()
 	currentPrimary := clusterStatus.CurrentPrimary
-	if currentPrimary != initialPrimary {
-		logger.Warnf("Failover detected: initial primary=%s, current primary=%s, phase=%s",
-			initialPrimary, currentPrimary, clusterStatus.Phase)
+
+	// If cluster reports no current primary AND we had one before, failover is happening
+	if currentPrimary == "" && lastKnownPrimary != "" {
+		logger.Warnf("Cluster has no current primary (failover in progress, was: %s)", lastKnownPrimary)
+		return &FailoverDetectedError{
+			OldPrimary: lastKnownPrimary,
+			NewPrimary: "(none - failover in progress)",
+			Message:    fmt.Sprintf("cluster phase: %s", clusterStatus.Phase),
+		}
+	}
+
+	// First time checking - just record current primary
+	if lastKnownPrimary == "" {
+		if currentPrimary != "" {
+			adapter.State.SetLastKnownPrimary(currentPrimary)
+			logger.Infof("Tracking primary pod: %s", currentPrimary)
+		}
+		return nil
+	}
+
+	// Check if primary changed (failover occurred)
+	if currentPrimary != lastKnownPrimary {
+		logger.Warnf("Failover detected: %s → %s (phase: %s)",
+			lastKnownPrimary, currentPrimary, clusterStatus.Phase)
 
 		return &FailoverDetectedError{
-			OldPrimary: initialPrimary,
+			OldPrimary: lastKnownPrimary,
 			NewPrimary: currentPrimary,
 			Message:    fmt.Sprintf("cluster phase: %s", clusterStatus.Phase),
 		}
 	}
 
-	// Also check if failover is in progress (targetPrimary != currentPrimary)
+	// Check if failover is in progress in two ways:
+	// 1. targetPrimary != currentPrimary (primary being changed)
+	// 2. phase indicates failover/switchover (even if target==current during transition)
+	failoverPhases := []string{"Failing over", "Switchover in progress"}
+	isFailoverPhase := false
+	for _, fp := range failoverPhases {
+		if clusterStatus.Phase == fp {
+			isFailoverPhase = true
+			break
+		}
+	}
+
 	if clusterStatus.TargetPrimary != "" && clusterStatus.TargetPrimary != currentPrimary {
-		logger.Warnf("Failover in progress: current=%s, target=%s, phase=%s",
+		logger.Errorf("Failover detected (target primary changed): %s → %s (phase: %s)",
 			currentPrimary, clusterStatus.TargetPrimary, clusterStatus.Phase)
 
 		return &FailoverDetectedError{
-			OldPrimary: currentPrimary,
+			OldPrimary: lastKnownPrimary,
 			NewPrimary: clusterStatus.TargetPrimary,
-			Message:    fmt.Sprintf("failover in progress, phase: %s", clusterStatus.Phase),
+			Message:    fmt.Sprintf("primary changing, phase: %s", clusterStatus.Phase),
+		}
+	}
+
+	// IMPORTANT: Only trigger if primary actually changed
+	// Prevents duplicate detection when cluster stays in "Failing over" phase after we already handled it
+	if isFailoverPhase && lastKnownPrimary != "" && currentPrimary != lastKnownPrimary {
+		logger.Errorf("Failover detected (cluster in failover phase): phase=%s, primary changed %s → %s",
+			clusterStatus.Phase, lastKnownPrimary, currentPrimary)
+
+		return &FailoverDetectedError{
+			OldPrimary: lastKnownPrimary,
+			NewPrimary: currentPrimary,
+			Message:    fmt.Sprintf("cluster in failover phase: %s", clusterStatus.Phase),
 		}
 	}
 
 	return nil
 }
 
-// InitializeTuningSession validates cluster health and tracks the initial primary pod.
-// This should be called when the first configuration is applied.
-func (adapter *CNPGAdapter) InitializeTuningSession(ctx context.Context) error {
-	logger := adapter.Logger()
-
-	// Check cluster health before starting tuning session
-	clusterName, err := adapter.getClusterName(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get cluster name: %w", err)
-	}
-
-	clusterStatus, err := adapter.K8sClient.GetCNPGClusterStatus(ctx, clusterName)
-	if err != nil {
-		return fmt.Errorf("failed to check cluster status: %w", err)
-	}
-
-	// Reject tuning if cluster is not in healthy state
-	if clusterStatus.Phase != "Cluster in healthy state" {
-		return fmt.Errorf("cannot start tuning: cluster is not healthy (phase: %s)", clusterStatus.Phase)
-	}
-
-	// Reject tuning if not all instances are ready
-	if clusterStatus.ReadyInstances != clusterStatus.Instances {
-		return fmt.Errorf("cannot start tuning: not all instances ready (%d/%d)",
-			clusterStatus.ReadyInstances, clusterStatus.Instances)
-	}
-
-	// Reject tuning if failover/switchover is in progress
-	if clusterStatus.TargetPrimary != "" && clusterStatus.TargetPrimary != clusterStatus.CurrentPrimary {
-		return fmt.Errorf("cannot start tuning: failover in progress (current: %s, target: %s)",
-			clusterStatus.CurrentPrimary, clusterStatus.TargetPrimary)
-	}
-
-	logger.Infof("Cluster health check passed: phase=%s, ready=%d/%d, primary=%s",
-		clusterStatus.Phase, clusterStatus.ReadyInstances, clusterStatus.Instances, clusterStatus.CurrentPrimary)
-
-	// Store current primary pod as initial primary for failover detection
-	adapter.State.SetTuningSession(true, clusterStatus.CurrentPrimary)
-
-	logger.Infof("Tuning session initialized: primary=%s", clusterStatus.CurrentPrimary)
-	return nil
-}
-
 // HandleFailoverDetected is called when a failover is detected.
-// It sends an error to the backend and returns an error to terminate the tuning session.
-// The backend will handle stopping the session and applying baseline configuration.
+// It sends an error to the backend and updates tracking to the new primary.
+// The backend decides whether to stop a tuning session and apply baseline.
 func (adapter *CNPGAdapter) HandleFailoverDetected(ctx context.Context, failoverErr *FailoverDetectedError) error {
 	logger := adapter.Logger()
 
 	logger.Errorf("Failover detected: %s", failoverErr.Error())
-	logger.Warn("Tuning session will be terminated. Baseline configuration will be applied.")
+	logger.Info("Sending failover notification to backend")
 
-	// Send failover error to backend so it can stop session and apply baseline
+	// Send failover error to backend
+	// Backend decides: stop tuning session? apply baseline? etc.
 	errorPayload := agent.ErrorPayload{
 		ErrorMessage: failoverErr.Error(),
 		ErrorType:    "failover_detected",
@@ -131,9 +139,26 @@ func (adapter *CNPGAdapter) HandleFailoverDetected(ctx context.Context, failover
 	}
 	adapter.SendError(errorPayload)
 
-	// Mark tuning session as inactive
-	adapter.State.DeactivateTuningSession()
+	// Update tracking to new primary
+	// IMPORTANT: Only update if NewPrimary is a valid pod name, not a placeholder
+	if failoverErr.NewPrimary != "" && !containsPlaceholder(failoverErr.NewPrimary) {
+		adapter.State.SetLastKnownPrimary(failoverErr.NewPrimary)
+		logger.Infof("Updated tracked primary: %s", failoverErr.NewPrimary)
+	} else {
+		logger.Infof("Not updating tracked primary - failover still in progress (NewPrimary=%s)", failoverErr.NewPrimary)
+	}
 
-	// Return the original failover error to terminate the session
+	// Return error to signal caller that failover occurred
 	return failoverErr
+}
+
+// containsPlaceholder checks if a string is a placeholder value (not a real pod name)
+func containsPlaceholder(s string) bool {
+	placeholders := []string{"(unknown", "(none", "(", ")"}
+	for _, p := range placeholders {
+		if len(s) > 0 && (s[0] == '(' || len(s) >= len(p) && s[:len(p)] == p) {
+			return true
+		}
+	}
+	return false
 }

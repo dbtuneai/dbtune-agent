@@ -138,6 +138,12 @@ func ConvertToCNPGFormat(name string, value string, knobConfig *agent.PGConfigRo
 		return value
 	}
 
+	return ConvertWithUnit(value, unit)
+}
+
+// ConvertWithUnit converts a value with a given unit to CNPG format.
+// Example: value="262144", unit="8kB" → "2GB"
+func ConvertWithUnit(value, unit string) string {
 	// Parse the numeric value
 	numValue, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
@@ -154,6 +160,8 @@ func ConvertToCNPGFormat(name string, value string, knobConfig *agent.PGConfigRo
 		bytes = numValue * 1024
 	case "MB":
 		bytes = numValue * 1024 * 1024
+	case "GB":
+		bytes = numValue * 1024 * 1024 * 1024
 	default:
 		return value
 	}

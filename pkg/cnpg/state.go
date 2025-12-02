@@ -11,40 +11,24 @@ type State struct {
 	LastGuardrailCheck time.Time
 	LastAppliedConfig  time.Time
 
-	// Failover detection fields
-	// InitialPrimaryPod is the primary pod name when tuning session started
-	InitialPrimaryPod string
-	// TuningSessionActive indicates if we're currently in a tuning session
-	TuningSessionActive bool
+	// Failover detection
+	// LastKnownPrimary is the primary pod name from the last check
+	// Used to detect when primary changes (failover)
+	LastKnownPrimary string
 }
 
-// IsTuningActive safely reads the TuningSessionActive flag
-func (s *State) IsTuningActive() bool {
+// GetLastKnownPrimary safely reads the last known primary pod
+func (s *State) GetLastKnownPrimary() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.TuningSessionActive
+	return s.LastKnownPrimary
 }
 
-// GetInitialPrimary safely reads the InitialPrimaryPod
-func (s *State) GetInitialPrimary() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.InitialPrimaryPod
-}
-
-// SetTuningSession safely updates tuning session state
-func (s *State) SetTuningSession(active bool, primaryPod string) {
+// SetLastKnownPrimary safely updates the last known primary pod
+func (s *State) SetLastKnownPrimary(primaryPod string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.TuningSessionActive = active
-	s.InitialPrimaryPod = primaryPod
-}
-
-// DeactivateTuningSession safely marks the tuning session as inactive
-func (s *State) DeactivateTuningSession() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.TuningSessionActive = false
+	s.LastKnownPrimary = primaryPod
 }
 
 // UpdateLastAppliedConfig safely updates the last applied config timestamp
