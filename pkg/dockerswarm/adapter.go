@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
@@ -256,8 +257,23 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 		// Convert from quota/period to CPU count
 		cpuCount = float64(containerInfo.HostConfig.CPUQuota) / float64(containerInfo.HostConfig.CPUPeriod)
 	} else {
-		// If no limits set, use the number of CPUs available to the container
-		cpuCount = float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
+		// If no limits set, try to get CPU count from online CPUs or per-CPU usage array
+		if len(statsJSON.CPUStats.CPUUsage.PercpuUsage) > 0 {
+			cpuCount = float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
+		} else {
+			// Fallback: try to get from system info or use a reasonable default
+			// In Docker, if we can't determine CPU count, we might be in a constrained environment
+			// Let's inspect the host to get the actual CPU count
+			hostInfo, err := d.dockerClient.Info(context.Background())
+			if err == nil && hostInfo.NCPU > 0 {
+				cpuCount = float64(hostInfo.NCPU)
+				d.Logger().Infof("Using host CPU count as fallback: %d CPUs", hostInfo.NCPU)
+			} else {
+				// Final fallback - assume single CPU if we can't determine
+				cpuCount = 0.0
+				d.Logger().Warnf("Could not determine CPU count, defaulting to 0")
+			}
+		}
 	}
 	cpuMetric, err := metrics.NodeCPUCount.AsFlatValue(int64(cpuCount))
 	if err != nil {
@@ -360,6 +376,10 @@ func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfi
 			return fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)
 		}
 	}
+
+	// Wait 1 minute after applying all configuration changes
+	d.Logger().Info("Waiting 1 minute for configuration changes to take effect")
+	time.Sleep(1 * time.Minute)
 
 	if proposedConfig.KnobApplication == "restart" {
 		// Restart the service by forcing an update
