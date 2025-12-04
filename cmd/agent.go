@@ -12,6 +12,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/checks"
 	"github.com/dbtuneai/agent/pkg/cloudsql"
 	"github.com/dbtuneai/agent/pkg/docker"
+	"github.com/dbtuneai/agent/pkg/dockerswarm"
 	"github.com/dbtuneai/agent/pkg/pgprem"
 	"github.com/dbtuneai/agent/pkg/rds"
 	"github.com/dbtuneai/agent/pkg/runner"
@@ -19,7 +20,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-const AVAILABLE_FLAGS = "--docker, --aurora, --rds, --aiven, --local, --cloudsql, --azure-flex"
+const AVAILABLE_FLAGS = "--docker, --aurora, --rds, --aiven, --local, --cloudsql, --azure-flex, --dockerswarm"
 
 func main() {
 	// Define flags
@@ -30,6 +31,7 @@ func main() {
 	useLocal := flag.Bool("local", false, "Use local PostgreSQL adapter")
 	useCloudSQL := flag.Bool("cloudsql", false, "Use Cloud SQL adapter")
 	useAzureFlex := flag.Bool("azure-flex", false, "Use Azure Flexible Server")
+	useDockerSwarm := flag.Bool("dockerswarm", false, "Use Docker Swarm adapter")
 	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
 
@@ -102,6 +104,11 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to create Cloud SQL PostgreSQL adapter: %v", err)
 		}
+	case *useDockerSwarm:
+		adapter, err = dockerswarm.CreateDockerSwarmAdapter()
+		if err != nil {
+			log.Fatalf("Failed to create Docker Swarm adapter: %v", err)
+		}
 	case *useLocal:
 		adapter, err = pgprem.CreateDefaultPostgreSQLAdapter()
 		if err != nil {
@@ -129,6 +136,10 @@ func main() {
 			log.Println("Docker container adapter detected from environment variables")
 			adapter, err = docker.CreateDockerContainerAdapter()
 
+		} else if dockerswarm.DetectConfigFromEnv() {
+			log.Println("Docker Swarm adapter detected from environment variables")
+			adapter, err = dockerswarm.CreateDockerSwarmAdapter()
+
 		} else if rds.DetectConfigFromEnv() {
 			// NOTE: This is because they both share the same environment variables and there's
 			// no easy distinction. Theoretically we could just let this run, as they have no functional
@@ -154,6 +165,10 @@ func main() {
 		} else if docker.DetectConfigFromConfigFile() {
 			log.Println("Docker container configuration detected in config file")
 			adapter, err = docker.CreateDockerContainerAdapter()
+
+		} else if dockerswarm.DetectConfigFromConfigFile() {
+			log.Println("Docker Swarm configuration detected in config file")
+			adapter, err = dockerswarm.CreateDockerSwarmAdapter()
 
 		} else if configType := rds.DetectConfigFromConfigFile(); configType == rds.RDS || configType == rds.Aurora {
 			switch configType {
