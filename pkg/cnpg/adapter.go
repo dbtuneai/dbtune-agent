@@ -10,6 +10,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
+	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/kubernetes"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
@@ -688,11 +689,9 @@ func (adapter *CNPGAdapter) CheckRestartRequired(ctx context.Context, changedPar
 	}
 
 	// Query which of the changed parameters require restart
-	query := `
-		/*dbtune*/
-		SELECT name FROM pg_settings WHERE name = ANY($1) AND context = 'postmaster'
-	`
-	rows, err := adapter.PGDriver.Query(ctx, query, paramNames)
+	// Uses centralized prefix utility to avoid pg_stat_statements pollution
+	query := `SELECT name FROM pg_settings WHERE name = ANY($1) AND context = 'postmaster'`
+	rows, err := utils.QueryWithPrefix(adapter.PGDriver, ctx, query, paramNames)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to query restart-required parameters: %w", err)
 	}
