@@ -170,34 +170,9 @@ func ConvertWithUnit(value, unit string) string {
 	return bytesToHumanReadable(bytes)
 }
 
-// bytesToHumanReadable converts bytes to the most appropriate human-readable format.
-// Returns values like "2GB", "256MB", "64kB".
+// bytesToHumanReadable converts bytes to kB format for CNPG.
+// Always returns values in kB (e.g., "2097152kB" for 2GB)
 func bytesToHumanReadable(bytes int64) string {
-	const (
-		KB = 1024
-		MB = 1024 * KB
-		GB = 1024 * MB
-	)
-
-	// Use the largest unit that results in a whole number or clean decimal
-	switch {
-	case bytes >= GB && bytes%GB == 0:
-		return fmt.Sprintf("%dGB", bytes/GB)
-	case bytes >= MB && bytes%MB == 0:
-		return fmt.Sprintf("%dMB", bytes/MB)
-	case bytes >= KB && bytes%KB == 0:
-		return fmt.Sprintf("%dkB", bytes/KB)
-	default:
-		// For odd values, use MB with potential decimal
-		if bytes >= MB {
-			mbValue := float64(bytes) / float64(MB)
-			// Check if it's a clean decimal
-			if mbValue == float64(int64(mbValue)) {
-				return fmt.Sprintf("%dMB", int64(mbValue))
-			}
-			return fmt.Sprintf("%.1fMB", mbValue)
-		}
-		// Fall back to kB
-		return fmt.Sprintf("%dkB", bytes/KB)
-	}
+	const KB = 1024
+	return fmt.Sprintf("%dkB", bytes/KB)
 }

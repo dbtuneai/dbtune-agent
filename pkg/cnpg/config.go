@@ -13,9 +13,9 @@ const DEFAULT_CONTAINER_NAME = "postgres"
 type Config struct {
 	Namespace      string `mapstructure:"namespace" validate:"required"`
 	KubeconfigPath string `mapstructure:"kubeconfig_path"`
-	ClusterName    string `mapstructure:"cluster_name"`   // Recommended: CNPG cluster name for dynamic pod discovery
-	PodName        string `mapstructure:"pod_name"`       // Optional: if not specified, auto-discovers primary pod
-	ContainerName  string `mapstructure:"container_name"` // Optional: defaults to "postgres" if not specified
+	ClusterName    string `mapstructure:"cluster_name" validate:"required"` // Required: CNPG cluster name for dynamic pod discovery
+	PodName        string `mapstructure:"pod_name"`                         // Optional: if not specified, auto-discovers primary pod
+	ContainerName  string `mapstructure:"container_name"`                   // Optional: defaults to "postgres" if not specified
 }
 
 func ConfigFromViper() (Config, error) {

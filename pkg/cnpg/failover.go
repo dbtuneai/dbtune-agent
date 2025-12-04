@@ -85,14 +85,6 @@ func (adapter *CNPGAdapter) CheckForFailover(ctx context.Context) error {
 	// Check if failover is in progress in two ways:
 	// 1. targetPrimary != currentPrimary (primary being changed)
 	// 2. phase indicates failover/switchover (even if target==current during transition)
-	failoverPhases := []string{"Failing over", "Switchover in progress"}
-	isFailoverPhase := false
-	for _, fp := range failoverPhases {
-		if clusterStatus.Phase == fp {
-			isFailoverPhase = true
-			break
-		}
-	}
 
 	if clusterStatus.TargetPrimary != "" && clusterStatus.TargetPrimary != currentPrimary {
 		logger.Errorf("Failover detected (target primary changed): %s → %s (phase: %s)",
@@ -102,6 +94,15 @@ func (adapter *CNPGAdapter) CheckForFailover(ctx context.Context) error {
 			OldPrimary: lastKnownPrimary,
 			NewPrimary: clusterStatus.TargetPrimary,
 			Message:    fmt.Sprintf("primary changing, phase: %s", clusterStatus.Phase),
+		}
+	}
+
+	failoverPhases := []string{"Failing over", "Switchover in progress"}
+	isFailoverPhase := false
+	for _, fp := range failoverPhases {
+		if clusterStatus.Phase == fp {
+			isFailoverPhase = true
+			break
 		}
 	}
 
@@ -123,7 +124,6 @@ func (adapter *CNPGAdapter) CheckForFailover(ctx context.Context) error {
 
 // HandleFailoverDetected is called when a failover is detected.
 // It sends an error to the backend and updates tracking to the new primary.
-// The backend decides whether to stop a tuning session and apply baseline.
 func (adapter *CNPGAdapter) HandleFailoverDetected(ctx context.Context, failoverErr *FailoverDetectedError) error {
 	logger := adapter.Logger()
 

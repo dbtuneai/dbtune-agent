@@ -13,6 +13,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/kubernetes"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	log "github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -138,7 +139,6 @@ func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResp
 	// This ensures we don't apply tuning parameters after a failover has occurred
 	if err := adapter.CheckForFailover(ctx); err != nil {
 		if failoverErr, ok := err.(*FailoverDetectedError); ok {
-			// Failover detected - revert to baseline and terminate session
 			return adapter.HandleFailoverDetected(ctx, failoverErr)
 		}
 		// Other error checking failover status - log but continue
@@ -168,11 +168,9 @@ func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResp
 	logger.Info("Fetching current configuration from database for comparison")
 	currentConfig, err := adapter.GetCurrentConfig(ctx)
 	if err != nil {
-		logger.Warnf("Failed to get current config for comparison: %v. Will apply all parameters.", err)
-		currentConfig = make(map[string]string) // Empty map = apply all
-	} else {
-		logger.Infof("Successfully retrieved %d current parameter values", len(currentConfig))
+		return fmt.Errorf("failed to get current config for comparison: %w", err)
 	}
+	logger.Infof("Successfully retrieved %d current parameter values", len(currentConfig))
 
 	// Build parameters map for the patch
 	// CNPG requires memory parameters in human-readable format (e.g., "2GB" not "262144")
@@ -220,10 +218,26 @@ func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResp
 	logger.Infof("Applying %d changed parameters to cluster", len(parametersMap))
 
 	// Check if any of the CHANGED parameters require restart
-	requiresRestart, err := adapter.RequiresRestart(ctx, parametersMap)
+	requiresRestart, restartRequiredParams, err := adapter.CheckRestartRequired(ctx, parametersMap)
 	if err != nil {
 		logger.Warnf("Failed to check restart requirement: %v. Will trigger restart to be safe.", err)
 		requiresRestart = proposedConfig.KnobApplication == "restart" // Fallback to backend's decision
+	}
+
+	if proposedConfig.KnobApplication == "reload" && requiresRestart {
+		logger.Warnf("Reload-only mode: skipping %d restart-required parameters", len(restartRequiredParams))
+		for _, param := range restartRequiredParams {
+			logger.Warnf("Skipping restart-required parameter: %s (value: %s)", param, parametersMap[param])
+			delete(parametersMap, param)
+		}
+
+		if len(parametersMap) == 0 {
+			logger.Warn("No reload-able parameters to apply after filtering out restart-required ones")
+			return nil
+		}
+
+		logger.Infof("Will apply %d reload-only parameters", len(parametersMap))
+		requiresRestart = false
 	}
 
 	if requiresRestart {
@@ -292,7 +306,13 @@ func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResp
 	} else {
 		// For reload-only parameters, CNPG automatically reloads config
 		logger.Info("Configuration patch applied (reload-only parameters, no restart needed)")
-		time.Sleep(2 * time.Second)
+
+		// Wait for PostgreSQL to accept connections and verify health
+		logger.Info("Waiting for PostgreSQL to accept connections after reload...")
+		err = pg.WaitPostgresReady(adapter.PGDriver)
+		if err != nil {
+			return fmt.Errorf("PostgreSQL did not become ready after config reload: %w", err)
+		}
 
 		// Verify pod is still ready
 		podClient := adapter.K8sClient.PodClient(adapter.Config.PodName)
@@ -303,7 +323,7 @@ func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResp
 		if !ready {
 			return fmt.Errorf("pod became not ready after config reload")
 		}
-		logger.Info("Configuration reload completed successfully")
+		logger.Info("Configuration reload completed successfully - PostgreSQL is healthy")
 	}
 
 	// Update state to track when we last applied config
@@ -381,11 +401,9 @@ func (adapter *CNPGAdapter) Guardrails() *guardrails.Signal {
 	// Get pod resources to determine memory limit
 	ctx := context.Background()
 
-	// Check for failover during active tuning session
 	// This provides continuous failover detection even when ApplyConfig isn't running
 	if err := adapter.CheckForFailover(ctx); err != nil {
 		if failoverErr, ok := err.(*FailoverDetectedError); ok {
-			// Handle failover immediately - send error to backend and terminate session
 			adapter.HandleFailoverDetected(ctx, failoverErr)
 			// Return nil signal since guardrails can't continue during failover
 			return nil
@@ -537,37 +555,72 @@ func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName st
 	return collectors
 }
 
+// extractSettingValue converts row.Setting to string for comparison.
+// This is necessary because pg.GetActiveConfig() uses `::numeric` cast in queries,
+// which causes pgx to return pgtype.Numeric struct instead of primitive types.
+// We convert back to string to enable value comparison in GetCurrentConfig().
+func extractSettingValue(setting interface{}) string {
+	switch v := setting.(type) {
+	case string:
+		return v
+	case int, int8, int16, int32, int64:
+		return fmt.Sprintf("%d", v)
+	case uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprintf("%d", v)
+	case float32, float64:
+		return fmt.Sprintf("%v", v)
+	case pgtype.Numeric:
+		// pgtype.Numeric is returned by pgx when scanning PostgreSQL numeric types
+		// Convert to int64 if it's a valid integer
+		if v.Valid {
+			// Try to convert to int64 first (most PostgreSQL settings are integers)
+			if i64Val, err := v.Int64Value(); err == nil && i64Val.Valid {
+				return fmt.Sprintf("%d", i64Val.Int64)
+			}
+			// Fall back to float64 for real numbers
+			if f64Val, err := v.Float64Value(); err == nil && f64Val.Valid {
+				return fmt.Sprintf("%v", f64Val.Float64)
+			}
+		}
+		// Fallback: use string representation for unexpected numeric formats
+		return fmt.Sprintf("%v", v)
+	default:
+		// For any other type, use fmt.Sprintf as fallback
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 // GetCurrentConfig retrieves the current PostgreSQL configuration values.
 // Returns a map of parameter name to current value in CNPG format (e.g., "2GB").
 // This is used to compare against proposed config to avoid applying unchanged parameters.
 func (adapter *CNPGAdapter) GetCurrentConfig(ctx context.Context) (map[string]string, error) {
-	query := "SELECT name, setting, unit FROM pg_settings"
-	rows, err := adapter.PGDriver.Query(ctx, query)
+	configRows, err := pg.GetActiveConfig(adapter.PGDriver, ctx, adapter.Logger())
 	if err != nil {
-		return nil, fmt.Errorf("failed to query pg_settings: %w", err)
+		return nil, fmt.Errorf("failed to get active config: %w", err)
 	}
-	defer rows.Close()
 
 	config := make(map[string]string)
-	for rows.Next() {
-		var name, setting string
-		var unit *string // Can be NULL
-		if err := rows.Scan(&name, &setting, &unit); err != nil {
-			return nil, fmt.Errorf("failed to scan pg_settings row: %w", err)
+	for _, rawRow := range configRows {
+		row, ok := rawRow.(agent.PGConfigRow)
+		if !ok {
+			continue
 		}
+
+		// Extract the actual value from row.Setting (handles pgtype.Numeric and other types)
+		settingStr := extractSettingValue(row.Setting)
 
 		// Convert PostgreSQL format to CNPG format for comparison
 		// PostgreSQL returns: setting="262144", unit="8kB"
 		// We need: "2GB" (to match what CNPG expects)
-		if unit != nil && *unit != "" {
-			config[name] = ConvertWithUnit(setting, *unit)
-		} else {
-			config[name] = setting
+		if row.Unit != nil {
+			if unitStr, ok := row.Unit.(string); ok && unitStr != "" {
+				config[row.Name] = ConvertWithUnit(settingStr, unitStr)
+				continue
+			}
 		}
-	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating pg_settings rows: %w", err)
+		// For non-memory parameters (integers, booleans, strings, etc.)
+		config[row.Name] = settingStr
 	}
 
 	return config, nil
@@ -588,13 +641,13 @@ func NormalizeValue(value string) string {
 }
 
 // parseMemoryToBytes parses memory value and returns bytes.
-// Handles: "2GB", "256MB", "64kB", "1024" (plain number)
+// Handles: "2GB", "256MB", "64kB"
 func parseMemoryToBytes(value string) int64 {
 	value = strings.TrimSpace(value)
 
 	// Extract number and unit
 	var numStr string
-	var multiplier int64 = 1
+	var multiplier int64
 
 	if strings.HasSuffix(value, "gb") {
 		numStr = strings.TrimSpace(value[:len(value)-2])
@@ -606,7 +659,7 @@ func parseMemoryToBytes(value string) int64 {
 		numStr = strings.TrimSpace(value[:len(value)-2])
 		multiplier = 1024
 	} else {
-		numStr = value // Plain number
+		return 0
 	}
 
 	// Parse number (handles decimals like "2.5")
@@ -618,11 +671,14 @@ func parseMemoryToBytes(value string) int64 {
 	return int64(numValue * float64(multiplier))
 }
 
-// RequiresRestart checks if any of the changed parameters require database restart.
-// Returns true if any parameter has context='postmaster' in pg_settings.
-func (adapter *CNPGAdapter) RequiresRestart(ctx context.Context, changedParams map[string]string) (bool, error) {
+// CheckRestartRequired checks if any of the changed parameters require database restart.
+// Returns:
+//   - bool: true if any parameter requires restart
+//   - []string: list of parameter names that require restart
+//   - error: any error encountered
+func (adapter *CNPGAdapter) CheckRestartRequired(ctx context.Context, changedParams map[string]string) (bool, []string, error) {
 	if len(changedParams) == 0 {
-		return false, nil
+		return false, nil, nil
 	}
 
 	// Build list of changed parameter names for query
@@ -632,26 +688,25 @@ func (adapter *CNPGAdapter) RequiresRestart(ctx context.Context, changedParams m
 	}
 
 	// Query which of the changed parameters require restart
-	query := `SELECT name FROM pg_settings WHERE name = ANY($1) AND context = 'postmaster'`
+	query := `
+		/*dbtune*/
+		SELECT name FROM pg_settings WHERE name = ANY($1) AND context = 'postmaster'
+	`
 	rows, err := adapter.PGDriver.Query(ctx, query, paramNames)
 	if err != nil {
-		return false, fmt.Errorf("failed to query restart-required parameters: %w", err)
+		return false, nil, fmt.Errorf("failed to query restart-required parameters: %w", err)
 	}
 	defer rows.Close()
 
-	// If any row returned, at least one param requires restart
-	if rows.Next() {
+	// Collect all restart-required parameter names
+	restartParams := make([]string, 0)
+	logger := adapter.Logger()
+	for rows.Next() {
 		var paramName string
 		rows.Scan(&paramName)
-		logger := adapter.Logger()
 		logger.Infof("Parameter '%s' requires restart (context=postmaster)", paramName)
-		// Log all restart-required params
-		for rows.Next() {
-			rows.Scan(&paramName)
-			logger.Infof("Parameter '%s' requires restart (context=postmaster)", paramName)
-		}
-		return true, nil
+		restartParams = append(restartParams, paramName)
 	}
 
-	return false, nil
+	return len(restartParams) > 0, restartParams, nil
 }
