@@ -27,9 +27,17 @@ func ConfigFromViper(key *string) (Config, error) {
 		keyValue = *key
 	}
 
+	// Try both "postgres" and "postgresql" keys for backward compatibility
 	dbtuneConfig := viper.Sub(keyValue)
+	if dbtuneConfig == nil && keyValue == DEFAULT_CONFIG_KEY {
+		// Try alternate key "postgres" for backward compatibility
+		dbtuneConfig = viper.Sub("postgres")
+	}
+
 	if dbtuneConfig == nil {
-		dbtuneConfig = viper.New()
+		// If no sub-config found, use the global viper instance
+		// This allows environment variables to work properly
+		dbtuneConfig = viper.GetViper()
 	}
 
 	dbtuneConfig.BindEnv("connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
@@ -42,12 +50,22 @@ func ConfigFromViper(key *string) (Config, error) {
 	dbtuneConfig.SetDefault("maximum_query_text_length", 50_000)
 
 	var pgConfig Config
-	err := dbtuneConfig.Unmarshal(&pgConfig)
-	if err != nil {
-		return Config{}, fmt.Errorf("unable to decode into struct, %v", err)
+
+	// If using global viper, manually extract the nested config
+	if viper.Sub(keyValue) == nil && viper.Sub("postgres") == nil {
+		// No nested config found, try to unmarshal from environment variables via global viper
+		err := dbtuneConfig.Unmarshal(&pgConfig)
+		if err != nil {
+			return Config{}, fmt.Errorf("unable to decode into struct, %v", err)
+		}
+	} else {
+		err := dbtuneConfig.Unmarshal(&pgConfig)
+		if err != nil {
+			return Config{}, fmt.Errorf("unable to decode into struct, %v", err)
+		}
 	}
 
-	err = utils.ValidateStruct(&pgConfig)
+	err := utils.ValidateStruct(&pgConfig)
 	if err != nil {
 		return Config{}, err
 	}
@@ -56,6 +74,11 @@ func ConfigFromViper(key *string) (Config, error) {
 
 func DetectConfigFromConfigFile() bool {
 	config := viper.Sub(DEFAULT_CONFIG_KEY)
+	if config != nil {
+		return true
+	}
+	// Check alternate key "postgres" for backward compatibility
+	config = viper.Sub("postgres")
 	return config != nil
 }
 

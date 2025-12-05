@@ -230,6 +230,7 @@ var (
 
 	PGVersion                  = MetricDef{Key: "pg_version", Type: String}
 	PGMaxConnections           = MetricDef{Key: "pg_max_connections", Type: Int}
+	PGRole                     = MetricDef{Key: "pg_role", Type: String}
 	PGStatStatementsDelta      = MetricDef{Key: "pg_stat_statements_delta", Type: PgssDelta}
 	PGStatStatementsDeltaCount = MetricDef{Key: "pg_stat_statements_delta_count", Type: Int}
 	PGActiveConnections        = MetricDef{Key: "pg_active_connections", Type: Int}
