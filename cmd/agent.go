@@ -113,6 +113,7 @@ func main() {
 		adapter, err = cnpg.CreateCNPGAdapter()
 		if err != nil {
 			log.Fatalf("Failed to create CNPG adapter: %v", err)
+		}
 	case *useAzureFlex:
 		adapter, err = azureflex.CreateAzureFlexAdapter()
 		if err != nil {
