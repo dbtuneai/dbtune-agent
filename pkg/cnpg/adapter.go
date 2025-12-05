@@ -469,6 +469,9 @@ func (adapter *CNPGAdapter) Guardrails() *guardrails.Signal {
 }
 
 func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName string, containerName string, PGVersion string, logger *log.Logger) []agent.MetricCollector {
+	// Get PG config for query settings
+	pgConfig, _ := pg.ConfigFromViper(nil)
+
 	collectors := []agent.MetricCollector{
 		// TODO: Re-enable pg_role collector once backend supports it
 		// {
@@ -479,7 +482,7 @@ func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName st
 		{
 			Key:        "database_average_query_runtime",
 			MetricType: "float",
-			Collector:  pg.PGStatStatements(pool),
+			Collector:  pg.PGStatStatements(pool, pgConfig.IncludeQueries, pgConfig.MaximumQueryTextLength),
 		},
 		{
 			Key:        "database_transactions_per_second",
@@ -489,7 +492,7 @@ func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName st
 		{
 			Key:        "database_active_connections",
 			MetricType: "int",
-			Collector:  pg.ActiveConnections(pool),
+			Collector:  pg.Connections(pool),
 		},
 		{
 			Key:        "system_db_size",
