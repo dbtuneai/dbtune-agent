@@ -9,6 +9,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
@@ -137,6 +138,122 @@ func PatchCRDParameters(req CRDPatchRequest) error {
 	}
 
 	return fmt.Errorf("failed to patch resource after %d retries: %w", req.MaxRetries, err)
+}
+
+// TriggerCNPGRollingRestart triggers a rolling restart of a CNPG cluster by setting
+// the restart annotation. This is the recommended way to apply restart-required
+// PostgreSQL parameter changes.
+func TriggerCNPGRollingRestart(ctx context.Context, client Client, clusterName string, logger *log.Logger) error {
+	dynamicClient, err := dynamic.NewForConfig(client.Config)
+	if err != nil {
+		return fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "postgresql.cnpg.io",
+		Version:  "v1",
+		Resource: "clusters",
+	}
+
+	// Create annotation patch with current timestamp
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	patch := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"annotations": map[string]interface{}{
+				"kubectl.kubernetes.io/restartedAt": timestamp,
+			},
+		},
+	}
+
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("failed to marshal restart annotation patch: %w", err)
+	}
+
+	logger.Infof("Triggering rolling restart for CNPG cluster %s", clusterName)
+	logger.Debugf("Restart annotation patch: %s", string(patchBytes))
+
+	_, err = dynamicClient.Resource(gvr).
+		Namespace(client.Namespace).
+		Patch(ctx, clusterName, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+
+	if err != nil {
+		return fmt.Errorf("failed to trigger rolling restart: %w", err)
+	}
+
+	logger.Info("Rolling restart triggered successfully")
+	return nil
+}
+
+// WaitForCNPGClusterHealthy waits for a CNPG cluster to reach healthy state after rolling restart.
+// It monitors the cluster's status.phase field and waits until it becomes "Cluster in healthy state".
+// This is more reliable than watching individual pods because CNPG manages the restart sequence.
+func WaitForCNPGClusterHealthy(ctx context.Context, client Client, clusterName string, maxWait, pollInterval time.Duration, logger *log.Logger) error {
+	dynamicClient, err := dynamic.NewForConfig(client.Config)
+	if err != nil {
+		return fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "postgresql.cnpg.io",
+		Version:  "v1",
+		Resource: "clusters",
+	}
+
+	deadline := time.Now().Add(maxWait)
+	lastPhase := ""
+	restartDetected := false
+
+	logger.Infof("Waiting for CNPG cluster %s to complete rolling restart (timeout: %v)...", clusterName, maxWait)
+
+	for time.Now().Before(deadline) {
+		// Get the cluster resource
+		cluster, err := dynamicClient.Resource(gvr).
+			Namespace(client.Namespace).
+			Get(ctx, clusterName, metav1.GetOptions{})
+		if err != nil {
+			logger.Warnf("Failed to get cluster status: %v", err)
+			time.Sleep(pollInterval)
+			continue
+		}
+
+		// Extract status.phase from the unstructured object
+		status, found, err := unstructured.NestedMap(cluster.Object, "status")
+		if err != nil || !found {
+			logger.Debug("Cluster status not found, waiting...")
+			time.Sleep(pollInterval)
+			continue
+		}
+
+		phase, _, _ := unstructured.NestedString(status, "phase")
+		readyInstances, _, _ := unstructured.NestedInt64(status, "readyInstances")
+		instances, _, _ := unstructured.NestedInt64(status, "instances")
+
+		// Log phase changes
+		if phase != lastPhase {
+			logger.Infof("Cluster phase: %s (ready: %d/%d)", phase, readyInstances, instances)
+			lastPhase = phase
+		}
+
+		// Detect when restart starts (cluster becomes unhealthy)
+		if phase != "Cluster in healthy state" && phase != "" {
+			restartDetected = true
+		}
+
+		// Check if cluster is healthy and all instances are ready
+		if phase == "Cluster in healthy state" && readyInstances == instances && instances > 0 {
+			if restartDetected {
+				logger.Info("CNPG cluster rolling restart completed successfully")
+				return nil
+			}
+			// If we haven't seen restart yet, keep waiting
+			logger.Debug("Cluster healthy but restart not detected yet, waiting...")
+		}
+
+		time.Sleep(pollInterval)
+	}
+
+	return fmt.Errorf("CNPG cluster did not become healthy within %v timeout", maxWait)
 }
 
 // buildNestedPatch constructs a nested map structure from a dot-separated path.

@@ -11,12 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/dbtuneai/agent/pkg/metrics"
-	log "github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
@@ -47,10 +48,15 @@ func CreateClient(configPath string, namespace string) (Client, error) {
 		if err != nil {
 			return Client{}, fmt.Errorf("failed to create in-cluster K8s client: %w", err)
 		}
+		metricsClient, err := metricsv1.NewForConfig(config)
+		if err != nil {
+			return Client{}, fmt.Errorf("failed to create in-cluster metrics client: %w", err)
+		}
 		return Client{
-			Namespace: namespace,
-			Clientset: clientset,
-			Config:    config,
+			Namespace:     namespace,
+			Config:        config,
+			Clientset:     clientset,
+			MetricsClient: metricsClient,
 		}, nil
 	}
 
@@ -85,6 +91,99 @@ func CreateClient(configPath string, namespace string) (Client, error) {
 		Clientset:     clientset,
 		MetricsClient: metricsClient,
 	}, nil
+}
+
+// FindCNPGPrimaryPod finds the primary pod in a CNPG cluster by label selector.
+// CNPG labels pods with cnpg.io/cluster=<cluster-name> and role=primary.
+func (c *Client) FindCNPGPrimaryPod(ctx context.Context, clusterName string) (string, error) {
+	labelSelector := fmt.Sprintf("cnpg.io/cluster=%s,role=primary", clusterName)
+
+	pods, err := c.Clientset.CoreV1().Pods(c.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to list pods with selector %s: %w", labelSelector, err)
+	}
+
+	if len(pods.Items) == 0 {
+		return "", fmt.Errorf("no primary pod found for CNPG cluster %s", clusterName)
+	}
+
+	// Return the first (and should be only) primary pod
+	return pods.Items[0].Name, nil
+}
+
+// CNPGClusterStatus contains key status fields from a CNPG Cluster resource
+type CNPGClusterStatus struct {
+	// Current primary pod name (e.g., "postgres-1")
+	CurrentPrimary string
+	// Target primary pod name during failover/switchover (e.g., "postgres-2")
+	TargetPrimary string
+	// Cluster phase (e.g., "Cluster in healthy state", "Failing over", "Switchover in progress")
+	Phase string
+	// Number of ready instances
+	ReadyInstances int64
+	// Total number of instances
+	Instances int64
+}
+
+// GetCNPGClusterStatus retrieves the status of a CNPG cluster from the Cluster CRD.
+// This is more reliable than checking pod labels because it shows the cluster's
+// actual state including failover/switchover in progress.
+func (c *Client) GetCNPGClusterStatus(ctx context.Context, clusterName string) (*CNPGClusterStatus, error) {
+	// Create dynamic client for reading CRDs
+	dynamicClient, err := dynamic.NewForConfig(c.Config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "postgresql.cnpg.io",
+		Version:  "v1",
+		Resource: "clusters",
+	}
+
+	// Get the cluster resource
+	cluster, err := dynamicClient.Resource(gvr).
+		Namespace(c.Namespace).
+		Get(ctx, clusterName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get CNPG cluster %s: %w", clusterName, err)
+	}
+
+	// Extract status fields
+	status, found, err := unstructured.NestedMap(cluster.Object, "status")
+	if err != nil || !found {
+		return nil, fmt.Errorf("cluster status not found")
+	}
+
+	clusterStatus := &CNPGClusterStatus{}
+
+	// Extract current primary
+	if currentPrimary, found, _ := unstructured.NestedString(status, "currentPrimary"); found {
+		clusterStatus.CurrentPrimary = currentPrimary
+	}
+
+	// Extract target primary (set during failover/switchover)
+	if targetPrimary, found, _ := unstructured.NestedString(status, "targetPrimary"); found {
+		clusterStatus.TargetPrimary = targetPrimary
+	}
+
+	// Extract phase
+	if phase, found, _ := unstructured.NestedString(status, "phase"); found {
+		clusterStatus.Phase = phase
+	}
+
+	// Extract instance counts
+	if readyInstances, found, _ := unstructured.NestedInt64(status, "readyInstances"); found {
+		clusterStatus.ReadyInstances = readyInstances
+	}
+
+	if instances, found, _ := unstructured.NestedInt64(status, "instances"); found {
+		clusterStatus.Instances = instances
+	}
+
+	return clusterStatus, nil
 }
 
 type PodClient struct {
@@ -934,50 +1033,3 @@ func (pc *PodClient) IsPodReady(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
-// WaitForPodReadyTransitions waits for the pod to become not ready and then ready again.
-// This is useful after configuration changes that require pod restart/reload.
-// maxWait is the maximum time to wait for the entire process.
-// pollInterval is how often to check the pod status.
-func (pc *PodClient) WaitForPodReadyTransitions(ctx context.Context, maxWait, pollInterval time.Duration, logger *log.Logger) error {
-	deadline := time.Now().Add(maxWait)
-
-	// Phase 1: Wait for pod to become not ready
-	logger.Debug("Waiting for pod to become not ready...")
-	notReadyDetected := false
-	for time.Now().Before(deadline) {
-		ready, err := pc.IsPodReady(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to check pod ready status: %w", err)
-		}
-
-		if !ready {
-			logger.Debug("Pod transitioned to not ready state")
-			notReadyDetected = true
-			break
-		}
-
-		time.Sleep(pollInterval)
-	}
-
-	if !notReadyDetected {
-		return fmt.Errorf("pod did not become not ready within timeout")
-	}
-
-	// Phase 2: Wait for pod to become ready again
-	logger.Debug("Waiting for pod to become ready again...")
-	for time.Now().Before(deadline) {
-		ready, err := pc.IsPodReady(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to check pod ready status: %w", err)
-		}
-
-		if ready {
-			logger.Debug("Pod transitioned back to ready state")
-			return nil
-		}
-
-		time.Sleep(pollInterval)
-	}
-
-	return fmt.Errorf("pod did not become ready again within timeout")
-}
