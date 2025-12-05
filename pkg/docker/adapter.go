@@ -26,6 +26,7 @@ type DockerContainerAdapter struct {
 	Config            Config
 	dockerClient      *client.Client
 	GuardrailSettings guardrails.Config
+	pgConfig          pg.Config
 	PGDriver          *pgxpool.Pool
 	PGVersion         string
 }
@@ -68,6 +69,7 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 		Config:            dockerConfig,
 		dockerClient:      cli,
 		GuardrailSettings: guardrailSettings,
+		pgConfig:          pgConfig,
 		PGDriver:          dbpool,
 		PGVersion:         PGVersion,
 	}
@@ -83,64 +85,52 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 	pgDriver := adapter.PGDriver
 	collectors := []agent.MetricCollector{
 		{
-			Key:        "database_average_query_runtime",
-			MetricType: "float",
-			Collector:  pg.PGStatStatements(pgDriver),
+			Key:       "database_average_query_runtime",
+			Collector: pg.PGStatStatements(pgDriver, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
 		},
 		{
-			Key:        "database_transactions_per_second",
-			MetricType: "int",
-			Collector:  pg.TransactionsPerSecond(pgDriver),
+			Key:       "database_transactions_per_second",
+			Collector: pg.TransactionsPerSecond(pgDriver),
 		},
 		{
-			Key:        "database_active_connections",
-			MetricType: "int",
-			Collector:  pg.ActiveConnections(pgDriver),
+			Key:       "database_connections",
+			Collector: pg.Connections(pgDriver),
 		},
 		{
-			Key:        "system_db_size",
-			MetricType: "int",
-			Collector:  pg.DatabaseSize(pgDriver),
+			Key:       "system_db_size",
+			Collector: pg.DatabaseSize(pgDriver),
 		},
 		{
-			Key:        "database_autovacuum_count",
-			MetricType: "int",
-			Collector:  pg.Autovacuum(pgDriver),
+			Key:       "database_autovacuum_count",
+			Collector: pg.Autovacuum(pgDriver),
 		},
 		{
-			Key:        "server_uptime",
-			MetricType: "float",
-			Collector:  pg.UptimeMinutes(pgDriver),
+			Key:       "server_uptime",
+			Collector: pg.UptimeMinutes(pgDriver),
 		},
 		{
-			Key:        "pg_database",
-			MetricType: "int",
-			Collector:  pg.PGStatDatabase(pgDriver),
+			Key:       "pg_database",
+			Collector: pg.PGStatDatabase(pgDriver),
 		},
 		{
-			Key:        "pg_user_tables",
-			MetricType: "int",
-			Collector:  pg.PGStatUserTables(pgDriver),
+			Key:       "pg_user_tables",
+			Collector: pg.PGStatUserTables(pgDriver),
 		},
 		{
-			Key:        "pg_bgwriter",
-			MetricType: "int",
-			Collector:  pg.PGStatBGwriter(pgDriver),
+			Key:       "pg_bgwriter",
+			Collector: pg.PGStatBGwriter(pgDriver),
 		},
 		{
-			Key:        "pg_wal",
-			MetricType: "int",
-			Collector:  pg.PGStatWAL(pgDriver),
+			Key:       "pg_wal",
+			Collector: pg.PGStatWAL(pgDriver),
 		},
 		{
-			Key:        "database_wait_events",
-			MetricType: "int",
-			Collector:  pg.WaitEvents(pgDriver),
+			Key:       "database_wait_events",
+			Collector: pg.WaitEvents(pgDriver),
 		},
 		{
-			Key:        "hardware",
-			MetricType: "int",
-			Collector:  DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
+			Key:       "hardware",
+			Collector: DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
 		},
 	}
 	majorVersion := strings.Split(adapter.PGVersion, ".")
@@ -151,9 +141,8 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 	}
 	if intMajorVersion >= 17 {
 		collectors = append(collectors, agent.MetricCollector{
-			Key:        "pg_checkpointer",
-			MetricType: "int",
-			Collector:  pg.PGStatCheckpointer(pgDriver),
+			Key:       "pg_checkpointer",
+			Collector: pg.PGStatCheckpointer(pgDriver),
 		})
 	}
 	return collectors

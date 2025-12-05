@@ -41,8 +41,9 @@ type MetricData struct {
 
 // FormattedMetrics matches the expected payload of DBtune backend
 type FormattedMetrics struct {
-	Metrics   map[string]MetricData `json:"metrics"`
-	Timestamp string                `json:"timestamp"`
+	Version   string                 `json:"version"`
+	Metrics   map[string]interface{} `json:"metrics"`
+	Timestamp string                 `json:"timestamp"`
 }
 
 type FormattedSystemInfo struct {
@@ -136,22 +137,19 @@ func NewMetric(key string, value interface{}, typeStr MetricType) (FlatValue, er
 	}, nil
 }
 
-// TODO: write util tests for this
 // FormatMetrics converts the MetricsState object into a FormattedMetrics object
 // to be used as a metrics payload
 func FormatMetrics(metrics []FlatValue) FormattedMetrics {
-	metricsMap := make(map[string]MetricData)
+	metricsMap := make(map[string]interface{})
 
 	for _, metric := range metrics {
-		metricsMap[metric.Key] = MetricData{
-			Type:  string(metric.Type), // Assuming MetricType is a string type, adjust if necessary
-			Value: metric.Value,
-		}
+		metricsMap[metric.Key] = metric.Value
 	}
 
 	return FormattedMetrics{
+		Version:   "2.0",
 		Metrics:   metricsMap,
-		Timestamp: time.Now().Format(time.RFC3339Nano), // Current timestamp in RFC3339 format
+		Timestamp: time.Now().Format(time.RFC3339Nano),
 	}
 }
 
@@ -236,6 +234,8 @@ var (
 	PGStatStatementsDelta      = MetricDef{Key: "pg_stat_statements_delta", Type: PgssDelta}
 	PGStatStatementsDeltaCount = MetricDef{Key: "pg_stat_statements_delta_count", Type: Int}
 	PGActiveConnections        = MetricDef{Key: "pg_active_connections", Type: Int}
+	PGIdleConnections          = MetricDef{Key: "pg_idle_connections", Type: Int}
+	PGIdleInTransactionConnections = MetricDef{Key: "pg_idle_in_transaction_connections", Type: Int}
 	PGInstanceSize             = MetricDef{Key: "pg_instance_size", Type: Bytes}
 	PGAutoVacuumCount          = MetricDef{Key: "pg_autovacuum_count", Type: Int}
 	PGCacheHitRatio            = MetricDef{Key: "pg_cache_hit_ratio", Type: Percentage}
@@ -246,8 +246,8 @@ var (
 	PGTuplesUpdated  = MetricDef{Key: "pg_tuples_updated", Type: Int}
 	PGTuplesDeleted  = MetricDef{Key: "pg_tuples_deleted", Type: Int}
 
-	PGTempFiles = MetricDef{Key: "pg_tuples_updated", Type: Int}
-	PGTempBytes = MetricDef{Key: "pg_tuples_updated", Type: Int}
+	PGTempFiles = MetricDef{Key: "pg_temp_files", Type: Int}
+	PGTempBytes = MetricDef{Key: "pg_temp_bytes", Type: Int}
 
 	PGIdleInTransactionTime = MetricDef{Key: "pg_idle_in_transaction_time", Type: Float}
 
@@ -267,10 +267,12 @@ var (
 	PGIdxScan     = MetricDef{Key: "pg_idx_scan", Type: IntMap}
 	PGIdxTupFetch = MetricDef{Key: "pg_idx_tup_fetch", Type: IntMap}
 
+	// BG writing
 	PGBGWBuffersClean    = MetricDef{Key: "pg_bg_buffers_clean", Type: Int}
 	PGMBGWaxWrittenClean = MetricDef{Key: "pg_bg_max_written_clean", Type: Int}
 	PGBGWBuffersAlloc    = MetricDef{Key: "pg_bg_buffers_alloc", Type: Int}
 
+	// Checkpointing & WAL
 	PGCPNumTimed       = MetricDef{Key: "pg_cp_num_timed", Type: Int}
 	PGCPNumRequested   = MetricDef{Key: "pg_cp_num_requested", Type: Int}
 	PGCPWriteTime      = MetricDef{Key: "pg_cp_write_time", Type: Float}

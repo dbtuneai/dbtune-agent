@@ -18,6 +18,7 @@ type RDSAdapter struct {
 	agent.CommonAgent
 	Config            Config
 	GuardrailSettings guardrails.Config
+	pgConfig          pg.Config
 	State             State
 	AWSClients        AWSClients
 	PGDriver          *pgxpool.Pool
@@ -83,6 +84,7 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 	adapter := &RDSAdapter{
 		CommonAgent: *commonAgent,
 		Config:      config,
+		pgConfig:    pgConfig,
 		State: State{
 			DBInfo: &dbInfo,
 		},
@@ -200,58 +202,47 @@ func (adapter *RDSAdapter) Collectors(aurora bool) []agent.MetricCollector {
 	pool := adapter.PGDriver
 	collectors := []agent.MetricCollector{
 		{
-			Key:        "database_average_query_runtime",
-			MetricType: "float",
-			Collector:  pg.PGStatStatements(pool),
+			Key:       "database_average_query_runtime",
+			Collector: pg.PGStatStatements(pool, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
 		},
 		{
-			Key:        "database_transactions_per_second",
-			MetricType: "int",
-			Collector:  pg.TransactionsPerSecond(pool),
+			Key:       "database_transactions_per_second",
+			Collector: pg.TransactionsPerSecond(pool),
 		},
 		{
-			Key:        "database_active_connections",
-			MetricType: "int",
-			Collector:  pg.ActiveConnections(pool),
+			Key:       "database_connections",
+			Collector: pg.Connections(pool),
 		},
 		{
-			Key:        "system_db_size",
-			MetricType: "int",
-			Collector:  pg.DatabaseSize(pool),
+			Key:       "system_db_size",
+			Collector: pg.DatabaseSize(pool),
 		},
 		{
-			Key:        "database_autovacuum_count",
-			MetricType: "int",
-			Collector:  pg.Autovacuum(pool),
+			Key:       "database_autovacuum_count",
+			Collector: pg.Autovacuum(pool),
 		},
 		{
-			Key:        "server_uptime",
-			MetricType: "float",
-			Collector:  pg.UptimeMinutes(pool),
+			Key:       "server_uptime",
+			Collector: pg.UptimeMinutes(pool),
 		},
 		{
-			Key:        "pg_database",
-			MetricType: "int",
-			Collector:  pg.PGStatDatabase(pool),
+			Key:       "pg_database",
+			Collector: pg.PGStatDatabase(pool),
 		},
 		{
-			Key:        "pg_user_tables",
-			MetricType: "int",
-			Collector:  pg.PGStatUserTables(pool),
+			Key:       "pg_user_tables",
+			Collector: pg.PGStatUserTables(pool),
 		},
 		{
-			Key:        "pg_bgwriter",
-			MetricType: "int",
-			Collector:  pg.PGStatBGwriter(pool),
+			Key:       "pg_bgwriter",
+			Collector: pg.PGStatBGwriter(pool),
 		},
 		{
-			Key:        "database_wait_events",
-			MetricType: "int",
-			Collector:  pg.WaitEvents(pool),
+			Key:       "database_wait_events",
+			Collector: pg.WaitEvents(pool),
 		},
 		{
-			Key:        "hardware",
-			MetricType: "int",
+			Key: "hardware",
 			Collector: RDSHardwareInfo(
 				adapter.Config.RDSDatabaseIdentifier,
 				&adapter.State,
@@ -268,16 +259,14 @@ func (adapter *RDSAdapter) Collectors(aurora bool) []agent.MetricCollector {
 	}
 	if intMajorVersion >= 17 {
 		collectors = append(collectors, agent.MetricCollector{
-			Key:        "pg_checkpointer",
-			MetricType: "int",
-			Collector:  pg.PGStatCheckpointer(pool),
+			Key:       "pg_checkpointer",
+			Collector: pg.PGStatCheckpointer(pool),
 		})
 	}
 	if !aurora {
 		collectors = append(collectors, agent.MetricCollector{
-			Key:        "pg_wal",
-			MetricType: "int",
-			Collector:  pg.PGStatWAL(pool),
+			Key:       "pg_wal",
+			Collector: pg.PGStatWAL(pool),
 		})
 	}
 

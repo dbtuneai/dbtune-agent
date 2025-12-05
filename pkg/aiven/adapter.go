@@ -13,6 +13,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
+	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
 
@@ -32,6 +33,7 @@ type AivenPostgreSQLAdapter struct {
 	Client            aivenclient.Client
 	State             *State
 	GuardrailSettings guardrails.Config
+	pgConfig          pg.Config
 	PGDriver          *pgPool.Pool
 	PGVersion         string
 }
@@ -97,6 +99,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		Client:            aivenClient,
 		State:             state,
 		GuardrailSettings: guardrailSettings,
+		pgConfig:          pgConfig,
 		PGDriver:          pgPool,
 		PGVersion:         PGVersion,
 	}
@@ -378,63 +381,51 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 	pgDriver := adapter.PGDriver
 	collectors := []agent.MetricCollector{
 		{
-			Key:        "database_average_query_runtime",
-			MetricType: "float",
-			Collector:  pg.PGStatStatements(pgDriver),
+			Key:       "database_average_query_runtime",
+			Collector: pg.PGStatStatements(pgDriver, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
 		},
 		{
-			Key:        "database_transactions_per_second",
-			MetricType: "int",
-			Collector:  pg.TransactionsPerSecond(pgDriver),
+			Key:       "database_transactions_per_second",
+			Collector: pg.TransactionsPerSecond(pgDriver),
 		},
 		{
-			Key:        "database_active_connections",
-			MetricType: "int",
-			Collector:  pg.ActiveConnections(pgDriver),
+			Key:       "database_connections",
+			Collector: pg.Connections(pgDriver),
 		},
 		{
-			Key:        "system_db_size",
-			MetricType: "int",
-			Collector:  pg.DatabaseSize(pgDriver), // Use standard collector for consistency
+			Key:       "system_db_size",
+			Collector: pg.DatabaseSize(pgDriver), // Use standard collector for consistency
 		},
 		{
-			Key:        "database_autovacuum_count",
-			MetricType: "int",
-			Collector:  pg.Autovacuum(pgDriver),
+			Key:       "database_autovacuum_count",
+			Collector: pg.Autovacuum(pgDriver),
 		},
 		{
-			Key:        "server_uptime",
-			MetricType: "float",
-			Collector:  pg.UptimeMinutes(pgDriver),
+			Key:       "server_uptime",
+			Collector: pg.UptimeMinutes(pgDriver),
 		},
 		{
-			Key:        "pg_database",
-			MetricType: "int",
-			Collector:  pg.PGStatDatabase(pgDriver),
+			Key:       "pg_database",
+			Collector: pg.PGStatDatabase(pgDriver),
 		},
 		{
-			Key:        "pg_user_tables",
-			MetricType: "int",
-			Collector:  pg.PGStatUserTables(pgDriver),
+			Key:       "pg_user_tables",
+			Collector: pg.PGStatUserTables(pgDriver),
 		},
 		{
-			Key:        "pg_bgwriter",
-			MetricType: "int",
-			Collector:  pg.PGStatBGwriter(pgDriver),
+			Key:       "pg_bgwriter",
+			Collector: pg.PGStatBGwriter(pgDriver),
 		},
 		{
-			Key:        "pg_wal",
-			MetricType: "int",
-			Collector:  pg.PGStatWAL(pgDriver),
+			Key:       "pg_wal",
+			Collector: pg.PGStatWAL(pgDriver),
 		},
 		{
-			Key:        "database_wait_events",
-			MetricType: "int",
-			Collector:  pg.WaitEvents(pgDriver),
+			Key:       "database_wait_events",
+			Collector: pg.WaitEvents(pgDriver),
 		},
 		{
-			Key:        "hardware",
-			MetricType: "int",
+			Key: "hardware",
 			Collector: AivenHardwareInfo(
 				&adapter.Client,
 				adapter.Config.ProjectName,
@@ -454,9 +445,8 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 	}
 	if intMajorVersion >= 17 {
 		collectors = append(collectors, agent.MetricCollector{
-			Key:        "pg_checkpointer",
-			MetricType: "int",
-			Collector:  pg.PGStatCheckpointer(pgDriver),
+			Key:       "pg_checkpointer",
+			Collector: pg.PGStatCheckpointer(pgDriver),
 		})
 	}
 	return collectors
@@ -569,7 +559,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 		Context: "service",
 	})
 
-	numericRows, err := adapter.PGDriver.Query(context.Background(), pg.SELECT_NUMERIC_SETTINGS)
+	numericRows, err := utils.QueryWithPrefix(adapter.PGDriver, context.Background(), pg.SELECT_NUMERIC_SETTINGS)
 
 	if err != nil {
 		return nil, err
@@ -606,7 +596,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 	}
 
 	// Query for non-numeric types
-	nonNumericRows, err := adapter.PGDriver.Query(context.Background(), pg.SELECT_NON_NUMERIC_SETTINGS)
+	nonNumericRows, err := utils.QueryWithPrefix(adapter.PGDriver, context.Background(), pg.SELECT_NON_NUMERIC_SETTINGS)
 	if err != nil {
 		return nil, err
 	}

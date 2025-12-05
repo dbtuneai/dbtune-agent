@@ -20,23 +20,31 @@ builds:
       - goos: darwin
         goarch: amd64
 
-dockers:
-  - image_templates:
-      - "public.ecr.aws/dbtune/dbtune/agent:{{ .Version }}"
-      - "public.ecr.aws/dbtune/dbtune/agent:latest"
+dockers_v2:
+  - images:
+      - "public.ecr.aws/dbtune/dbtune/agent"
+    tags:
+      - "{{ .Version }}"
+      - "latest"
     dockerfile: Dockerfile
     extra_files:
       - go.mod
       - go.sum
       - cmd/
       - pkg/
-    build_flag_templates:
+    flags:
       - "--pull"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.title=dbtune-agent"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--platform=linux/amd64"
+    labels:
+      "org.opencontainers.image.created": "{{.Date}}"
+      "org.opencontainers.image.title": "dbtune-agent"
+      "org.opencontainers.image.revision": "{{.FullCommit}}"
+      "org.opencontainers.image.version": "{{.Version}}"
+    build_args:
+      VERSION: "{{ .Version }}"
+      COMMIT: "{{ .Commit }}"
+      DATE: "{{ .Date }}"
+    platforms:
+      - linux/amd64
 
 archives:
   - formats: [tar.gz]
@@ -82,6 +90,6 @@ changelog:
 announce:
   slack:
     enabled: true
-    message_template: "🚀 new DBTune Agent {{.Tag}} release. [Changelog]({{.ReleaseURL}})"
+    message_template: "🚀 new DBtune Agent {{.Tag}} release. [Changelog]({{.ReleaseURL}})"
     channel: "testingbot"
     username: "Platform release"

@@ -1,4 +1,4 @@
-# DBTune Setup and Configuration
+# DBtune Setup and Configuration
 
 ### Prerequisites
 These instructions require that you have the AWS cli v2 installed and your `~/.aws/credentials` file configured for your AWS account. [AWS CLI Install Instructions.](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
@@ -6,7 +6,7 @@ These instructions require that you have the AWS cli v2 installed and your `~/.a
 
 ##These commands are a one-time setup.
 
-###Prerequisites 
+###Prerequisites
 
 Gather the following information that will be specific to your deployment. Examples are provided in parenthesis.
 
@@ -21,8 +21,8 @@ The actual values that pertain to your AWS account need to be replaced in the co
 ### IAM Role and Policies
 
 ```
-aws iam create-role --role-name dbTuneTaskRole \
-  --description "DBTune Agent ECS tasks" \
+aws iam create-role --role-name dbtuneTaskRole \
+  --description "DBtune Agent ECS tasks" \
   --assume-role-policy-document '{"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"Service": "ecs-tasks.amazonaws.com"}, "Action": "sts:AssumeRole"}]}'
 
 aws iam attach-role-policy --role-name dbTuneTaskRole \
@@ -32,8 +32,8 @@ aws iam put-role-policy --role-name dbTuneTaskRole \
   --policy-name GetSSMPganalyzeParameters \
   --policy-document '{"Statement":[{"Action": ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"], "Effect": "Allow", "Resource": "arn:aws:ssm:*:*:parameter/dbtune/*"}, {"Action": "kms:Decrypt", "Effect": "Allow", "Resource": "arn:aws:kms:*:*:*"}]}'
 
-aws iam attach-role-policy --role-name dbTuneTaskRole \
-  --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/DBTune
+aws iam attach-role-policy --role-name dbtuneTaskRole \
+  --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/DBtune
 ```
 
 ### Configuring the agent on Amazon ECS
@@ -85,7 +85,7 @@ aws ecs create-service \
 Add the EventBridge Rule
 
 ```
-aws events put-rule --name "dbtune-fargate-staging" --event-pattern "{\"source\":[\"aws.ecs\"],\"detail-type\":[\"ECS Task State Change\"],\"detail\":{\"lastStatus\":[\"STOPPED\"],\"clusterArn\":[\"arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/dbtune\"]}}" --state "ENABLED" --description "Monitoring rule for ECS DBTune staging" --event-bus-name "default" --no-cli-pager
+aws events put-rule --name "dbtune-fargate-staging" --event-pattern "{\"source\":[\"aws.ecs\"],\"detail-type\":[\"ECS Task State Change\"],\"detail\":{\"lastStatus\":[\"STOPPED\"],\"clusterArn\":[\"arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/dbtune\"]}}" --state "ENABLED" --description "Monitoring rule for ECS DBtune staging" --event-bus-name "default" --no-cli-pager
 ```
 
 Add the Target for the Rule
@@ -98,9 +98,9 @@ aws events put-targets --rule dbtune-fargate-staging --targets "Id"="Target1","A
 
 
 ## Update an Existing Task Definition and Redeploy
-In the event that you need to change or fix an issue with the task definition, the following steps will allow you to update the ECS task definition and _update_ the service. 
+In the event that you need to change or fix an issue with the task definition, the following steps will allow you to update the ECS task definition and _update_ the service.
 
-**NOTE:** After running these commands, you will have two tasks running as the original is shutting down, be patient and it will terminate on it's own. You may see some duplicate metrics being sent to DBTune for a very short period until the original terminates and the newly updated task is Running.
+**NOTE:** After running these commands, you will have two tasks running as the original is shutting down, be patient and it will terminate on it's own. You may see some duplicate metrics being sent to DBtune for a very short period until the original terminates and the newly updated task is Running.
 
 
 - Update the task definition defined in the `dbtune_task.json` file.

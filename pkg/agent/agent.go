@@ -268,9 +268,8 @@ type Caches struct {
 }
 
 type MetricCollector struct {
-	Key        string
-	MetricType string
-	Collector  func(ctx context.Context, state *MetricsState) error
+	Key       string
+	Collector func(ctx context.Context, state *MetricsState) error
 }
 
 type MetricsState struct {
@@ -388,8 +387,7 @@ func (a *CommonAgent) SendHeartbeat() error {
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		a.Logger().Infof("Error marshaling JSON: %s", err)
-		fmt.Println("Error marshaling JSON:", err)
+		a.Logger().Errorf("Error marshaling JSON: %s", err)
 		return err
 	}
 
