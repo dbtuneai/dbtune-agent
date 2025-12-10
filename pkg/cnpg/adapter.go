@@ -359,7 +359,7 @@ func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 	if err := adapter.CheckForFailover(context.Background()); err != nil {
 		// Block operation for ANY error from CheckForFailover
 		if failoverErr, ok := err.(*FailoverDetectedError); ok {
-			logger.Warnf("[FAILOVER_RECOVERY] BLOCKING GetActiveConfig during recovery: %s", failoverErr.Message)
+			logger.Infof("[FAILOVER_RECOVERY] Operations blocked during recovery: %s", failoverErr.Message)
 			return agent.ConfigArraySchema{}, failoverErr
 		}
 		// Non-failover error (cluster status check failed, pod not found, etc.)
@@ -433,7 +433,7 @@ func (adapter *CNPGAdapter) GetMetrics() ([]metrics.FlatValue, error) {
 	if err := adapter.CheckForFailover(context.Background()); err != nil {
 		// Block operation for ANY error from CheckForFailover
 		if failoverErr, ok := err.(*FailoverDetectedError); ok {
-			logger.Warnf("[FAILOVER_RECOVERY] BLOCKING GetMetrics during recovery: %s", failoverErr.Message)
+			logger.Infof("[FAILOVER_RECOVERY] Operations blocked during recovery: %s", failoverErr.Message)
 			// Return FailoverDetectedError - runner will skip sending error and metrics
 			return []metrics.FlatValue{}, failoverErr
 		}
@@ -452,11 +452,10 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 
 	// Check for failover before collecting system info
 	// During recovery, PostgreSQL and primary pod may be unavailable
-	logger.Debugf("[FAILOVER_RECOVERY] GetSystemInfo: checking for failover before collecting system info")
 	if err := adapter.CheckForFailover(context.Background()); err != nil {
 		// Block operation for ANY error from CheckForFailover
 		if failoverErr, ok := err.(*FailoverDetectedError); ok {
-			logger.Warnf("[FAILOVER_RECOVERY] BLOCKING GetSystemInfo during recovery: %s", failoverErr.Message)
+			logger.Infof("[FAILOVER_RECOVERY] Operations blocked during recovery: %s", failoverErr.Message)
 			// Return FailoverDetectedError - runner will skip sending error and system info
 			return []metrics.FlatValue{}, failoverErr
 		}
@@ -465,7 +464,6 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 		logger.Warnf("[FAILOVER_RECOVERY] BLOCKING GetSystemInfo due to cluster check failure: %v", err)
 		return []metrics.FlatValue{}, err
 	}
-	logger.Debugf("[FAILOVER_RECOVERY] GetSystemInfo: no failover detected, proceeding with collection")
 
 	// Get operations context AFTER CheckForFailover passes
 	// This ensures we get the fresh context created by recovery completion, not the pre-cancelled one

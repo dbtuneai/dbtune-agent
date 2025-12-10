@@ -114,7 +114,8 @@ func (adapter *CNPGAdapter) CheckForFailover(ctx context.Context) error {
 
 		// First check: Is cluster healthy?
 		if !isClusterHealthy(clusterStatus) {
-			logger.Warnf("[FAILOVER_RECOVERY] BLOCKING - cluster not healthy")
+			logger.Infof("[FAILOVER_RECOVERY] Waiting for cluster health (ready=%d/%d, phase=%s)",
+				clusterStatus.ReadyInstances, clusterStatus.Instances, clusterStatus.Phase)
 			return &FailoverDetectedError{
 				OldPrimary: lastKnownPrimary,
 				NewPrimary: "(recovery in progress)",
@@ -127,7 +128,7 @@ func (adapter *CNPGAdapter) CheckForFailover(ctx context.Context) error {
 		// Second check: Has minimum stabilization time passed?
 		if timeSinceFailover < MinTimeSinceFailover {
 			remainingTime := MinTimeSinceFailover - timeSinceFailover
-			logger.Warnf("[FAILOVER_RECOVERY] BLOCKING - cluster healthy but in stabilization period (%v remaining)", remainingTime.Round(time.Second))
+			logger.Infof("[FAILOVER_RECOVERY] Waiting for stabilization period (%v remaining)", remainingTime.Round(time.Second))
 			return &FailoverDetectedError{
 				OldPrimary: lastKnownPrimary,
 				NewPrimary: "(stabilizing)",
@@ -160,7 +161,7 @@ func (adapter *CNPGAdapter) CheckForFailover(ctx context.Context) error {
 		// CNPG relies on Kubernetes readiness probes, but PostgreSQL might need additional time
 		// to finalize promotion and be ready for configuration changes
 		if err := adapter.PGDriver.Ping(ctx); err != nil {
-			logger.Warnf("[FAILOVER_RECOVERY] BLOCKING - cluster healthy but PostgreSQL not accepting connections: %v", err)
+			logger.Infof("[FAILOVER_RECOVERY] Waiting for PostgreSQL to accept connections: %v", err)
 			return &FailoverDetectedError{
 				OldPrimary: lastKnownPrimary,
 				NewPrimary: "(PostgreSQL unavailable)",
