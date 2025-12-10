@@ -2,12 +2,23 @@ package runner
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 
 	"github.com/sirupsen/logrus"
 )
+
+// isRecoveryError checks if an error indicates the system is in recovery/failover
+func isRecoveryError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errMsg := strings.ToLower(err.Error())
+	return strings.Contains(errMsg, "failover detected") ||
+		strings.Contains(errMsg, "recovery in progress")
+}
 
 func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger *logrus.Logger, skipFirst bool, fn func() error) {
 	// Run immediately
@@ -52,6 +63,11 @@ func Runner(adapter agent.AgentLooper) {
 	go runWithTicker(ctx, metricsTicker, "metrics", logger, false, func() error {
 		data, err := adapter.GetMetrics()
 		if err != nil {
+			// If error indicates recovery/failover, skip sending error and data
+			if isRecoveryError(err) {
+				logger.Debugf("Skipping metrics during recovery: %v", err)
+				return nil // Return nil to prevent error logging in runWithTicker
+			}
 			errorPayload := agent.ErrorPayload{
 				ErrorMessage: "Failed to collect metrics: " + err.Error(),
 				ErrorType:    "metrics_error",
@@ -67,6 +83,11 @@ func Runner(adapter agent.AgentLooper) {
 	go runWithTicker(ctx, systemMetricsTicker, "system info", logger, false, func() error {
 		data, err := adapter.GetSystemInfo()
 		if err != nil {
+			// If error indicates recovery/failover, skip sending error and data
+			if isRecoveryError(err) {
+				logger.Debugf("Skipping system info during recovery: %v", err)
+				return nil // Return nil to prevent error logging in runWithTicker
+			}
 			errorPayload := agent.ErrorPayload{
 				ErrorMessage: "Failed to collect system information: " + err.Error(),
 				ErrorType:    "system_info_error",
@@ -82,6 +103,11 @@ func Runner(adapter agent.AgentLooper) {
 	go runWithTicker(ctx, configTicker, "config", logger, false, func() error {
 		config, err := adapter.GetActiveConfig()
 		if err != nil {
+			// If error indicates recovery/failover, skip sending error and config
+			if isRecoveryError(err) {
+				logger.Debugf("Skipping config during recovery: %v", err)
+				return nil // Return nil to prevent error logging in runWithTicker
+			}
 			errorPayload := agent.ErrorPayload{
 				ErrorMessage: "Failed to get active configuration: " + err.Error(),
 				ErrorType:    "config_error",
@@ -90,10 +116,9 @@ func Runner(adapter agent.AgentLooper) {
 			adapter.SendError(errorPayload)
 			return err
 		}
-		if err := adapter.SendActiveConfig(config); err != nil {
-			return err
-		}
 
+		// Check for proposed configs BEFORE sending current config
+		// This is critical after failover recovery - we need to apply baseline first
 		proposedConfig, err := adapter.GetProposedConfig()
 		if err != nil {
 			return err
@@ -109,7 +134,24 @@ func Runner(adapter agent.AgentLooper) {
 				adapter.SendError(errorPayload)
 				return err
 			}
+
+			// Re-fetch config after applying proposed config
+			// This ensures we send the newly applied config
+			config, err = adapter.GetActiveConfig()
+			if err != nil {
+				if isRecoveryError(err) {
+					logger.Debugf("Skipping config during recovery after apply: %v", err)
+					return nil
+				}
+				return err
+			}
 		}
+
+		// Now send the config (either original or newly applied)
+		if err := adapter.SendActiveConfig(config); err != nil {
+			return err
+		}
+
 		return nil
 	})
 
