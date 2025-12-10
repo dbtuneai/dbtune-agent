@@ -3,9 +3,18 @@ package cnpg
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/kubernetes"
+)
+
+const (
+	// MinTimeSinceFailover is the minimum time to wait after detecting a failover
+	// before checking cluster health. This prevents rapid successive checks
+	// immediately after failover detection.
+	MinTimeSinceFailover = 30 * time.Second
 )
 
 // FailoverDetectedError is returned when a failover is detected during tuning.
@@ -20,10 +29,51 @@ func (e *FailoverDetectedError) Error() string {
 	return fmt.Sprintf("failover detected: %s -> %s: %s", e.OldPrimary, e.NewPrimary, e.Message)
 }
 
+// isClusterHealthy checks if the CNPG cluster is in a healthy, stable state.
+// Returns true if cluster is ready for configuration changes.
+func isClusterHealthy(clusterStatus *kubernetes.CNPGClusterStatus) bool {
+	// Check 1: All instances must be ready
+	if clusterStatus.ReadyInstances != clusterStatus.Instances {
+		return false
+	}
+
+	// Check 2: Must have a current primary
+	if clusterStatus.CurrentPrimary == "" {
+		return false
+	}
+
+	// Check 3: Target primary must match current primary (no failover in progress)
+	if clusterStatus.TargetPrimary != "" && clusterStatus.TargetPrimary != clusterStatus.CurrentPrimary {
+		return false
+	}
+
+	// Check 4: Phase must indicate healthy state
+	// Known healthy phases: "Cluster in healthy state", "Cluster is Ready"
+	// Known unhealthy phases: "Failing over", "Switchover in progress", "Waiting for instances to become active"
+	unhealthyPhases := []string{
+		"Failing over",
+		"Switchover in progress",
+		"Waiting for instances to become active",
+		"Upgrading cluster",
+		"Applying configuration",
+	}
+
+	phaseLower := strings.ToLower(clusterStatus.Phase)
+	for _, unhealthy := range unhealthyPhases {
+		if strings.Contains(phaseLower, strings.ToLower(unhealthy)) {
+			return false
+		}
+	}
+
+	// If all checks pass, cluster is healthy
+	return true
+}
+
 // CheckForFailover checks if a failover has occurred since last check.
 // Returns FailoverDetectedError if primary changed, nil otherwise.
 func (adapter *CNPGAdapter) CheckForFailover(ctx context.Context) error {
 	logger := adapter.Logger()
+
 	clusterName, err := adapter.getClusterName(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster name: %w", err)
@@ -51,6 +101,80 @@ func (adapter *CNPGAdapter) CheckForFailover(ctx context.Context) error {
 
 	currentPrimary := clusterStatus.CurrentPrimary
 
+	// If a failover was recently detected, check if cluster is fully recovered
+	// This prevents config applications while cluster is still stabilizing (pg_rewind, WAL replay, etc.)
+	timeSinceFailover := adapter.State.TimeSinceLastFailover()
+	logger.Debugf("[FAILOVER_RECOVERY] CheckForFailover: currentPrimary=%s, lastKnownPrimary=%s, timeSinceFailover=%v",
+		currentPrimary, lastKnownPrimary, timeSinceFailover)
+	if timeSinceFailover > 0 {
+		logger.Infof("[FAILOVER_RECOVERY] In recovery period after failover (elapsed: %v)", timeSinceFailover.Round(time.Second))
+		logger.Infof("[FAILOVER_RECOVERY] Cluster status: ready=%d/%d, primary=%s, target=%s, phase=%s",
+			clusterStatus.ReadyInstances, clusterStatus.Instances,
+			clusterStatus.CurrentPrimary, clusterStatus.TargetPrimary, clusterStatus.Phase)
+
+		// First check: Is cluster healthy?
+		if !isClusterHealthy(clusterStatus) {
+			logger.Warnf("[FAILOVER_RECOVERY] BLOCKING - cluster not healthy")
+			return &FailoverDetectedError{
+				OldPrimary: lastKnownPrimary,
+				NewPrimary: "(recovery in progress)",
+				Message: fmt.Sprintf("cluster not healthy: ready=%d/%d, phase=%s, target=%s",
+					clusterStatus.ReadyInstances, clusterStatus.Instances,
+					clusterStatus.Phase, clusterStatus.TargetPrimary),
+			}
+		}
+
+		// Second check: Has minimum stabilization time passed?
+		if timeSinceFailover < MinTimeSinceFailover {
+			remainingTime := MinTimeSinceFailover - timeSinceFailover
+			logger.Warnf("[FAILOVER_RECOVERY] BLOCKING - cluster healthy but in stabilization period (%v remaining)", remainingTime.Round(time.Second))
+			return &FailoverDetectedError{
+				OldPrimary: lastKnownPrimary,
+				NewPrimary: "(stabilizing)",
+				Message: fmt.Sprintf("cluster healthy but stabilizing, %v remaining", remainingTime.Round(time.Second)),
+			}
+		}
+
+		// Both conditions met: cluster is healthy AND stabilization period passed
+		logger.Infof("[FAILOVER_RECOVERY] ALLOWING - cluster healthy and stable after %v", timeSinceFailover.Round(time.Second))
+
+		// Check if primary changed during recovery - this is a NEW failover
+		// Restart the recovery timer immediately
+		if currentPrimary != lastKnownPrimary {
+			logger.Warnf("[FAILOVER_RECOVERY] PRIMARY CHANGED DURING RECOVERY: %s → %s", lastKnownPrimary, currentPrimary)
+			logger.Warnf("[FAILOVER_RECOVERY] Treating as new failover, restarting recovery period")
+
+			// Update tracked primary and restart recovery timer
+			adapter.State.SetLastKnownPrimary(currentPrimary)
+			adapter.State.SetLastFailoverTime(time.Now())
+
+			// Return error to continue blocking operations
+			return &FailoverDetectedError{
+				OldPrimary: lastKnownPrimary,
+				NewPrimary: currentPrimary,
+				Message:    "primary changed during recovery, restarting stabilization",
+			}
+		}
+
+		// Primary unchanged and cluster stable - verify PostgreSQL is actually accepting connections
+		// CNPG relies on Kubernetes readiness probes, but PostgreSQL might need additional time
+		// to finalize promotion and be ready for configuration changes
+		if err := adapter.PGDriver.Ping(ctx); err != nil {
+			logger.Warnf("[FAILOVER_RECOVERY] BLOCKING - cluster healthy but PostgreSQL not accepting connections: %v", err)
+			return &FailoverDetectedError{
+				OldPrimary: lastKnownPrimary,
+				NewPrimary: "(PostgreSQL unavailable)",
+				Message:    fmt.Sprintf("cluster healthy but PostgreSQL not ready: %v", err),
+			}
+		}
+
+		// All checks passed - clear recovery period and resume operations
+		adapter.State.SetLastFailoverTime(time.Time{})
+		adapter.State.CreateOperationsContext() // Create new context for operations to proceed
+		logger.Infof("[FAILOVER_RECOVERY] Recovery complete, PostgreSQL accepting connections, resuming normal operations")
+		return nil
+	}
+
 	// If cluster reports no current primary AND we had one before, failover is happening
 	if currentPrimary == "" && lastKnownPrimary != "" {
 		logger.Warnf("Cluster has no current primary (failover in progress, was: %s)", lastKnownPrimary)
@@ -72,8 +196,9 @@ func (adapter *CNPGAdapter) CheckForFailover(ctx context.Context) error {
 
 	// Check if primary changed (failover occurred)
 	if currentPrimary != lastKnownPrimary {
-		logger.Warnf("Failover detected: %s → %s (phase: %s)",
-			lastKnownPrimary, currentPrimary, clusterStatus.Phase)
+		logger.Warnf("[FAILOVER_RECOVERY] PRIMARY CHANGED: %s → %s", lastKnownPrimary, currentPrimary)
+		logger.Warnf("[FAILOVER_RECOVERY] Failover detected at phase=%s, ready=%d/%d",
+			clusterStatus.Phase, clusterStatus.ReadyInstances, clusterStatus.Instances)
 
 		return &FailoverDetectedError{
 			OldPrimary: lastKnownPrimary,
@@ -82,10 +207,7 @@ func (adapter *CNPGAdapter) CheckForFailover(ctx context.Context) error {
 		}
 	}
 
-	// Check if failover is in progress in two ways:
-	// 1. targetPrimary != currentPrimary (primary being changed)
-	// 2. phase indicates failover/switchover (even if target==current during transition)
-
+	// Check if failover is in progress (target primary is being changed)
 	if clusterStatus.TargetPrimary != "" && clusterStatus.TargetPrimary != currentPrimary {
 		logger.Errorf("Failover detected (target primary changed): %s → %s (phase: %s)",
 			currentPrimary, clusterStatus.TargetPrimary, clusterStatus.Phase)
@@ -97,28 +219,7 @@ func (adapter *CNPGAdapter) CheckForFailover(ctx context.Context) error {
 		}
 	}
 
-	failoverPhases := []string{"Failing over", "Switchover in progress"}
-	isFailoverPhase := false
-	for _, fp := range failoverPhases {
-		if clusterStatus.Phase == fp {
-			isFailoverPhase = true
-			break
-		}
-	}
-
-	// IMPORTANT: Only trigger if primary actually changed
-	// Prevents duplicate detection when cluster stays in "Failing over" phase after we already handled it
-	if isFailoverPhase && lastKnownPrimary != "" && currentPrimary != lastKnownPrimary {
-		logger.Errorf("Failover detected (cluster in failover phase): phase=%s, primary changed %s → %s",
-			clusterStatus.Phase, lastKnownPrimary, currentPrimary)
-
-		return &FailoverDetectedError{
-			OldPrimary: lastKnownPrimary,
-			NewPrimary: currentPrimary,
-			Message:    fmt.Sprintf("cluster in failover phase: %s", clusterStatus.Phase),
-		}
-	}
-
+	// No failover detected
 	return nil
 }
 
@@ -129,6 +230,18 @@ func (adapter *CNPGAdapter) HandleFailoverDetected(ctx context.Context, failover
 
 	logger.Errorf("Failover detected: %s", failoverErr.Error())
 	logger.Info("Sending failover notification to backend")
+
+	// Record failover time to track cluster recovery
+	// CheckForFailover will verify cluster health before allowing config applications
+	// Only set this for new failover detections, not for recovery status checks
+	if failoverErr.NewPrimary != "(recovery in progress)" {
+		adapter.State.SetLastFailoverTime(time.Now())
+		logger.Info("Failover detected - will monitor cluster health before allowing config applications")
+
+		// Cancel any in-flight PostgreSQL operations immediately
+		// This prevents errors from operations that started before failover was detected
+		adapter.State.CancelOperations()
+	}
 
 	// Send failover error to backend
 	// Backend decides: stop tuning session? apply baseline? etc.
@@ -145,7 +258,8 @@ func (adapter *CNPGAdapter) HandleFailoverDetected(ctx context.Context, failover
 		adapter.State.SetLastKnownPrimary(failoverErr.NewPrimary)
 		logger.Infof("Updated tracked primary: %s", failoverErr.NewPrimary)
 	} else {
-		logger.Infof("Not updating tracked primary - failover still in progress (NewPrimary=%s)", failoverErr.NewPrimary)
+		logger.Infof("Not updating tracked primary - value is placeholder or transient state: %q (keeping: %s)",
+			failoverErr.NewPrimary, failoverErr.OldPrimary)
 	}
 
 	// Return error to signal caller that failover occurred
@@ -154,11 +268,18 @@ func (adapter *CNPGAdapter) HandleFailoverDetected(ctx context.Context, failover
 
 // containsPlaceholder checks if a string is a placeholder value (not a real pod name)
 func containsPlaceholder(s string) bool {
-	placeholders := []string{"(unknown", "(none", "(", ")"}
-	for _, p := range placeholders {
-		if len(s) > 0 && (s[0] == '(' || len(s) >= len(p) && s[:len(p)] == p) {
+	// Check for parenthesis-based placeholders
+	if len(s) > 0 && s[0] == '(' {
+		return true
+	}
+
+	// Check for CNPG cluster states that are not actual pod names
+	invalidStates := []string{"pending", "none", "unknown", ""}
+	for _, state := range invalidStates {
+		if s == state {
 			return true
 		}
 	}
+
 	return false
 }
