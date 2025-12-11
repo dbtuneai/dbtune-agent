@@ -24,6 +24,9 @@ The DBtune agent is a lightweight, extensible monitoring and configuration manag
 - Azure Flexible Server -
   [docs](https://docs.dbtune.com/azure-flex-server),
   [config](pkg/azureflex/CONFIG.md)
+- CloudNativePG -
+  [docs](https://docs.dbtune.com/cnpg),
+  [config](pkg/cnpg/CONFIG.md)
 
 ## Quick start
 You can use the binary or our docker image to run the `dbtune-agent`.
