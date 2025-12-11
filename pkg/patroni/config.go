@@ -17,8 +17,7 @@ type Config struct {
 	NodeName      string `mapstructure:"node_name" validate:"required"`       // Required: one agent monitors one specific Patroni node
 	PatroniAPIURL string `mapstructure:"patroni_api_url" validate:"required"` // Required: Patroni REST API URL for this specific node (e.g., http://10.0.1.5:8008)
 	ClusterName   string `mapstructure:"cluster_name"`                        // Optional: name of the Patroni cluster this node belongs to (informational)
-	NodeHost      string `mapstructure:"node_host"`                           // Optional: hostname/IP of this Patroni node
-	NodePort      int    `mapstructure:"node_port"`                           // Optional: port of this Patroni node (defaults to 8008)
+
 }
 
 func ConfigFromViper() (Config, error) {
@@ -70,4 +69,3 @@ func DetectConfigFromEnv() bool {
 func DetectConfigFromConfigFile() bool {
 	return viper.Sub(DEFAULT_CONFIG_KEY) != nil
 }
-

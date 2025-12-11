@@ -15,10 +15,6 @@ type State struct {
 	// LastKnownPrimary is the primary node name from the last check
 	// Used to detect when primary changes (failover)
 	LastKnownPrimary string
-
-	// BaselineConfig stores the initial configuration state before tuning begins
-	// This is captured at agent startup and used to revert after failover
-	BaselineConfig map[string]interface{}
 }
 
 // GetLastKnownPrimary safely reads the last known primary node
@@ -54,26 +50,4 @@ func (s *State) TimeSinceLastGuardrailCheck() time.Duration {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return time.Since(s.LastGuardrailCheck)
-}
-
-// GetBaselineConfig safely reads the baseline configuration
-func (s *State) GetBaselineConfig() map[string]interface{} {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	// Return a copy to prevent external modification
-	baseline := make(map[string]interface{}, len(s.BaselineConfig))
-	for k, v := range s.BaselineConfig {
-		baseline[k] = v
-	}
-	return baseline
-}
-
-// SetBaselineConfig safely updates the baseline configuration
-func (s *State) SetBaselineConfig(config map[string]interface{}) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.BaselineConfig = make(map[string]interface{}, len(config))
-	for k, v := range config {
-		s.BaselineConfig[k] = v
-	}
 }

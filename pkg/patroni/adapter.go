@@ -14,6 +14,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
+	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -74,16 +75,6 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 	}
 
 	adpt.InitCollectors(adpt.Collectors())
-
-	// Capture baseline configuration from Patroni DCS at startup
-	// This will be used to revert configuration after failover
-	common.Logger().Info("Capturing baseline configuration from Patroni DCS...")
-	if err := adpt.CaptureBaselineConfiguration(ctx); err != nil {
-		common.Logger().Warnf("Failed to capture baseline configuration: %v", err)
-		// Don't fail agent startup, but baseline revert after failover won't work
-	} else {
-		common.Logger().Info("Baseline configuration captured successfully")
-	}
 
 	return &adpt, nil
 }
@@ -228,7 +219,7 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 		query := `SELECT setting, unit FROM pg_settings WHERE name = $1`
 		var actualSetting string
 		var unit *string
-		err := adapter.PGDriver.QueryRow(ctx, query, knob.Name).Scan(&actualSetting, &unit)
+		err := utils.QueryRowWithPrefix(adapter.PGDriver, ctx, query, knob.Name).Scan(&actualSetting, &unit)
 		if err != nil {
 			logger.Errorf("Failed to verify parameter %s: %v", knob.Name, err)
 			return fmt.Errorf("failed to verify parameter %s in pg_settings: %w", knob.Name, err)
@@ -452,195 +443,6 @@ func (adapter *PatroniAdapter) Guardrails() *guardrails.Signal {
 		}
 	}
 
-	return nil
-}
-
-// CaptureBaselineConfiguration fetches the current configuration from Patroni DCS
-// and stores it as the baseline for future revert operations after failover
-func (adapter *PatroniAdapter) CaptureBaselineConfiguration(ctx context.Context) error {
-	logger := adapter.Logger()
-
-	// Fetch current configuration from Patroni DCS
-	configURL := fmt.Sprintf("%s/config", adapter.PatroniConfig.PatroniAPIURL)
-	req, err := http.NewRequestWithContext(ctx, "GET", configURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create GET request: %w", err)
-	}
-
-	resp, err := adapter.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to fetch Patroni config: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("patroni API returned non-200 status: %s", resp.Status)
-	}
-
-	// Parse the response
-	var patroniConfig struct {
-		PostgreSQL struct {
-			Parameters map[string]interface{} `json:"parameters"`
-		} `json:"postgresql"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&patroniConfig); err != nil {
-		return fmt.Errorf("failed to decode Patroni config: %w", err)
-	}
-
-	// Store the baseline configuration in State
-	// Filter out Patroni-managed parameters as we don't tune those
-	baselineConfig := make(map[string]interface{})
-	for paramName, paramValue := range patroniConfig.PostgreSQL.Parameters {
-		if !IsPatroniManagedParameter(paramName) {
-			baselineConfig[paramName] = paramValue
-			logger.Debugf("Captured baseline: %s = %v", paramName, paramValue)
-		}
-	}
-
-	adapter.State.SetBaselineConfig(baselineConfig)
-	logger.Infof("Captured baseline configuration with %d parameters", len(baselineConfig))
-
-	return nil
-}
-
-// RevertToBaselineAfterFailover reverts all Patroni DCS configuration to baseline
-// This is called automatically after failover detection to ensure a clean, known state
-func (adapter *PatroniAdapter) RevertToBaselineAfterFailover(ctx context.Context) error {
-	logger := adapter.Logger()
-	logger.Info("Reverting Patroni configuration to baseline after failover...")
-
-	// Step 1: Clear postgresql.auto.conf to remove any stale local settings
-	logger.Info("Clearing postgresql.auto.conf on new primary...")
-	if err := adapter.ClearPostgreSQLAutoConf(ctx); err != nil {
-		logger.Errorf("Failed to clear postgresql.auto.conf: %v", err)
-		return fmt.Errorf("failed to clear postgresql.auto.conf: %w", err)
-	}
-
-	// Step 2: Retrieve the baseline configuration that was captured at startup
-	baselineConfig := adapter.State.GetBaselineConfig()
-	if len(baselineConfig) == 0 {
-		logger.Warn("No baseline configuration found - was it captured at startup?")
-		logger.Info("Skipping configuration revert, only cleared postgresql.auto.conf")
-		return nil
-	}
-
-	logger.Infof("Reverting %d parameters to their baseline values in Patroni DCS...", len(baselineConfig))
-
-	// Step 3: Build the patch request with baseline values
-	patchRequest := PatroniPatchRequest{}
-	patchRequest.PostgreSQL.Parameters = make(map[string]interface{})
-
-	// Apply each baseline parameter value
-	for paramName, paramValue := range baselineConfig {
-		patchRequest.PostgreSQL.Parameters[paramName] = paramValue
-		logger.Debugf("Reverting parameter in DCS: %s = %v", paramName, paramValue)
-	}
-
-	// Convert to JSON
-	jsonData, err := json.Marshal(patchRequest)
-	if err != nil {
-		logger.Errorf("Error marshaling baseline JSON: %v", err)
-		return fmt.Errorf("failed to marshal baseline JSON: %w", err)
-	}
-
-	logger.Debugf("Patroni baseline PATCH payload: %s", string(jsonData))
-
-	// Step 4: Apply baseline configuration via Patroni REST API
-	configURL := fmt.Sprintf("%s/config", adapter.PatroniConfig.PatroniAPIURL)
-	req, err := http.NewRequest("PATCH", configURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		logger.Errorf("Error creating baseline request: %v", err)
-		return fmt.Errorf("failed to create baseline HTTP request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Errorf("Error sending baseline request: %v", err)
-		return fmt.Errorf("failed to send baseline HTTP PATCH request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logger.Errorf("Error reading baseline response: %v", err)
-		return fmt.Errorf("failed to read baseline response body: %w", err)
-	}
-
-	logger.Infof("Patroni baseline API Response Status: %s", resp.Status)
-	logger.Debugf("Patroni baseline API Response Body: %s", string(responseBody))
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		logger.Errorf("Patroni API returned error status for baseline: %d, body: %s", resp.StatusCode, string(responseBody))
-		return fmt.Errorf("patroni baseline API returned error status %d: %s", resp.StatusCode, string(responseBody))
-	}
-
-	logger.Info("✓ Successfully reverted Patroni configuration to baseline after failover")
-	logger.Infof("Restored %d parameters to their original baseline values in Patroni DCS", len(baselineConfig))
-
-	return nil
-}
-
-// ClearPostgreSQLAutoConf clears all parameters from postgresql.auto.conf
-// This is used after failover to ensure the new primary has a clean state
-func (adapter *PatroniAdapter) ClearPostgreSQLAutoConf(ctx context.Context) error {
-	logger := adapter.Logger()
-
-	// Query pg_file_settings to find all parameters currently in postgresql.auto.conf
-	query := `
-		SELECT name
-		FROM pg_file_settings
-		WHERE sourcefile LIKE '%postgresql.auto.conf'
-	`
-
-	rows, err := adapter.PGDriver.Query(ctx, query)
-	if err != nil {
-		return fmt.Errorf("failed to query pg_file_settings: %w", err)
-	}
-	defer rows.Close()
-
-	var parametersToReset []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			logger.Warnf("Failed to scan parameter name: %v", err)
-			continue
-		}
-		parametersToReset = append(parametersToReset, name)
-	}
-
-	if len(parametersToReset) == 0 {
-		logger.Info("postgresql.auto.conf is already empty, no parameters to reset")
-		return nil
-	}
-
-	logger.Infof("Found %d parameters in postgresql.auto.conf to reset", len(parametersToReset))
-
-	// Reset each parameter to clear postgresql.auto.conf
-	for _, paramName := range parametersToReset {
-		// Skip Patroni-managed parameters - these should never be in postgresql.auto.conf anyway
-		if IsPatroniManagedParameter(paramName) {
-			logger.Warnf("Skipping reset of Patroni-managed parameter: %s", paramName)
-			continue
-		}
-
-		logger.Infof("Resetting parameter: %s", paramName)
-		if err := pg.AlterSystemReset(adapter.PGDriver, paramName); err != nil {
-			logger.Errorf("Failed to reset parameter %s: %v", paramName, err)
-			// Continue with other parameters even if one fails
-		}
-	}
-
-	// Reload configuration to apply the resets
-	logger.Info("Reloading PostgreSQL configuration after clearing postgresql.auto.conf...")
-	if err := pg.ReloadConfig(adapter.PGDriver); err != nil {
-		return fmt.Errorf("failed to reload configuration: %w", err)
-	}
-
-	logger.Info("Successfully cleared postgresql.auto.conf")
 	return nil
 }
 

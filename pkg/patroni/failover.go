@@ -11,6 +11,11 @@ import (
 	"github.com/dbtuneai/agent/pkg/pg"
 )
 
+const (
+	// NoPrimaryDetected is used as a placeholder when no primary node can be identified
+	NoPrimaryDetected = "NO PRIMARY DETECTED"
+)
+
 // FailoverDetectedError is returned when a failover is detected during tuning.
 // This signals that the tuning session should terminate gracefully.
 type FailoverDetectedError struct {
@@ -29,18 +34,21 @@ type PatroniClusterStatus struct {
 	State          string
 }
 
+// PatroniMember represents a member node in the Patroni cluster.
+type PatroniMember struct {
+	Name  string `json:"name"`
+	Role  string `json:"role"`
+	Host  string `json:"host"`
+	State string `json:"state"`
+}
+
+// PatroniClusterResponse represents the Patroni API response structure for the /cluster endpoint.
+type PatroniClusterResponse struct {
+	Members []PatroniMember `json:"members"`
+}
+
 // getPatroniClusterStatus queries the Patroni REST API to get the current cluster leader.
 func (adapter *PatroniAdapter) getPatroniClusterStatus(ctx context.Context) (*PatroniClusterStatus, error) {
-	// Patroni API response structure for the /cluster endpoint
-	type PatroniMember struct {
-		Name  string `json:"name"`
-		Role  string `json:"role"`
-		Host  string `json:"host"`
-		State string `json:"state"`
-	}
-	type PatroniClusterResponse struct {
-		Members []PatroniMember `json:"members"`
-	}
 
 	// Create a new request with context
 	req, err := http.NewRequestWithContext(ctx, "GET", adapter.PatroniConfig.PatroniAPIURL+"/cluster", nil)
@@ -93,7 +101,7 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 			logger.Warnf("Cannot get Patroni cluster status (failover likely in progress): %v", err)
 			return &FailoverDetectedError{
 				OldPrimary: lastKnownPrimary,
-				NewPrimary: "(unknown - failover in progress)",
+				NewPrimary: NoPrimaryDetected,
 				Message:    fmt.Sprintf("cluster status unavailable: %v", err),
 			}
 		}
@@ -109,7 +117,7 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 		logger.Warnf("Patroni cluster has no current primary (failover in progress, was: %s)", lastKnownPrimary)
 		return &FailoverDetectedError{
 			OldPrimary: lastKnownPrimary,
-			NewPrimary: "(none - failover in progress)",
+			NewPrimary: NoPrimaryDetected,
 			Message:    fmt.Sprintf("cluster state: %s", clusterStatus.State),
 		}
 	}
@@ -157,7 +165,7 @@ func (adapter *PatroniAdapter) HandleFailoverDetected(ctx context.Context, failo
 
 	// Update tracking to new primary
 	// IMPORTANT: Only update if NewPrimary is a valid node name, not a placeholder
-	if failoverErr.NewPrimary != "" && !containsPlaceholder(failoverErr.NewPrimary) {
+	if failoverErr.NewPrimary != "" && failoverErr.NewPrimary != NoPrimaryDetected {
 		adapter.State.SetLastKnownPrimary(failoverErr.NewPrimary)
 		logger.Infof("Updated tracked primary: %s", failoverErr.NewPrimary)
 
@@ -168,16 +176,6 @@ func (adapter *PatroniAdapter) HandleFailoverDetected(ctx context.Context, failo
 			// Don't return error - failover handling should continue
 		} else {
 			logger.Info("New primary is ready")
-
-			// Automatically revert all configuration to baseline after failover
-			// This ensures the new primary starts with a clean, known configuration state
-			logger.Info("Initiating automatic configuration revert to baseline...")
-			if err := adapter.RevertToBaselineAfterFailover(ctx); err != nil {
-				logger.Errorf("Failed to revert to baseline configuration: %v", err)
-				// Don't return error - failover notification was already sent
-			} else {
-				logger.Info("✓ Configuration successfully reverted to baseline on new primary")
-			}
 		}
 	} else {
 		logger.Infof("Not updating tracked primary - failover still in progress (NewPrimary=%s)", failoverErr.NewPrimary)
@@ -185,15 +183,4 @@ func (adapter *PatroniAdapter) HandleFailoverDetected(ctx context.Context, failo
 
 	// Return error to signal caller that failover occurred
 	return failoverErr
-}
-
-// containsPlaceholder checks if a string is a placeholder value (not a real node name)
-func containsPlaceholder(s string) bool {
-	placeholders := []string{"(unknown", "(none", "(", ")"}
-	for _, p := range placeholders {
-		if len(s) > 0 && (s[0] == '(' || len(s) >= len(p) && s[:len(p)] == p) {
-			return true
-		}
-	}
-	return false
 }
