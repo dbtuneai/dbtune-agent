@@ -121,6 +121,18 @@ func AlterSystem(pgPool *pgxpool.Pool, name string, value string) error {
 	return nil
 }
 
+const AlterSystemResetQuery = `
+ALTER SYSTEM RESET %s;
+`
+
+func AlterSystemReset(pgPool *pgxpool.Pool, name string) error {
+	_, err := utils.ExecWithPrefix(pgPool, context.Background(), fmt.Sprintf(AlterSystemResetQuery, name))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 const AlterDatabaseQuery = `
 ALTER DATABASE %s SET %s = %s;
 `
