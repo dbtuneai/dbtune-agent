@@ -76,23 +76,58 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 
 	adpt.InitCollectors(adpt.Collectors())
 
+	// Initialize primary tracking at startup to establish baseline
+	// This prevents false failover detection on first ApplyConfig call
+	common.Logger().Info("Initializing primary node tracking...")
+	if err := adpt.initializePrimaryTracking(ctx); err != nil {
+		common.Logger().Warnf("Failed to initialize primary tracking: %v", err)
+		// Don't fail agent startup - tracking will be established on first check
+	}
+
 	return &adpt, nil
+}
+
+// initializePrimaryTracking establishes the initial primary node tracking
+// This should be called once during adapter initialization
+func (adapter *PatroniAdapter) initializePrimaryTracking(ctx context.Context) error {
+	logger := adapter.Logger()
+
+	clusterStatus, err := adapter.getPatroniClusterStatus(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get initial cluster status: %w", err)
+	}
+
+	if clusterStatus.CurrentPrimary != "" {
+		adapter.State.SetLastKnownPrimary(clusterStatus.CurrentPrimary)
+		logger.Infof("Initial primary node tracked: %s", clusterStatus.CurrentPrimary)
+	} else {
+		logger.Warn("No primary node detected during initialization")
+	}
+
+	return nil
 }
 
 func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
 	ctx := context.Background()
 	logger := adapter.Logger()
-	logger.Infof("Applying config via Patroni REST API: %s", proposedConfig.KnobApplication)
 
-	// Check for failover before applying configuration
+	logger.Infof("[FAILOVER_RECOVERY] ApplyConfig called: knob_application=%s, num_params=%d",
+		proposedConfig.KnobApplication, len(proposedConfig.Config))
+
+	// Check for failover before applying new configuration
+	// This ensures we don't apply tuning parameters after a failover has occurred
 	if err := adapter.CheckForFailover(ctx); err != nil {
 		if failoverErr, ok := err.(*FailoverDetectedError); ok {
-			// Failover detected - handle it and abort config application
-			return adapter.HandleFailoverDetected(ctx, failoverErr)
+			logger.Warnf("[FAILOVER_RECOVERY] Failover check BLOCKED config application: %s", failoverErr.Message)
+			// Return error to block this config application (matches CNPG behavior)
+			// HandleFailoverDetected was already called by CheckForFailover
+			return failoverErr
 		}
-		// Other error - log and continue (non-critical)
-		logger.Warnf("Failover check encountered error (continuing): %v", err)
+		// Other error checking failover status - log but continue
+		logger.Warnf("Failed to check for failover: %v", err)
 	}
+
+	logger.Infof("[FAILOVER_RECOVERY] Failover check PASSED - proceeding with config application")
 
 	// Parse and validate all knobs upfront (following CNPG pattern)
 	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
@@ -200,6 +235,28 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 		logger.Warn("Configuration requires restart, waiting for PostgreSQL to be ready...")
 		err = pg.WaitPostgresReady(adapter.PGDriver)
 		if err != nil {
+			// Check if error indicates failover during restart
+			if isPostgreSQLFailoverError(err) {
+				logger.Warnf("PostgreSQL failover detected during restart wait: %v", err)
+
+				// Send failover notification if this is first detection
+				if adapter.State.TimeSinceLastFailover() == 0 {
+					adapter.State.SetLastFailoverTime(time.Now())
+					errorPayload := agent.ErrorPayload{
+						ErrorMessage: fmt.Sprintf("failover detected: PostgreSQL restart interrupted by failover: %v", err),
+						ErrorType:    "failover_detected",
+						Timestamp:    time.Now().UTC().Format(time.RFC3339),
+					}
+					adapter.SendError(errorPayload)
+					logger.Info("Failover notification sent to backend (during restart wait)")
+				}
+
+				return &FailoverDetectedError{
+					OldPrimary: adapter.State.GetLastKnownPrimary(),
+					NewPrimary: NoPrimaryDetected,
+					Message:    fmt.Sprintf("PostgreSQL restart interrupted by failover: %v", err),
+				}
+			}
 			return fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)
 		}
 		logger.Info("PostgreSQL is ready after restart")
@@ -221,6 +278,28 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 		var unit *string
 		err := utils.QueryRowWithPrefix(adapter.PGDriver, ctx, query, knob.Name).Scan(&actualSetting, &unit)
 		if err != nil {
+			// Check if error indicates PostgreSQL failover (before Patroni detects it)
+			if isPostgreSQLFailoverError(err) {
+				logger.Warnf("PostgreSQL failover detected during verification: %v", err)
+
+				// Send failover notification if this is first detection
+				if adapter.State.TimeSinceLastFailover() == 0 {
+					adapter.State.SetLastFailoverTime(time.Now())
+					errorPayload := agent.ErrorPayload{
+						ErrorMessage: fmt.Sprintf("failover detected: PostgreSQL shutting down: %v", err),
+						ErrorType:    "failover_detected",
+						Timestamp:    time.Now().UTC().Format(time.RFC3339),
+					}
+					adapter.SendError(errorPayload)
+					logger.Info("Failover notification sent to backend (during verification)")
+				}
+
+				return &FailoverDetectedError{
+					OldPrimary: adapter.State.GetLastKnownPrimary(),
+					NewPrimary: NoPrimaryDetected,
+					Message:    fmt.Sprintf("PostgreSQL shutting down: %v", err),
+				}
+			}
 			logger.Errorf("Failed to verify parameter %s: %v", knob.Name, err)
 			return fmt.Errorf("failed to verify parameter %s in pg_settings: %w", knob.Name, err)
 		}
@@ -256,7 +335,8 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 	if err := adapter.CheckForFailover(ctx); err != nil {
 		if failoverErr, ok := err.(*FailoverDetectedError); ok {
 			// Failover detected after config application
-			return adapter.HandleFailoverDetected(ctx, failoverErr)
+			// CheckForFailover already sent notification and updated LastKnownPrimary
+			return failoverErr
 		}
 		logger.Warnf("Post-application failover check encountered error: %v", err)
 	}
@@ -339,12 +419,62 @@ func normalizeValue(value string) string {
 }
 
 func (adapter *PatroniAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
+	logger := adapter.Logger()
+	ctx := context.Background()
+
+	// Check for failover before querying PostgreSQL
+	// During recovery, PostgreSQL may be unavailable or unreliable
+	if err := adapter.CheckForFailover(ctx); err != nil {
+		// Block operation for ANY error from CheckForFailover
+		if failoverErr, ok := err.(*FailoverDetectedError); ok {
+			logger.Infof("[FAILOVER_RECOVERY] Operations blocked during recovery: %s", failoverErr.Message)
+			// Return the failover error (not nil) so runner's isRecoveryError() can skip sending
+			// This prevents sending empty config to backend which would stop tuning session
+			return nil, failoverErr
+		}
+		// Non-failover error (cluster status check failed, etc.)
+		logger.Warnf("[FAILOVER_RECOVERY] BLOCKING GetActiveConfig due to cluster check failure: %v", err)
+		return nil, err
+	}
+
 	// CRITICAL: The database itself is the only reliable source of truth for the
 	// currently active configuration. The Patroni DCS can have stale data or not
 	// reflect local overrides in postgresql.auto.conf, so we must query PostgreSQL directly.
-	adapter.Logger().Info("Fetching active configuration from PostgreSQL")
-	config, err := pg.GetActiveConfig(adapter.PGDriver, context.Background(), adapter.Logger())
+	logger.Info("Fetching active configuration from PostgreSQL")
+	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx, logger)
 	if err != nil {
+		// Check if error indicates PostgreSQL failover (before Patroni detects it)
+		// This can happen before Patroni cluster status reflects the failover
+		if isPostgreSQLFailoverError(err) {
+			logger.Warnf("[FAILOVER_RECOVERY] PostgreSQL reports failover in progress: %v", err)
+
+			// Trigger failover detection immediately
+			// Don't wait for Patroni cluster status to update (can take 5+ seconds)
+			if adapter.State.TimeSinceLastFailover() == 0 {
+				// First detection - record failover time and send notification
+				adapter.State.SetLastFailoverTime(time.Now())
+				logger.Errorf("[FAILOVER_RECOVERY] Failover detected via PostgreSQL error (before Patroni status update)")
+
+				// Send failover notification (don't call HandleFailoverDetected as it would update LastKnownPrimary)
+				errorPayload := agent.ErrorPayload{
+					ErrorMessage: fmt.Sprintf("Failover detected: %s", err.Error()),
+					ErrorType:    "failover_detected",
+					Timestamp:    time.Now().UTC().Format(time.RFC3339),
+				}
+				adapter.SendError(errorPayload)
+				logger.Info("Failover notification sent to backend")
+			}
+
+			// Return FailoverDetectedError so runner's isRecoveryError() can skip sending
+			// This prevents sending empty config to backend which would stop tuning session
+			logger.Infof("[FAILOVER_RECOVERY] Returning failover error to prevent empty data being sent")
+			return nil, &FailoverDetectedError{
+				OldPrimary: adapter.State.GetLastKnownPrimary(),
+				NewPrimary: NoPrimaryDetected,
+				Message:    fmt.Sprintf("PostgreSQL error: %v", err),
+			}
+		}
+		// For other errors, return as-is
 		return nil, err
 	}
 
@@ -370,15 +500,82 @@ func (adapter *PatroniAdapter) GetActiveConfig() (agent.ConfigArraySchema, error
 }
 
 func (adapter *PatroniAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
-	adapter.Logger().Println("Collecting system info for Patroni cluster")
+	logger := adapter.Logger()
+	ctx := context.Background()
+
+	logger.Println("Collecting system info for Patroni cluster")
+
+	// Check for failover before collecting system info
+	// During recovery, PostgreSQL may be unavailable
+	if err := adapter.CheckForFailover(ctx); err != nil {
+		// Block operation for ANY error from CheckForFailover
+		if failoverErr, ok := err.(*FailoverDetectedError); ok {
+			logger.Infof("[FAILOVER_RECOVERY] Operations blocked during recovery: %s", failoverErr.Message)
+			// Return the failover error (not nil) so runner's isRecoveryError() can skip sending
+			// This prevents sending empty system info to backend which would stop tuning session
+			return nil, failoverErr
+		}
+		// Non-failover error (cluster status check failed, etc.)
+		// Still block to avoid sending errors during unstable cluster state
+		logger.Warnf("[FAILOVER_RECOVERY] BLOCKING GetSystemInfo due to cluster check failure: %v", err)
+		return nil, err
+	}
 
 	pgVersion, err := pg.PGVersion(adapter.PGDriver)
 	if err != nil {
+		// Check if error indicates PostgreSQL failover
+		if isPostgreSQLFailoverError(err) {
+			logger.Warnf("[FAILOVER_RECOVERY] PostgreSQL failover detected in GetSystemInfo: %v", err)
+			// Record failover and send notification if this is first detection
+			if adapter.State.TimeSinceLastFailover() == 0 {
+				adapter.State.SetLastFailoverTime(time.Now())
+				logger.Errorf("[FAILOVER_RECOVERY] Failover detected via PostgreSQL error in GetSystemInfo")
+
+				// Send failover notification (don't call HandleFailoverDetected)
+				errorPayload := agent.ErrorPayload{
+					ErrorMessage: fmt.Sprintf("Failover detected: %s", err.Error()),
+					ErrorType:    "failover_detected",
+					Timestamp:    time.Now().UTC().Format(time.RFC3339),
+				}
+				adapter.SendError(errorPayload)
+				logger.Info("Failover notification sent to backend")
+			}
+			// Return FailoverDetectedError so runner's isRecoveryError() can skip sending
+			return nil, &FailoverDetectedError{
+				OldPrimary: adapter.State.GetLastKnownPrimary(),
+				NewPrimary: NoPrimaryDetected,
+				Message:    fmt.Sprintf("PostgreSQL error: %v", err),
+			}
+		}
 		return nil, err
 	}
 
 	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
 	if err != nil {
+		// Check if error indicates PostgreSQL failover
+		if isPostgreSQLFailoverError(err) {
+			logger.Warnf("[FAILOVER_RECOVERY] PostgreSQL failover detected in GetSystemInfo: %v", err)
+			// Record failover and send notification if this is first detection
+			if adapter.State.TimeSinceLastFailover() == 0 {
+				adapter.State.SetLastFailoverTime(time.Now())
+				logger.Errorf("[FAILOVER_RECOVERY] Failover detected via PostgreSQL error in GetSystemInfo")
+
+				// Send failover notification (don't call HandleFailoverDetected)
+				errorPayload := agent.ErrorPayload{
+					ErrorMessage: fmt.Sprintf("Failover detected: %s", err.Error()),
+					ErrorType:    "failover_detected",
+					Timestamp:    time.Now().UTC().Format(time.RFC3339),
+				}
+				adapter.SendError(errorPayload)
+				logger.Info("Failover notification sent to backend")
+			}
+			// Return FailoverDetectedError so runner's isRecoveryError() can skip sending
+			return nil, &FailoverDetectedError{
+				OldPrimary: adapter.State.GetLastKnownPrimary(),
+				NewPrimary: NoPrimaryDetected,
+				Message:    fmt.Sprintf("PostgreSQL error: %v", err),
+			}
+		}
 		return nil, err
 	}
 
