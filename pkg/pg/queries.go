@@ -123,6 +123,7 @@ func AlterSystem(pgPool *pgxpool.Pool, name string, value string) error {
 
 const AlterSystemResetQuery = `
 ALTER SYSTEM RESET %s;
+
 `
 
 func AlterSystemReset(pgPool *pgxpool.Pool, name string) error {

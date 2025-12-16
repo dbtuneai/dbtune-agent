@@ -70,11 +70,16 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 		GuardrailConfig: guardrailConfig,
 		pgConfig:        pgConfig,
 		PGVersion:       pgVersion,
-		HTTPClient:      &http.Client{Timeout: 10 * time.Second},
+		HTTPClient:      &http.Client{Timeout: 60 * time.Second}, // Increased for restart operations
 		State:           &State{},
 	}
 
 	adpt.InitCollectors(adpt.Collectors())
+
+	// Initialize operations context for PostgreSQL queries
+	// This context will be cancelled during failover to abort in-flight operations
+	adpt.State.CreateOperationsContext()
+	common.Logger().Info("Initialized operations context for PostgreSQL queries")
 
 	// Initialize primary tracking at startup to establish baseline
 	// This prevents false failover detection on first ApplyConfig call
@@ -108,7 +113,9 @@ func (adapter *PatroniAdapter) initializePrimaryTracking(ctx context.Context) er
 }
 
 func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
-	ctx := context.Background()
+	// Use operations context that will be cancelled during failover
+	// This ensures queries during config application are aborted if failover occurs
+	ctx := adapter.State.GetOperationsContext()
 	logger := adapter.Logger()
 
 	logger.Infof("[FAILOVER_RECOVERY] ApplyConfig called: knob_application=%s, num_params=%d",
@@ -193,8 +200,9 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 	// Step 3: Apply configuration via Patroni REST API
 	configURL := fmt.Sprintf("%s/config", adapter.PatroniConfig.PatroniAPIURL)
 
-	// Create HTTP PATCH request
-	req, err := http.NewRequest("PATCH", configURL, bytes.NewBuffer(jsonData))
+	// Create HTTP PATCH request with context
+	// This allows the request to be cancelled if failover occurs
+	req, err := http.NewRequestWithContext(ctx, "PATCH", configURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		logger.Errorf("Error creating request: %v", err)
 		return fmt.Errorf("failed to create HTTP request: %w", err)
@@ -230,9 +238,53 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 
 	logger.Info("Configuration successfully applied via Patroni REST API")
 
-	// Step 4: Wait for PostgreSQL if restart is needed
-	if proposedConfig.KnobApplication == "restart" {
-		logger.Warn("Configuration requires restart, waiting for PostgreSQL to be ready...")
+	// Step 4: Check if any parameters require PostgreSQL restart and handle restart if needed
+	// Check both: explicit restart flag OR dynamic detection of restart-required parameters
+	needsRestart := proposedConfig.KnobApplication == "restart"
+
+	// If not explicitly flagged as restart, check dynamically using pg_settings
+	if !needsRestart {
+		// Build list of parameter names to check
+		var paramNames []string
+		for _, knob := range parsedKnobs {
+			if !IsPatroniManagedParameter(knob.Name) {
+				paramNames = append(paramNames, knob.Name)
+			}
+		}
+
+		logger.Infof("Checking if any of %d parameters require restart: %v", len(paramNames), paramNames)
+
+		// Check if any parameter requires restart (context='postmaster')
+		restartRequired, err := adapter.requiresPostgreSQLRestart(ctx, paramNames)
+		if err != nil {
+			logger.Errorf("Failed to check for restart-required parameters: %v", err)
+			// Continue without restart check if query fails
+		} else if restartRequired {
+			needsRestart = true
+			logger.Warn("Detected parameters that require PostgreSQL restart (context='postmaster')")
+		} else {
+			logger.Info("No restart-required parameters detected")
+		}
+	}
+
+	// If restart is needed, trigger PostgreSQL restart via Patroni API
+	if needsRestart {
+		logger.Warn("Configuration requires restart, triggering PostgreSQL restart via Patroni API...")
+
+		// Mark that we're entering an intentional restart window
+		// This prevents CheckForFailover from sending failover notifications during planned restart
+		adapter.State.SetInRestartWindow(true)
+		defer adapter.State.SetInRestartWindow(false) // Clear flag when done (success or failure)
+
+		// Trigger the restart
+		err = adapter.triggerPostgreSQLRestart(ctx)
+		if err != nil {
+			logger.Errorf("Failed to trigger PostgreSQL restart: %v", err)
+			return fmt.Errorf("failed to trigger PostgreSQL restart: %w", err)
+		}
+
+		// Wait for PostgreSQL to come back online
+		logger.Warn("Waiting for PostgreSQL to be ready after restart...")
 		err = pg.WaitPostgresReady(adapter.PGDriver)
 		if err != nil {
 			// Check if error indicates failover during restart
@@ -260,6 +312,12 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 			return fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)
 		}
 		logger.Info("PostgreSQL is ready after restart")
+
+		// Create a new operations context after successful restart
+		// The old context may have been used during restart and needs to be refreshed
+		adapter.State.CreateOperationsContext()
+		ctx = adapter.State.GetOperationsContext()
+		logger.Info("Created new operations context after PostgreSQL restart")
 	}
 
 	// Step 5: Verify that all parameters were applied correctly by reading pg_settings
@@ -344,6 +402,177 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 	return nil
 }
 
+// requiresPostgreSQLRestart checks if any of the parameters being applied require a PostgreSQL restart
+// by querying pg_settings to see if context='postmaster' for those parameters
+func (adapter *PatroniAdapter) requiresPostgreSQLRestart(ctx context.Context, parameterNames []string) (bool, error) {
+	logger := adapter.Logger()
+
+	if len(parameterNames) == 0 {
+		return false, nil
+	}
+
+	// Query pg_settings to check if any parameter has context='postmaster'
+	// context='postmaster' means the parameter requires a server restart
+	query := `SELECT name FROM pg_settings WHERE name = ANY($1) AND context = 'postmaster'`
+
+	rows, err := utils.QueryWithPrefix(adapter.PGDriver, ctx, query, parameterNames)
+	if err != nil {
+		return false, fmt.Errorf("failed to query pg_settings for restart-required parameters: %w", err)
+	}
+	defer rows.Close()
+
+	var restartRequiredParams []string
+	for rows.Next() {
+		var paramName string
+		if err := rows.Scan(&paramName); err != nil {
+			return false, fmt.Errorf("failed to scan parameter name: %w", err)
+		}
+		restartRequiredParams = append(restartRequiredParams, paramName)
+	}
+
+	if len(restartRequiredParams) > 0 {
+		logger.Infof("Parameters requiring PostgreSQL restart: %v", restartRequiredParams)
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// triggerPostgreSQLRestart triggers a PostgreSQL restart for all cluster nodes
+// This ensures the entire cluster is restarted when restart-required parameters are applied
+// Works for both tuning iterations and baseline revert after failover
+func (adapter *PatroniAdapter) triggerPostgreSQLRestart(ctx context.Context) error {
+	logger := adapter.Logger()
+
+	logger.Warn("Triggering PostgreSQL restart for all cluster nodes...")
+
+	// Get full cluster information including all members
+	clusterURL := fmt.Sprintf("%s/cluster", adapter.PatroniConfig.PatroniAPIURL)
+	req, err := http.NewRequestWithContext(ctx, "GET", clusterURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create cluster info request: %w", err)
+	}
+
+	resp, err := adapter.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to get cluster info: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("cluster API returned non-200 status: %s", resp.Status)
+	}
+
+	var clusterInfo PatroniClusterResponse
+	if err := json.NewDecoder(resp.Body).Decode(&clusterInfo); err != nil {
+		return fmt.Errorf("failed to decode cluster info: %w", err)
+	}
+
+	logger.Infof("Found %d nodes in cluster to restart", len(clusterInfo.Members))
+
+	// Strategy: Restart replicas first, then primary last
+	// This minimizes downtime and avoids unnecessary failover
+	var replicas []PatroniMember
+	var leader *PatroniMember
+
+	for i, member := range clusterInfo.Members {
+		if member.Role == "leader" || member.Role == "master" {
+			leader = &clusterInfo.Members[i]
+			logger.Infof("Found leader: %s (host: %s)", member.Name, member.Host)
+		} else {
+			replicas = append(replicas, member)
+			logger.Infof("Found replica: %s (host: %s, role: %s)", member.Name, member.Host, member.Role)
+		}
+	}
+
+	// Restart replicas first (safe, no downtime)
+	// Wait between restarts to avoid "restart already in progress" errors
+	for i, replica := range replicas {
+		logger.Infof("Restarting replica %d/%d: %s", i+1, len(replicas), replica.Name)
+		if err := adapter.restartSingleNode(ctx, replica); err != nil {
+			// Check if restart already in progress - this is OK, means Patroni is already handling it
+			if strings.Contains(err.Error(), "restart already in progress") ||
+			   strings.Contains(err.Error(), "reinitialize already in progress") {
+				logger.Infof("Restart already in progress for replica %s (Patroni handling it)", replica.Name)
+			} else {
+				logger.Errorf("Failed to restart replica %s: %v", replica.Name, err)
+			}
+			// Continue with other nodes even if one fails
+		} else {
+			logger.Infof("Successfully initiated restart for replica: %s", replica.Name)
+		}
+
+		// Wait 3 seconds between replica restarts to avoid conflicts
+		if i < len(replicas)-1 {
+			logger.Debugf("Waiting 3s before restarting next replica...")
+			time.Sleep(3 * time.Second)
+		}
+	}
+
+	// Wait before restarting leader to ensure replicas are being handled
+	if len(replicas) > 0 && leader != nil {
+		logger.Info("Waiting 5s for replica restarts to stabilize before restarting leader...")
+		time.Sleep(5 * time.Second)
+	}
+
+	// Restart leader last (this may cause brief connection interruption)
+	if leader != nil {
+		logger.Infof("Restarting leader: %s", leader.Name)
+		if err := adapter.restartSingleNode(ctx, *leader); err != nil {
+			// Check if restart already in progress - this is OK
+			if strings.Contains(err.Error(), "restart already in progress") ||
+			   strings.Contains(err.Error(), "reinitialize already in progress") {
+				logger.Infof("Restart already in progress for leader %s (Patroni handling it)", leader.Name)
+			} else {
+				logger.Errorf("Failed to restart leader %s: %v", leader.Name, err)
+				return fmt.Errorf("failed to restart leader: %w", err)
+			}
+		} else {
+			logger.Infof("Successfully initiated restart for leader: %s", leader.Name)
+		}
+	}
+
+	logger.Info("PostgreSQL restart initiated for all cluster nodes")
+	return nil
+}
+
+// restartSingleNode restarts a single node via its Patroni API
+func (adapter *PatroniAdapter) restartSingleNode(ctx context.Context, member PatroniMember) error {
+	logger := adapter.Logger()
+
+	// Build the restart URL for this specific member
+	// Patroni API typically runs on port 8008 on each node
+	// Use the member's host and assume same port as configured
+	memberRestartURL := fmt.Sprintf("http://%s:8008/restart", member.Host)
+
+	logger.Debugf("Sending POST to Patroni restart endpoint: %s for node %s", memberRestartURL, member.Name)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", memberRestartURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create restart request: %w", err)
+	}
+
+	resp, err := adapter.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send restart request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read restart response: %w", err)
+	}
+
+	logger.Debugf("Restart API response for %s: status=%s, body=%s", member.Name, resp.Status, string(responseBody))
+
+	// Patroni returns 202 Accepted for successful restart initiation
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("patroni restart API returned error status %d: %s", resp.StatusCode, string(responseBody))
+	}
+
+	return nil
+}
+
 // PatroniPatchRequest represents the structure for PATCH request to Patroni's /config endpoint
 type PatroniPatchRequest struct {
 	PostgreSQL struct {
@@ -420,7 +649,8 @@ func normalizeValue(value string) string {
 
 func (adapter *PatroniAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 	logger := adapter.Logger()
-	ctx := context.Background()
+	// Use operations context that will be cancelled during failover
+	ctx := adapter.State.GetOperationsContext()
 
 	// Check for failover before querying PostgreSQL
 	// During recovery, PostgreSQL may be unavailable or unreliable
@@ -501,7 +731,8 @@ func (adapter *PatroniAdapter) GetActiveConfig() (agent.ConfigArraySchema, error
 
 func (adapter *PatroniAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	logger := adapter.Logger()
-	ctx := context.Background()
+	// Use operations context that will be cancelled during failover
+	ctx := adapter.State.GetOperationsContext()
 
 	logger.Println("Collecting system info for Patroni cluster")
 

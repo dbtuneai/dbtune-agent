@@ -14,6 +14,16 @@ import (
 const (
 	// NoPrimaryDetected is used as a placeholder when no primary node can be identified
 	NoPrimaryDetected = "NO PRIMARY DETECTED"
+
+	// FailoverStabilizationPeriod is the minimum time to wait after failover detection
+	// before allowing operations to resume, even if cluster appears healthy.
+	// This ensures:
+	// - Patroni leader election is complete
+	// - PostgreSQL promotion is fully finished (WAL application, timeline change)
+	// - DCS state updates have propagated
+	// Even after Patroni reports "running", PostgreSQL may still be completing promotion.
+	// Testing with active load may require increasing this value beyond 30s.
+	FailoverStabilizationPeriod = 30 * time.Second
 )
 
 // isPostgreSQLFailoverError checks if an error indicates PostgreSQL failover in progress
@@ -99,8 +109,13 @@ func (adapter *PatroniAdapter) getPatroniClusterStatus(ctx context.Context) (*Pa
 }
 
 // isClusterHealthy checks if the Patroni cluster is stable and ready for operations
-func (adapter *PatroniAdapter) isClusterHealthy(ctx context.Context) (bool, error) {
+func (adapter *PatroniAdapter) isClusterHealthy() (bool, error) {
 	logger := adapter.Logger()
+
+	// CRITICAL: Use a fresh context for health checks, not the operations context
+	// The operations context may be cancelled during failover, which would prevent
+	// us from ever verifying that the cluster has recovered
+	ctx := context.Background()
 
 	// Check 1: Get cluster status from Patroni REST API
 	clusterStatus, err := adapter.getPatroniClusterStatus(ctx)
@@ -146,11 +161,25 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 	// Check if we're tracking a failover (LastFailoverTime is set)
 	timeSinceFailover := adapter.State.TimeSinceLastFailover()
 	if timeSinceFailover > 0 {
-		// We detected a failover previously - now check if cluster is healthy
-		healthy, err := adapter.isClusterHealthy(ctx)
+		// FIRST: Enforce minimum stabilization period
+		// Even if cluster appears healthy, PostgreSQL promotion may not be complete
+		// (WAL application, timeline change, etc.)
+		if timeSinceFailover < FailoverStabilizationPeriod {
+			logger.Infof("[FAILOVER_RECOVERY] Operations blocked: stabilization period (%.1fs / %.0fs)",
+				timeSinceFailover.Seconds(), FailoverStabilizationPeriod.Seconds())
+			return &FailoverDetectedError{
+				OldPrimary: adapter.State.GetLastKnownPrimary(),
+				NewPrimary: "(stabilizing)",
+				Message:    fmt.Sprintf("enforcing stabilization period: %.1fs / %.0fs",
+					timeSinceFailover.Seconds(), FailoverStabilizationPeriod.Seconds()),
+			}
+		}
+
+		// SECOND: After stabilization period, verify cluster is actually healthy
+		healthy, err := adapter.isClusterHealthy()
 		if err != nil {
 			// Can't determine health - keep blocking
-			logger.Warnf("[FAILOVER_RECOVERY] Cannot verify cluster health: %v", err)
+			logger.Warnf("[FAILOVER_RECOVERY] Cannot verify cluster health after stabilization: %v", err)
 			return &FailoverDetectedError{
 				OldPrimary: adapter.State.GetLastKnownPrimary(),
 				NewPrimary: "(verifying health)",
@@ -159,25 +188,33 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 		}
 
 		if !healthy {
-			// Cluster still unhealthy - keep blocking
-			logger.Infof("[FAILOVER_RECOVERY] Operations blocked: cluster still recovering (%.1fs since failover)",
+			// Cluster still unhealthy even after stabilization - keep blocking
+			logger.Warnf("[FAILOVER_RECOVERY] Operations blocked: cluster unhealthy after stabilization (%.1fs since failover)",
 				timeSinceFailover.Seconds())
 			return &FailoverDetectedError{
 				OldPrimary: adapter.State.GetLastKnownPrimary(),
 				NewPrimary: "(recovering)",
-				Message:    fmt.Sprintf("cluster still recovering: %.1fs since failover", timeSinceFailover.Seconds()),
+				Message:    fmt.Sprintf("cluster still unhealthy: %.1fs since failover", timeSinceFailover.Seconds()),
 			}
 		}
 
-		// Cluster is healthy now - clear failover state and allow operations
-		logger.Infof("[FAILOVER_RECOVERY] Cluster healthy again (%.1fs since failover) - resuming normal operations",
+		// FINALLY: Both stabilization period passed AND cluster is healthy
+		logger.Infof("[FAILOVER_RECOVERY] Stabilization complete and cluster healthy (%.1fs since failover) - resuming operations",
 			timeSinceFailover.Seconds())
 		adapter.State.ClearFailoverTime()
+
+		// Create new operations context for fresh PostgreSQL queries
+		// Old context was cancelled during failover to abort stale connections
+		adapter.State.CreateOperationsContext()
+		logger.Info("[FAILOVER_RECOVERY] Created new operations context for PostgreSQL queries")
+
 		// Continue to check if primary changed below
 	}
 
 	// Get cluster status from Patroni REST API
-	clusterStatus, err := adapter.getPatroniClusterStatus(ctx)
+	// CRITICAL: Use fresh context, not the operations context which may be cancelled
+	// We need to be able to detect failover even if operations are cancelled
+	clusterStatus, err := adapter.getPatroniClusterStatus(context.Background())
 	lastKnownPrimary := adapter.State.GetLastKnownPrimary()
 
 	// If we can't get cluster status AND we previously had a primary tracked,
@@ -187,18 +224,28 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 			logger.Warnf("Cannot get Patroni cluster status (failover likely in progress): %v", err)
 
 			// Only send notification if this is the FIRST detection (not already in recovery)
+			// AND we're not in an intentional restart window
 			if adapter.State.TimeSinceLastFailover() == 0 {
 				adapter.State.SetLastFailoverTime(time.Now())
 
-				// Send failover notification to backend
-				errorPayload := agent.ErrorPayload{
-					ErrorMessage: fmt.Sprintf("failover detected: %s -> NO PRIMARY DETECTED: cluster status unavailable: %v",
-						lastKnownPrimary, err),
-					ErrorType:    "failover_detected",
-					Timestamp:    time.Now().UTC().Format(time.RFC3339),
+				// Cancel all in-flight PostgreSQL operations immediately
+				// This aborts queries to the old primary that will fail anyway
+				adapter.State.CancelOperations()
+				logger.Warn("[FAILOVER_RECOVERY] Cancelled in-flight PostgreSQL operations")
+
+				// Send failover notification to backend ONLY if not in intentional restart
+				if !adapter.State.IsInRestartWindow() {
+					errorPayload := agent.ErrorPayload{
+						ErrorMessage: fmt.Sprintf("failover detected: %s -> NO PRIMARY DETECTED: cluster status unavailable: %v",
+							lastKnownPrimary, err),
+						ErrorType:    "failover_detected",
+						Timestamp:    time.Now().UTC().Format(time.RFC3339),
+					}
+					adapter.SendError(errorPayload)
+					logger.Info("Failover notification sent to backend (cluster status unavailable)")
+				} else {
+					logger.Info("Skipping failover notification (intentional PostgreSQL restart in progress)")
 				}
-				adapter.SendError(errorPayload)
-				logger.Info("Failover notification sent to backend (cluster status unavailable)")
 			}
 
 			return &FailoverDetectedError{
@@ -219,18 +266,27 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 		logger.Warnf("Patroni cluster has no current primary (failover in progress, was: %s)", lastKnownPrimary)
 
 		// Only send notification if this is the FIRST detection (not already in recovery)
+		// AND we're not in an intentional restart window
 		if adapter.State.TimeSinceLastFailover() == 0 {
 			adapter.State.SetLastFailoverTime(time.Now())
 
-			// Send failover notification to backend
-			errorPayload := agent.ErrorPayload{
-				ErrorMessage: fmt.Sprintf("failover detected: %s -> NO PRIMARY DETECTED: cluster state: %s",
-					lastKnownPrimary, clusterStatus.State),
-				ErrorType:    "failover_detected",
-				Timestamp:    time.Now().UTC().Format(time.RFC3339),
+			// Cancel all in-flight PostgreSQL operations immediately
+			adapter.State.CancelOperations()
+			logger.Warn("[FAILOVER_RECOVERY] Cancelled in-flight PostgreSQL operations")
+
+			// Send failover notification to backend ONLY if not in intentional restart
+			if !adapter.State.IsInRestartWindow() {
+				errorPayload := agent.ErrorPayload{
+					ErrorMessage: fmt.Sprintf("failover detected: %s -> NO PRIMARY DETECTED: cluster state: %s",
+						lastKnownPrimary, clusterStatus.State),
+					ErrorType:    "failover_detected",
+					Timestamp:    time.Now().UTC().Format(time.RFC3339),
+				}
+				adapter.SendError(errorPayload)
+				logger.Info("Failover notification sent to backend (no current primary)")
+			} else {
+				logger.Info("Skipping failover notification (intentional PostgreSQL restart in progress)")
 			}
-			adapter.SendError(errorPayload)
-			logger.Info("Failover notification sent to backend (no current primary)")
 		}
 
 		return &FailoverDetectedError{
@@ -264,15 +320,24 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 		adapter.State.SetLastFailoverTime(time.Now())
 		logger.Errorf("[FAILOVER_RECOVERY] NEW failover detected - cluster entering recovery state")
 
-		// Send failover notification to backend
-		errorPayload := agent.ErrorPayload{
-			ErrorMessage: fmt.Sprintf("failover detected: %s -> %s: cluster state: %s",
-				lastKnownPrimary, currentPrimary, clusterStatus.State),
-			ErrorType:    "failover_detected",
-			Timestamp:    time.Now().UTC().Format(time.RFC3339),
+		// Cancel all in-flight PostgreSQL operations immediately
+		// This aborts queries to the old primary that will fail anyway
+		adapter.State.CancelOperations()
+		logger.Warn("[FAILOVER_RECOVERY] Cancelled in-flight PostgreSQL operations")
+
+		// Send failover notification to backend ONLY if not in intentional restart
+		if !adapter.State.IsInRestartWindow() {
+			errorPayload := agent.ErrorPayload{
+				ErrorMessage: fmt.Sprintf("failover detected: %s -> %s: cluster state: %s",
+					lastKnownPrimary, currentPrimary, clusterStatus.State),
+				ErrorType:    "failover_detected",
+				Timestamp:    time.Now().UTC().Format(time.RFC3339),
+			}
+			adapter.SendError(errorPayload)
+			logger.Info("Failover notification sent to backend")
+		} else {
+			logger.Info("Skipping failover notification (intentional PostgreSQL restart in progress)")
 		}
-		adapter.SendError(errorPayload)
-		logger.Info("Failover notification sent to backend")
 
 		return &FailoverDetectedError{
 			OldPrimary: lastKnownPrimary,
