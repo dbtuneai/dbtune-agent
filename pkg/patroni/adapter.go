@@ -88,8 +88,13 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 		common.Logger().Warnf("Failed to initialize primary tracking: %v", err)
 		// Don't fail agent startup - tracking will be established on first check
 	}
+	isStandby, err := adpt.isStandbyNode(ctx)
+	if err == nil && isStandby {
+		common.Logger().Warn("WARNING: Agent is running on a Standby node. Tuning commands will be rejected until this node becomes Primary.")
+	}
 
 	return &adpt, nil
+
 }
 
 // initializePrimaryTracking establishes the initial primary node tracking
@@ -112,6 +117,16 @@ func (adapter *PatroniAdapter) initializePrimaryTracking(ctx context.Context) er
 	return nil
 }
 
+// Recognizes if the current node is a standby (replica) node
+func (adapter *PatroniAdapter) isStandbyNode(ctx context.Context) (bool, error) {
+	var inRecovery bool
+	err := adapter.PGDriver.QueryRow(ctx, "SELECT pg_is_in_recovery()").Scan(&inRecovery)
+	if err != nil {
+		return false, fmt.Errorf("failed to check recovery status: %w", err)
+	}
+	return inRecovery, nil
+}
+
 func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
 	// Use operations context that will be cancelled during failover
 	// This ensures queries during config application are aborted if failover occurs
@@ -132,6 +147,20 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 		}
 		// Other error checking failover status - log but continue
 		logger.Warnf("Failed to check for failover: %v", err)
+	}
+	isStandby, err := adapter.isStandbyNode(ctx)
+	if err == nil && isStandby {
+		errMsg := "Tuning operation rejected: Agent is running on a Standby node."
+		logger.Error(errMsg)
+
+		errorPayload := agent.ErrorPayload{
+			ErrorMessage: errMsg,
+			// CHANGE THIS: Use the specific key that matches backend logic
+			ErrorType: "standby_node_detected",
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		}
+		adapter.SendError(errorPayload)
+		return fmt.Errorf(errMsg)
 	}
 
 	logger.Infof("[FAILOVER_RECOVERY] Failover check PASSED - proceeding with config application")
@@ -492,7 +521,7 @@ func (adapter *PatroniAdapter) triggerPostgreSQLRestart(ctx context.Context) err
 		if err := adapter.restartSingleNode(ctx, replica); err != nil {
 			// Check if restart already in progress - this is OK, means Patroni is already handling it
 			if strings.Contains(err.Error(), "restart already in progress") ||
-			   strings.Contains(err.Error(), "reinitialize already in progress") {
+				strings.Contains(err.Error(), "reinitialize already in progress") {
 				logger.Infof("Restart already in progress for replica %s (Patroni handling it)", replica.Name)
 			} else {
 				logger.Errorf("Failed to restart replica %s: %v", replica.Name, err)
@@ -521,7 +550,7 @@ func (adapter *PatroniAdapter) triggerPostgreSQLRestart(ctx context.Context) err
 		if err := adapter.restartSingleNode(ctx, *leader); err != nil {
 			// Check if restart already in progress - this is OK
 			if strings.Contains(err.Error(), "restart already in progress") ||
-			   strings.Contains(err.Error(), "reinitialize already in progress") {
+				strings.Contains(err.Error(), "reinitialize already in progress") {
 				logger.Infof("Restart already in progress for leader %s (Patroni handling it)", leader.Name)
 			} else {
 				logger.Errorf("Failed to restart leader %s: %v", leader.Name, err)
