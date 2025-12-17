@@ -160,7 +160,7 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 		}
 		adapter.SendError(errorPayload)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	logger.Infof("[FAILOVER_RECOVERY] Failover check PASSED - proceeding with config application")
