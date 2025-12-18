@@ -21,6 +21,10 @@ type State struct {
 	// Used to trigger recovery mode and health checking
 	LastFailoverTime time.Time
 
+	// recoveryContextCreated tracks if we've created a new operations context after failover
+	// Prevents creating multiple contexts during the stabilization/grace period
+	recoveryContextCreated bool
+
 	// InRestartWindow tracks if we're in an intentional PostgreSQL restart
 	// Used to suppress failover notifications during planned restarts
 	InRestartWindow bool
@@ -67,10 +71,23 @@ func (s *State) TimeSinceLastGuardrailCheck() time.Duration {
 	return time.Since(s.LastGuardrailCheck)
 }
 
+// GetLastFailoverTime safely gets the last failover time
+func (s *State) GetLastFailoverTime() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.LastFailoverTime
+}
+
 // SetLastFailoverTime safely records when a failover was detected
 func (s *State) SetLastFailoverTime(t time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Only reset the recoveryContextCreated flag if this is a NEW failover
+	// (i.e., LastFailoverTime was previously zero)
+	// This prevents resetting the flag when updating timestamp during an ongoing failover
+	if s.LastFailoverTime.IsZero() {
+		s.recoveryContextCreated = false // Reset flag only on NEW failover detection
+	}
 	s.LastFailoverTime = t
 }
 
@@ -90,6 +107,21 @@ func (s *State) ClearFailoverTime() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.LastFailoverTime = time.Time{}
+	s.recoveryContextCreated = false // Reset flag when clearing failover tracking
+}
+
+// IsRecoveryContextCreated checks if we've already created a recovery context
+func (s *State) IsRecoveryContextCreated() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.recoveryContextCreated
+}
+
+// SetRecoveryContextCreated marks that we've created a recovery context
+func (s *State) SetRecoveryContextCreated(created bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recoveryContextCreated = created
 }
 
 // CreateOperationsContext creates a new cancellable context for PostgreSQL operations

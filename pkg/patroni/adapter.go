@@ -136,31 +136,79 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 	logger.Infof("[FAILOVER_RECOVERY] ApplyConfig called: knob_application=%s, num_params=%d",
 		proposedConfig.KnobApplication, len(proposedConfig.Config))
 
+	// Check if we're already in a grace period from a previous failover
+	// This needs to be checked BEFORE CheckForFailover to avoid race conditions
+	timeSinceFailover := adapter.State.TimeSinceLastFailover()
+	recentFailoverGracePeriod := 2 * time.Minute
+	hadRecentFailover := timeSinceFailover > 0 && timeSinceFailover < recentFailoverGracePeriod
+
 	// Check for failover before applying new configuration
 	// This ensures we don't apply tuning parameters after a failover has occurred
-	if err := adapter.CheckForFailover(ctx); err != nil {
-		if failoverErr, ok := err.(*FailoverDetectedError); ok {
-			logger.Warnf("[FAILOVER_RECOVERY] Failover check BLOCKED config application: %s", failoverErr.Message)
-			// Return error to block this config application (matches CNPG behavior)
-			// HandleFailoverDetected was already called by CheckForFailover
-			return failoverErr
+	failoverCheckErr := adapter.CheckForFailover(ctx)
+	if failoverCheckErr != nil {
+		if failoverErr, ok := failoverCheckErr.(*FailoverDetectedError); ok {
+			// If we're in stabilization period, allow the config application to proceed
+			// This is critical for applying baseline configuration after failover
+			if failoverErr.InStabilization {
+				logger.Infof("[FAILOVER_RECOVERY] In stabilization period - allowing config application to proceed (baseline revert)")
+				logger.Infof("[FAILOVER_RECOVERY] Skipping standby check during stabilization to allow baseline application")
+				// Skip standby check and continue with config application
+			} else if hadRecentFailover {
+				// We're in grace period from a PREVIOUS failover, but a NEW failover just occurred
+				// Allow this config to proceed (it's likely baseline from the previous failover)
+				// The new failover will trigger its own baseline later
+				logger.Warnf("[FAILOVER_RECOVERY] New failover detected during grace period from previous failover")
+				logger.Infof("[FAILOVER_RECOVERY] Allowing config application to proceed (baseline from previous failover)")
+				logger.Infof("[FAILOVER_RECOVERY] New failover will be handled in next iteration")
+				// Skip standby check and continue with config application
+			} else {
+				// Not in stabilization or grace period - block config application
+				logger.Warnf("[FAILOVER_RECOVERY] Failover check BLOCKED config application: %s", failoverErr.Message)
+				// HandleFailoverDetected was already called by CheckForFailover
+				return failoverErr
+			}
+		} else {
+			// Other error checking failover status - log but continue
+			logger.Warnf("Failed to check for failover: %v", failoverCheckErr)
 		}
-		// Other error checking failover status - log but continue
-		logger.Warnf("Failed to check for failover: %v", err)
 	}
-	isStandby, err := adapter.isStandbyNode(ctx)
-	if err == nil && isStandby {
-		errMsg := "Tuning operation rejected: Agent is running on a Standby node."
-		logger.Error(errMsg)
 
-		errorPayload := agent.ErrorPayload{
-			ErrorMessage: errMsg,
-			// CHANGE THIS: Use the specific key that matches backend logic
-			ErrorType: "standby_node_detected",
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
+	// Re-check failover status after CheckForFailover (may have been updated by new failover)
+	timeSinceFailover = adapter.State.TimeSinceLastFailover()
+	hadRecentFailover = timeSinceFailover > 0 && timeSinceFailover < recentFailoverGracePeriod
+
+	// Clear failover time if grace period has expired
+	if timeSinceFailover > 0 && timeSinceFailover >= recentFailoverGracePeriod {
+		logger.Infof("[FAILOVER_RECOVERY] Grace period expired (%.0fs since failover) - clearing failover tracking and resuming normal standby checks",
+			timeSinceFailover.Seconds())
+		adapter.State.ClearFailoverTime()
+		hadRecentFailover = false // Now we can perform standby check
+	}
+
+	// Only perform standby check if:
+	// 1. No failover detected currently (failoverCheckErr == nil)
+	// 2. No recent failover in the grace period
+	if failoverCheckErr == nil && !hadRecentFailover {
+		// Normal operation - check if we're on a standby node
+		// This prevents tuning sessions from starting on standby nodes
+		isStandby, err := adapter.isStandbyNode(ctx)
+		if err == nil && isStandby {
+			errMsg := "Tuning operation rejected: Agent is running on a Standby node."
+			logger.Error(errMsg)
+
+			errorPayload := agent.ErrorPayload{
+				ErrorMessage: errMsg,
+				ErrorType:    "standby_node_detected",
+				Timestamp:    time.Now().UTC().Format(time.RFC3339),
+			}
+			adapter.SendError(errorPayload)
+			return fmt.Errorf(errMsg)
+		} else if err != nil {
+			logger.Warnf("Failed to check if node is standby: %v", err)
 		}
-		adapter.SendError(errorPayload)
-		return fmt.Errorf("%s", errMsg)
+	} else if hadRecentFailover {
+		logger.Infof("[FAILOVER_RECOVERY] Skipping standby check due to recent failover (%.0fs ago, grace period: %.0fs)",
+			timeSinceFailover.Seconds(), recentFailoverGracePeriod.Seconds())
 	}
 
 	logger.Infof("[FAILOVER_RECOVERY] Failover check PASSED - proceeding with config application")

@@ -42,9 +42,10 @@ func isPostgreSQLFailoverError(err error) bool {
 // FailoverDetectedError is returned when a failover is detected during tuning.
 // This signals that the tuning session should terminate gracefully.
 type FailoverDetectedError struct {
-	OldPrimary string
-	NewPrimary string
-	Message    string
+	OldPrimary       string
+	NewPrimary       string
+	Message          string
+	InStabilization  bool // True if we're in the stabilization period (allows baseline config)
 }
 
 func (e *FailoverDetectedError) Error() string {
@@ -165,12 +166,13 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 		// Even if cluster appears healthy, PostgreSQL promotion may not be complete
 		// (WAL application, timeline change, etc.)
 		if timeSinceFailover < FailoverStabilizationPeriod {
-			logger.Infof("[FAILOVER_RECOVERY] Operations blocked: stabilization period (%.1fs / %.0fs)",
+			logger.Infof("[FAILOVER_RECOVERY] In stabilization period (%.1fs / %.0fs)",
 				timeSinceFailover.Seconds(), FailoverStabilizationPeriod.Seconds())
 			return &FailoverDetectedError{
-				OldPrimary: adapter.State.GetLastKnownPrimary(),
-				NewPrimary: "(stabilizing)",
-				Message:    fmt.Sprintf("enforcing stabilization period: %.1fs / %.0fs",
+				OldPrimary:      adapter.State.GetLastKnownPrimary(),
+				NewPrimary:      "(stabilizing)",
+				InStabilization: true, // Signal that baseline configs can proceed
+				Message:         fmt.Sprintf("enforcing stabilization period: %.1fs / %.0fs",
 					timeSinceFailover.Seconds(), FailoverStabilizationPeriod.Seconds()),
 			}
 		}
@@ -199,14 +201,34 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 		}
 
 		// FINALLY: Both stabilization period passed AND cluster is healthy
-		logger.Infof("[FAILOVER_RECOVERY] Stabilization complete and cluster healthy (%.1fs since failover) - resuming operations",
-			timeSinceFailover.Seconds())
-		adapter.State.ClearFailoverTime()
 
-		// Create new operations context for fresh PostgreSQL queries
-		// Old context was cancelled during failover to abort stale connections
-		adapter.State.CreateOperationsContext()
-		logger.Info("[FAILOVER_RECOVERY] Created new operations context for PostgreSQL queries")
+		// Check if grace period has expired (2 minutes after failover)
+		// After grace period, clear failover tracking and resume normal operations
+		const gracePeriod = 2 * time.Minute
+		if timeSinceFailover >= gracePeriod {
+			// Only log once when clearing
+			if !adapter.State.GetLastFailoverTime().IsZero() {
+				logger.Infof("[FAILOVER_RECOVERY] Grace period expired (%.0fs since failover) - clearing failover tracking and resuming normal operations",
+					timeSinceFailover.Seconds())
+				adapter.State.ClearFailoverTime()
+			}
+			// After clearing, return nil to allow normal operations
+			// This breaks out of the recovery loop
+			return nil
+		}
+
+		// Still within grace period - create recovery context once
+		// Check the flag to avoid creating multiple contexts on subsequent iterations
+		if !adapter.State.IsRecoveryContextCreated() {
+			logger.Infof("[FAILOVER_RECOVERY] Stabilization complete and cluster healthy (%.1fs since failover) - resuming operations",
+				timeSinceFailover.Seconds())
+
+			// Create new operations context for fresh PostgreSQL queries
+			// Old context was cancelled during failover to abort stale connections
+			adapter.State.CreateOperationsContext()
+			adapter.State.SetRecoveryContextCreated(true)
+			logger.Info("[FAILOVER_RECOVERY] Created new operations context for PostgreSQL queries")
+		}
 
 		// Continue to check if primary changed below
 	}
