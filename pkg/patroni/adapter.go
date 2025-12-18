@@ -202,7 +202,7 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 				Timestamp:    time.Now().UTC().Format(time.RFC3339),
 			}
 			adapter.SendError(errorPayload)
-			return fmt.Errorf(errMsg)
+			return fmt.Errorf("%s", errMsg)
 		} else if err != nil {
 			logger.Warnf("Failed to check if node is standby: %v", err)
 		}
