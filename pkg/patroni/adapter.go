@@ -316,11 +316,23 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 	logger.Info("Configuration successfully applied via Patroni REST API")
 
 	// Step 4: Check if any parameters require PostgreSQL restart and handle restart if needed
-	// Check both: explicit restart flag OR dynamic detection of restart-required parameters
-	needsRestart := proposedConfig.KnobApplication == "restart"
+	// Respect backend's KnobApplication setting:
+	// - "restart" = Allow restarts
+	// - "reload" = NO restarts (reload only, even if params require restart)
+	// - other = Check dynamically if restart is needed
 
-	// If not explicitly flagged as restart, check dynamically using pg_settings
-	if !needsRestart {
+	needsRestart := false
+
+	if proposedConfig.KnobApplication == "restart" {
+		// Explicitly flagged as restart by backend
+		needsRestart = true
+		logger.Info("Backend requested restart (KnobApplication='restart')")
+	} else if proposedConfig.KnobApplication == "reload" {
+		// Backend explicitly disabled restarts - respect it
+		needsRestart = false
+		logger.Info("Backend disabled restarts (KnobApplication='reload') - will only reload config")
+	} else {
+		// Not explicitly specified - check dynamically using pg_settings
 		// Build list of parameter names to check
 		var paramNames []string
 		for _, knob := range parsedKnobs {
