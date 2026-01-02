@@ -327,8 +327,16 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 		return nil
 	}
 
+	// Normalize primary names for comparison to avoid false positives
+	// This handles cases where Patroni API might return names with:
+	// - Trailing/leading whitespace
+	// - Different casing (though Patroni typically uses lowercase)
+	// - Domain suffixes that vary between calls
+	normalizedCurrent := strings.ToLower(strings.TrimSpace(currentPrimary))
+	normalizedLast := strings.ToLower(strings.TrimSpace(lastKnownPrimary))
+
 	// Check if primary changed (failover occurred)
-	if currentPrimary != lastKnownPrimary {
+	if normalizedCurrent != normalizedLast {
 		logger.Warnf("Failover detected: %s → %s (state: %s)",
 			lastKnownPrimary, currentPrimary, clusterStatus.State)
 		logger.Warnf("Primary name comparison: lastKnown='%s' (len=%d), current='%s' (len=%d)",
