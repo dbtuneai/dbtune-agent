@@ -21,6 +21,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/version"
 
+	"github.com/google/uuid"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/spf13/viper"
 )
@@ -160,6 +161,7 @@ type AgentLooper interface {
 type AgentPayload struct {
 	AgentVersion   string `json:"agent_version"`
 	AgentStartTime string `json:"agent_start_time"`
+	AgentID        string `json:"agent_identifier"`
 }
 
 type ErrorPayload struct {
@@ -303,6 +305,8 @@ type CommonAgent struct {
 	dbtune.ServerURLs
 	logger    *log.Logger
 	APIClient *retryablehttp.Client
+	// Unique identifier for this agent instance
+	AgentID string
 	// Time the agent started
 	StartTime    string
 	MetricsState MetricsState
@@ -352,10 +356,14 @@ func CreateCommonAgentWithVersion(version string) *CommonAgent {
 		}
 	}
 
+	agentID := uuid.New().String()
+	logger.Infof("Agent instance ID: %s", agentID)
+
 	return &CommonAgent{
 		ServerURLs: serverUrl,
 		APIClient:  client,
 		logger:     logger,
+		AgentID:    agentID,
 		StartTime:  time.Now().UTC().Format(time.RFC3339),
 		Version:    version,
 		MetricsState: MetricsState{
@@ -383,6 +391,7 @@ func (a *CommonAgent) SendHeartbeat() error {
 	payload := AgentPayload{
 		AgentVersion:   a.Version,
 		AgentStartTime: a.StartTime,
+		AgentID:        a.AgentID,
 	}
 
 	jsonData, err := json.Marshal(payload)
