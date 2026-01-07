@@ -14,6 +14,21 @@ import (
 const (
 	// DefaultCollectorInterval is the default collection interval for unknown collectors
 	DefaultCollectorInterval = 5 * time.Second
+
+	// DefaultHeartbeatInterval is the interval for sending heartbeat events
+	DefaultHeartbeatInterval = 15 * time.Second
+
+	// DefaultSystemInfoInterval is the interval for collecting system information
+	DefaultSystemInfoInterval = 1 * time.Minute
+
+	// DefaultConfigInterval is the interval for checking config changes
+	DefaultConfigInterval = 5 * time.Second
+
+	// DefaultGuardrailsCheckInterval is the interval for checking guardrails
+	DefaultGuardrailsCheckInterval = 1 * time.Second
+
+	// DefaultGuardrailsRateLimitInterval is the rate limit for guardrails signals
+	DefaultGuardrailsRateLimitInterval = 15 * time.Second
 )
 
 // collectorIntervals defines the collection interval for each collector based on how frequently they change
@@ -82,29 +97,29 @@ func createSources(commonAgent *agent.CommonAgent, looper agent.AgentLooper, log
 	sources = append(sources, source.NewHeartbeatSource(
 		commonAgent.Version,
 		commonAgent.StartTime,
-		15*time.Second,
+		DefaultHeartbeatInterval,
 		logger,
 	))
 
 	// Add system info source
 	sources = append(sources, source.NewSystemInfoSource(
 		looper,
-		1*time.Minute,
+		DefaultSystemInfoInterval,
 		logger,
 	))
 
 	// Add config source
 	sources = append(sources, source.NewConfigSource(
 		looper,
-		5*time.Second,
+		DefaultConfigInterval,
 		logger,
 	))
 
-	// Add guardrails source (check every 1s, but rate-limit signals to 15s)
+	// Add guardrails source
 	sources = append(sources, source.NewGuardrailsSource(
 		looper,
-		1*time.Second,
-		15*time.Second,
+		DefaultGuardrailsCheckInterval,
+		DefaultGuardrailsRateLimitInterval,
 		logger,
 	))
 
