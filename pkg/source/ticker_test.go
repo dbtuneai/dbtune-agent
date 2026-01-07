@@ -20,12 +20,18 @@ func TestRunWithTicker_BasicOperation(t *testing.T) {
 	eventChan := make(chan events.Event, 10)
 	callCount := 0
 
-	produce := func(ctx context.Context) (events.Event, error) {
-		callCount++
-		return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339)), nil
+	config := TickerConfig{
+		Name:      "test-source",
+		Interval:  100 * time.Millisecond,
+		SkipFirst: false,
+		Logger:    logger,
+		Collect: func(ctx context.Context) (events.Event, error) {
+			callCount++
+			return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339)), nil
+		},
 	}
 
-	err := RunWithTicker(ctx, eventChan, 100*time.Millisecond, false, logger, "test-source", produce)
+	err := RunWithTicker(ctx, eventChan, config)
 	if err != context.DeadlineExceeded {
 		t.Errorf("expected context.DeadlineExceeded, got %v", err)
 	}
@@ -58,12 +64,18 @@ func TestRunWithTicker_SkipFirst(t *testing.T) {
 	eventChan := make(chan events.Event, 10)
 	callCount := 0
 
-	produce := func(ctx context.Context) (events.Event, error) {
-		callCount++
-		return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339)), nil
+	config := TickerConfig{
+		Name:      "test-source",
+		Interval:  100 * time.Millisecond,
+		SkipFirst: true,
+		Logger:    logger,
+		Collect: func(ctx context.Context) (events.Event, error) {
+			callCount++
+			return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339)), nil
+		},
 	}
 
-	_ = RunWithTicker(ctx, eventChan, 100*time.Millisecond, true, logger, "test-source", produce)
+	_ = RunWithTicker(ctx, eventChan, config)
 
 	// Should skip first and run at 100, 200ms
 	if callCount < 2 || callCount > 3 {
@@ -81,12 +93,18 @@ func TestRunWithTicker_ErrorHandling(t *testing.T) {
 	eventChan := make(chan events.Event, 10)
 	callCount := 0
 
-	produce := func(ctx context.Context) (events.Event, error) {
-		callCount++
-		return nil, errors.New("test error")
+	config := TickerConfig{
+		Name:      "test-source",
+		Interval:  100 * time.Millisecond,
+		SkipFirst: false,
+		Logger:    logger,
+		Collect: func(ctx context.Context) (events.Event, error) {
+			callCount++
+			return nil, errors.New("test error")
+		},
 	}
 
-	_ = RunWithTicker(ctx, eventChan, 100*time.Millisecond, false, logger, "test-source", produce)
+	_ = RunWithTicker(ctx, eventChan, config)
 	close(eventChan)
 
 	// Should still be called despite errors
@@ -117,12 +135,18 @@ func TestRunWithTicker_NilEvents(t *testing.T) {
 	eventChan := make(chan events.Event, 10)
 	callCount := 0
 
-	produce := func(ctx context.Context) (events.Event, error) {
-		callCount++
-		return nil, nil // Nil event, no error
+	config := TickerConfig{
+		Name:      "test-source",
+		Interval:  100 * time.Millisecond,
+		SkipFirst: false,
+		Logger:    logger,
+		Collect: func(ctx context.Context) (events.Event, error) {
+			callCount++
+			return nil, nil // Nil event, no error
+		},
 	}
 
-	_ = RunWithTicker(ctx, eventChan, 100*time.Millisecond, false, logger, "test-source", produce)
+	_ = RunWithTicker(ctx, eventChan, config)
 	close(eventChan)
 
 	// Should be called
@@ -154,11 +178,17 @@ func TestRunWithTicker_ContextCancellation(t *testing.T) {
 		cancel()
 	}()
 
-	produce := func(ctx context.Context) (events.Event, error) {
-		return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339)), nil
+	config := TickerConfig{
+		Name:      "test-source",
+		Interval:  100 * time.Millisecond,
+		SkipFirst: false,
+		Logger:    logger,
+		Collect: func(ctx context.Context) (events.Event, error) {
+			return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339)), nil
+		},
 	}
 
-	err := RunWithTicker(ctx, eventChan, 100*time.Millisecond, false, logger, "test-source", produce)
+	err := RunWithTicker(ctx, eventChan, config)
 	if err != context.Canceled {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}

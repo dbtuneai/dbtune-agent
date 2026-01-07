@@ -9,24 +9,25 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// TickerConfig holds configuration for RunWithTicker
+type TickerConfig struct {
+	Name      string
+	Interval  time.Duration
+	SkipFirst bool
+	Logger    *log.Logger
+	Collect   func(context.Context) (events.Event, error)
+}
+
 // RunWithTicker is a pure function that runs a collect function on an interval
 // It handles ticker setup, error events, and graceful shutdown
-func RunWithTicker(
-	ctx context.Context,
-	out chan<- events.Event,
-	interval time.Duration,
-	skipFirst bool,
-	logger *log.Logger,
-	name string,
-	collect func(context.Context) (events.Event, error),
-) error {
-	ticker := time.NewTicker(interval)
+func RunWithTicker(ctx context.Context, out chan<- events.Event, config TickerConfig) error {
+	ticker := time.NewTicker(config.Interval)
 	defer ticker.Stop()
 
 	// Execute immediately unless SkipFirst is set
-	if !skipFirst {
-		if err := executeAndSend(ctx, out, collect); err != nil {
-			logger.Debugf("[%s] initial execution error: %v", name, err)
+	if !config.SkipFirst {
+		if err := executeAndSend(ctx, out, config.Collect); err != nil {
+			config.Logger.Debugf("[%s] initial execution error: %v", config.Name, err)
 		}
 	}
 
@@ -36,8 +37,8 @@ func RunWithTicker(
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if err := executeAndSend(ctx, out, collect); err != nil {
-				logger.Debugf("[%s] execution error: %v", name, err)
+			if err := executeAndSend(ctx, out, config.Collect); err != nil {
+				config.Logger.Debugf("[%s] execution error: %v", config.Name, err)
 				// Continue running even on error
 			}
 		}

@@ -15,12 +15,18 @@ func NewSystemInfoSource(adapter agent.AgentLooper, interval time.Duration, logg
 		Name:     "system_info",
 		Interval: interval,
 		Start: func(ctx context.Context, out chan<- events.Event) error {
-			return RunWithTicker(ctx, out, interval, false, logger, "system_info", func(ctx context.Context) (events.Event, error) {
-				info, err := adapter.GetSystemInfo()
-				if err != nil {
-					return nil, err
-				}
-				return events.NewSystemInfoEvent(info), nil
+			return RunWithTicker(ctx, out, TickerConfig{
+				Name:      "system_info",
+				Interval:  interval,
+				SkipFirst: false,
+				Logger:    logger,
+				Collect: func(ctx context.Context) (events.Event, error) {
+					info, err := adapter.GetSystemInfo()
+					if err != nil {
+						return nil, err
+					}
+					return events.NewSystemInfoEvent(info), nil
+				},
 			})
 		},
 	}

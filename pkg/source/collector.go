@@ -24,36 +24,42 @@ func NewCollectorSource(
 		Name:     key,
 		Interval: interval,
 		Start: func(ctx context.Context, out chan<- events.Event) error {
-			return RunWithTicker(ctx, out, interval, false, logger, key, func(ctx context.Context) (events.Event, error) {
-				// Create timeout context for this collection
-				collectCtx, cancel := context.WithTimeout(ctx, collectorTimeout)
-				defer cancel()
+			return RunWithTicker(ctx, out, TickerConfig{
+				Name:      key,
+				Interval:  interval,
+				SkipFirst: false,
+				Logger:    logger,
+				Collect: func(ctx context.Context) (events.Event, error) {
+					// Create timeout context for this collection
+					collectCtx, cancel := context.WithTimeout(ctx, collectorTimeout)
+					defer cancel()
 
-				// Clear metrics for this collection
-				// We need to be careful here - we'll temporarily set metrics to a new slice,
-				// run the collector, then capture what it added
-				state.Mutex.Lock()
-				collectedMetrics := make([]metrics.FlatValue, 0)
-				// Save old metrics (in case there are any from other collectors running concurrently)
-				oldMetrics := state.Metrics
-				state.Metrics = collectedMetrics
-				state.Mutex.Unlock()
+					// Clear metrics for this collection
+					// We need to be careful here - we'll temporarily set metrics to a new slice,
+					// run the collector, then capture what it added
+					state.Mutex.Lock()
+					collectedMetrics := make([]metrics.FlatValue, 0)
+					// Save old metrics (in case there are any from other collectors running concurrently)
+					oldMetrics := state.Metrics
+					state.Metrics = collectedMetrics
+					state.Mutex.Unlock()
 
-				// Run the collector
-				err := collector(collectCtx, state)
+					// Run the collector
+					err := collector(collectCtx, state)
 
-				// Restore and capture metrics
-				state.Mutex.Lock()
-				collectedMetrics = state.Metrics
-				state.Metrics = oldMetrics
-				state.Mutex.Unlock()
+					// Restore and capture metrics
+					state.Mutex.Lock()
+					collectedMetrics = state.Metrics
+					state.Metrics = oldMetrics
+					state.Mutex.Unlock()
 
-				if err != nil {
-					return nil, err
-				}
+					if err != nil {
+						return nil, err
+					}
 
-				// Return metrics event
-				return events.NewMetricsEvent(key, collectedMetrics), nil
+					// Return metrics event
+					return events.NewMetricsEvent(key, collectedMetrics), nil
+				},
 			})
 		},
 	}

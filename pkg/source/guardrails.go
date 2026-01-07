@@ -20,23 +20,29 @@ func NewGuardrailsSource(adapter agent.AgentLooper, checkInterval time.Duration,
 		Name:     "guardrails",
 		Interval: checkInterval,
 		Start: func(ctx context.Context, out chan<- events.Event) error {
-			return RunWithTicker(ctx, out, checkInterval, false, logger, "guardrails", func(ctx context.Context) (events.Event, error) {
-				signal := adapter.Guardrails()
+			return RunWithTicker(ctx, out, TickerConfig{
+				Name:      "guardrails",
+				Interval:  checkInterval,
+				SkipFirst: false,
+				Logger:    logger,
+				Collect: func(ctx context.Context) (events.Event, error) {
+					signal := adapter.Guardrails()
 
-				// Rate limiting: only emit signal if enough time has passed
-				mu.Lock()
-				shouldEmit := signal != nil && time.Since(lastSignal) >= signalInterval
-				if shouldEmit {
-					lastSignal = time.Now()
-				}
-				mu.Unlock()
+					// Rate limiting: only emit signal if enough time has passed
+					mu.Lock()
+					shouldEmit := signal != nil && time.Since(lastSignal) >= signalInterval
+					if shouldEmit {
+						lastSignal = time.Now()
+					}
+					mu.Unlock()
 
-				if shouldEmit {
-					return events.NewGuardrailEvent(signal), nil
-				}
+					if shouldEmit {
+						return events.NewGuardrailEvent(signal), nil
+					}
 
-				// Return nil event if no signal or rate-limited
-				return nil, nil
+					// Return nil event if no signal or rate-limited
+					return nil, nil
+				},
 			})
 		},
 	}

@@ -15,24 +15,30 @@ func NewConfigSource(adapter agent.AgentLooper, interval time.Duration, logger *
 		Name:     "config",
 		Interval: interval,
 		Start: func(ctx context.Context, out chan<- events.Event) error {
-			return RunWithTicker(ctx, out, interval, false, logger, "config", func(ctx context.Context) (events.Event, error) {
-				activeConfig, err := adapter.GetActiveConfig()
-				if err != nil {
-					return nil, err
-				}
-
-				proposedConfig, err := adapter.GetProposedConfig()
-				if err != nil {
-					logger.Debugf("Failed to get proposed config: %v", err)
-				}
-
-				if proposedConfig != nil && proposedConfig.Config != nil {
-					if err := adapter.ApplyConfig(proposedConfig); err != nil {
-						logger.Errorf("Failed to apply config: %v", err)
+			return RunWithTicker(ctx, out, TickerConfig{
+				Name:      "config",
+				Interval:  interval,
+				SkipFirst: false,
+				Logger:    logger,
+				Collect: func(ctx context.Context) (events.Event, error) {
+					activeConfig, err := adapter.GetActiveConfig()
+					if err != nil {
+						return nil, err
 					}
-				}
 
-				return events.NewConfigEvent(activeConfig, proposedConfig), nil
+					proposedConfig, err := adapter.GetProposedConfig()
+					if err != nil {
+						logger.Debugf("Failed to get proposed config: %v", err)
+					}
+
+					if proposedConfig != nil && proposedConfig.Config != nil {
+						if err := adapter.ApplyConfig(proposedConfig); err != nil {
+							logger.Errorf("Failed to apply config: %v", err)
+						}
+					}
+
+					return events.NewConfigEvent(activeConfig, proposedConfig), nil
+				},
 			})
 		},
 	}
