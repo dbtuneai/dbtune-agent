@@ -21,12 +21,12 @@ func TestMetricsEvent(t *testing.T) {
 		t.Errorf("expected type %s, got %s", EventTypeMetrics, event.Type())
 	}
 
-	if event.CollectorKey() != key {
-		t.Errorf("expected collector key %s, got %s", key, event.CollectorKey())
+	if event.CollectorKey != key {
+		t.Errorf("expected collector key %s, got %s", key, event.CollectorKey)
 	}
 
-	if len(event.Metrics()) != 1 {
-		t.Errorf("expected 1 metric, got %d", len(event.Metrics()))
+	if len(event.Metrics) != 1 {
+		t.Errorf("expected 1 metric, got %d", len(event.Metrics))
 	}
 
 	if time.Since(event.Timestamp()) > time.Second {
@@ -44,12 +44,12 @@ func TestHeartbeatEvent(t *testing.T) {
 		t.Errorf("expected type %s, got %s", EventTypeHeartbeat, event.Type())
 	}
 
-	if event.Version() != version {
-		t.Errorf("expected version %s, got %s", version, event.Version())
+	if event.Version != version {
+		t.Errorf("expected version %s, got %s", version, event.Version)
 	}
 
-	if event.StartTime() != startTime {
-		t.Errorf("expected start time %s, got %s", startTime, event.StartTime())
+	if event.StartTime != startTime {
+		t.Errorf("expected start time %s, got %s", startTime, event.StartTime)
 	}
 }
 
@@ -65,8 +65,8 @@ func TestSystemInfoEvent(t *testing.T) {
 		t.Errorf("expected type %s, got %s", EventTypeSystemInfo, event.Type())
 	}
 
-	if len(event.Info()) != 2 {
-		t.Errorf("expected 2 info items, got %d", len(event.Info()))
+	if len(event.Info) != 2 {
+		t.Errorf("expected 2 info items, got %d", len(event.Info))
 	}
 }
 
@@ -86,11 +86,11 @@ func TestConfigEvent(t *testing.T) {
 		t.Errorf("expected type %s, got %s", EventTypeConfig, event.Type())
 	}
 
-	if len(event.ActiveConfig()) != 1 {
-		t.Errorf("expected 1 active config item, got %d", len(event.ActiveConfig()))
+	if len(event.ActiveConfig) != 1 {
+		t.Errorf("expected 1 active config item, got %d", len(event.ActiveConfig))
 	}
 
-	if event.ProposedConfig() == nil {
+	if event.ProposedConfig == nil {
 		t.Error("expected proposed config to not be nil")
 	}
 }
@@ -106,7 +106,7 @@ func TestConfigEventWithNilProposed(t *testing.T) {
 		t.Errorf("expected type %s, got %s", EventTypeConfig, event.Type())
 	}
 
-	if event.ProposedConfig() != nil {
+	if event.ProposedConfig != nil {
 		t.Error("expected proposed config to be nil")
 	}
 }
@@ -123,12 +123,12 @@ func TestGuardrailEvent(t *testing.T) {
 		t.Errorf("expected type %s, got %s", EventTypeGuardrail, event.Type())
 	}
 
-	if event.Signal() == nil {
+	if event.Signal == nil {
 		t.Error("expected signal to not be nil")
 	}
 
-	if event.Signal().Level != guardrails.Critical {
-		t.Errorf("expected critical level, got %s", event.Signal().Level)
+	if event.Signal.Level != guardrails.Critical {
+		t.Errorf("expected critical level, got %s", event.Signal.Level)
 	}
 }
 
@@ -139,7 +139,7 @@ func TestGuardrailEventWithNilSignal(t *testing.T) {
 		t.Errorf("expected type %s, got %s", EventTypeGuardrail, event.Type())
 	}
 
-	if event.Signal() != nil {
+	if event.Signal != nil {
 		t.Error("expected signal to be nil")
 	}
 }
@@ -157,7 +157,7 @@ func TestErrorEvent(t *testing.T) {
 		t.Errorf("expected type %s, got %s", EventTypeError, event.Type())
 	}
 
-	if event.Payload().ErrorMessage != "test error" {
-		t.Errorf("expected error message 'test error', got %s", event.Payload().ErrorMessage)
+	if event.Payload.ErrorMessage != "test error" {
+		t.Errorf("expected error message 'test error', got %s", event.Payload.ErrorMessage)
 	}
 }

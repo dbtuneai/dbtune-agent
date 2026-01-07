@@ -26,176 +26,100 @@ const (
 	EventTypeError      EventType = "error"
 )
 
+// BaseEvent provides common event fields
+type BaseEvent struct {
+	EventTimestamp time.Time
+	EventType      EventType
+}
+
+func (e BaseEvent) Timestamp() time.Time {
+	return e.EventTimestamp
+}
+
+func (e BaseEvent) Type() EventType {
+	return e.EventType
+}
+
 // MetricsEvent carries metrics from a single collector
 type MetricsEvent struct {
-	timestamp    time.Time
-	collectorKey string
-	metrics      []metrics.FlatValue
+	BaseEvent
+	CollectorKey string
+	Metrics      []metrics.FlatValue
 }
 
-// NewMetricsEvent creates a new MetricsEvent
 func NewMetricsEvent(collectorKey string, m []metrics.FlatValue) MetricsEvent {
 	return MetricsEvent{
-		timestamp:    time.Now(),
-		collectorKey: collectorKey,
-		metrics:      m,
+		BaseEvent:    BaseEvent{EventTimestamp: time.Now(), EventType: EventTypeMetrics},
+		CollectorKey: collectorKey,
+		Metrics:      m,
 	}
-}
-
-func (e MetricsEvent) Type() EventType {
-	return EventTypeMetrics
-}
-
-func (e MetricsEvent) Timestamp() time.Time {
-	return e.timestamp
-}
-
-func (e MetricsEvent) CollectorKey() string {
-	return e.collectorKey
-}
-
-func (e MetricsEvent) Metrics() []metrics.FlatValue {
-	return e.metrics
 }
 
 // HeartbeatEvent for agent heartbeat
 type HeartbeatEvent struct {
-	timestamp time.Time
-	version   string
-	startTime string
+	BaseEvent
+	Version   string
+	StartTime string
 }
 
-// NewHeartbeatEvent creates a new HeartbeatEvent
 func NewHeartbeatEvent(version string, startTime string) HeartbeatEvent {
 	return HeartbeatEvent{
-		timestamp: time.Now(),
-		version:   version,
-		startTime: startTime,
+		BaseEvent: BaseEvent{EventTimestamp: time.Now(), EventType: EventTypeHeartbeat},
+		Version:   version,
+		StartTime: startTime,
 	}
-}
-
-func (e HeartbeatEvent) Type() EventType {
-	return EventTypeHeartbeat
-}
-
-func (e HeartbeatEvent) Timestamp() time.Time {
-	return e.timestamp
-}
-
-func (e HeartbeatEvent) Version() string {
-	return e.version
-}
-
-func (e HeartbeatEvent) StartTime() string {
-	return e.startTime
 }
 
 // SystemInfoEvent for system information
 type SystemInfoEvent struct {
-	timestamp time.Time
-	info      []metrics.FlatValue
+	BaseEvent
+	Info []metrics.FlatValue
 }
 
-// NewSystemInfoEvent creates a new SystemInfoEvent
 func NewSystemInfoEvent(info []metrics.FlatValue) SystemInfoEvent {
 	return SystemInfoEvent{
-		timestamp: time.Now(),
-		info:      info,
+		BaseEvent: BaseEvent{EventTimestamp: time.Now(), EventType: EventTypeSystemInfo},
+		Info:      info,
 	}
-}
-
-func (e SystemInfoEvent) Type() EventType {
-	return EventTypeSystemInfo
-}
-
-func (e SystemInfoEvent) Timestamp() time.Time {
-	return e.timestamp
-}
-
-func (e SystemInfoEvent) Info() []metrics.FlatValue {
-	return e.info
 }
 
 // ConfigEvent for configuration updates
 type ConfigEvent struct {
-	timestamp      time.Time
-	activeConfig   agent.ConfigArraySchema
-	proposedConfig *agent.ProposedConfigResponse
+	BaseEvent
+	ActiveConfig   agent.ConfigArraySchema
+	ProposedConfig *agent.ProposedConfigResponse
 }
 
-// NewConfigEvent creates a new ConfigEvent
 func NewConfigEvent(activeConfig agent.ConfigArraySchema, proposedConfig *agent.ProposedConfigResponse) ConfigEvent {
 	return ConfigEvent{
-		timestamp:      time.Now(),
-		activeConfig:   activeConfig,
-		proposedConfig: proposedConfig,
+		BaseEvent:      BaseEvent{EventTimestamp: time.Now(), EventType: EventTypeConfig},
+		ActiveConfig:   activeConfig,
+		ProposedConfig: proposedConfig,
 	}
-}
-
-func (e ConfigEvent) Type() EventType {
-	return EventTypeConfig
-}
-
-func (e ConfigEvent) Timestamp() time.Time {
-	return e.timestamp
-}
-
-func (e ConfigEvent) ActiveConfig() agent.ConfigArraySchema {
-	return e.activeConfig
-}
-
-func (e ConfigEvent) ProposedConfig() *agent.ProposedConfigResponse {
-	return e.proposedConfig
 }
 
 // GuardrailEvent for guardrail signals
 type GuardrailEvent struct {
-	timestamp time.Time
-	signal    *guardrails.Signal // nil if no signal triggered
+	BaseEvent
+	Signal *guardrails.Signal // nil if no signal triggered
 }
 
-// NewGuardrailEvent creates a new GuardrailEvent
 func NewGuardrailEvent(signal *guardrails.Signal) GuardrailEvent {
 	return GuardrailEvent{
-		timestamp: time.Now(),
-		signal:    signal,
+		BaseEvent: BaseEvent{EventTimestamp: time.Now(), EventType: EventTypeGuardrail},
+		Signal:    signal,
 	}
-}
-
-func (e GuardrailEvent) Type() EventType {
-	return EventTypeGuardrail
-}
-
-func (e GuardrailEvent) Timestamp() time.Time {
-	return e.timestamp
-}
-
-func (e GuardrailEvent) Signal() *guardrails.Signal {
-	return e.signal
 }
 
 // ErrorEvent for error reporting
 type ErrorEvent struct {
-	timestamp time.Time
-	payload   agent.ErrorPayload
+	BaseEvent
+	Payload agent.ErrorPayload
 }
 
-// NewErrorEvent creates a new ErrorEvent
 func NewErrorEvent(payload agent.ErrorPayload) ErrorEvent {
 	return ErrorEvent{
-		timestamp: time.Now(),
-		payload:   payload,
+		BaseEvent: BaseEvent{EventTimestamp: time.Now(), EventType: EventTypeError},
+		Payload:   payload,
 	}
-}
-
-func (e ErrorEvent) Type() EventType {
-	return EventTypeError
-}
-
-func (e ErrorEvent) Timestamp() time.Time {
-	return e.timestamp
-}
-
-func (e ErrorEvent) Payload() agent.ErrorPayload {
-	return e.payload
 }

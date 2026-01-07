@@ -9,7 +9,6 @@ import (
 	"github.com/dbtuneai/agent/pkg/sink"
 	"github.com/dbtuneai/agent/pkg/source"
 	"github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
 )
 
 // RunnerNew is the new channel-based runner
@@ -21,25 +20,12 @@ func RunnerNew(commonAgent *agent.CommonAgent, looper agent.AgentLooper) {
 	sources := createSources(commonAgent, looper, logger)
 
 	// Create sinks
-	sinks := make([]sink.Sink, 0)
-
-	// Always add the DBTune platform sink
-	dbtuneSink := sink.NewDBTunePlatformSink(
-		commonAgent.APIClient,
-		commonAgent.ServerURLs,
-		logger,
-	)
-	sinks = append(sinks, dbtuneSink)
-
-	// Add file sink if debug mode is enabled
-	if viper.GetBool("debug") {
-		fileSink, err := sink.NewFileSink("debug.log", logger)
-		if err != nil {
-			logger.Errorf("Failed to create file sink: %v", err)
-		} else {
-			logger.Info("Debug mode enabled: writing events to debug.log")
-			sinks = append(sinks, fileSink)
-		}
+	sinks := []sink.Sink{
+		sink.NewDBTunePlatformSink(
+			commonAgent.APIClient,
+			commonAgent.ServerURLs,
+			logger,
+		),
 	}
 
 	// Create and run router

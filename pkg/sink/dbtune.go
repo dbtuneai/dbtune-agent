@@ -72,7 +72,7 @@ func (s *DBTunePlatformSink) handleMetrics(ctx context.Context, event events.Met
 	s.bufferMu.Lock()
 	defer s.bufferMu.Unlock()
 
-	s.metricsBuffer = append(s.metricsBuffer, event.Metrics()...)
+	s.metricsBuffer = append(s.metricsBuffer, event.Metrics...)
 	return nil
 }
 
@@ -122,8 +122,8 @@ func (s *DBTunePlatformSink) sendHeartbeat(ctx context.Context, event events.Hea
 	}
 
 	p := payload{
-		AgentVersion:   event.Version(),
-		AgentStartTime: event.StartTime(),
+		AgentVersion:   event.Version,
+		AgentStartTime: event.StartTime,
 	}
 
 	jsonData, err := json.Marshal(p)
@@ -163,7 +163,7 @@ func (s *DBTunePlatformSink) sendHeartbeat(ctx context.Context, event events.Hea
 func (s *DBTunePlatformSink) sendSystemInfo(ctx context.Context, event events.SystemInfoEvent) error {
 	s.logger.Println("Sending system info to server")
 
-	formatted := metrics.FormatSystemInfo(event.Info())
+	formatted := metrics.FormatSystemInfo(event.Info)
 	jsonData, err := json.Marshal(formatted)
 	if err != nil {
 		return err
@@ -195,7 +195,7 @@ func (s *DBTunePlatformSink) sendConfig(ctx context.Context, event events.Config
 		Config interface{} `json:"config"`
 	}
 
-	p := payload{Config: event.ActiveConfig()}
+	p := payload{Config: event.ActiveConfig}
 	jsonData, err := json.Marshal(p)
 	if err != nil {
 		return err
@@ -218,13 +218,13 @@ func (s *DBTunePlatformSink) sendConfig(ctx context.Context, event events.Config
 
 // sendGuardrail sends guardrail signal to the platform
 func (s *DBTunePlatformSink) sendGuardrail(ctx context.Context, event events.GuardrailEvent) error {
-	if event.Signal() == nil {
+	if event.Signal == nil {
 		return nil // No signal to send
 	}
 
-	s.logger.Warnf("🚨 Sending Guardrail, level: %s, type: %s", event.Signal().Level, event.Signal().Type)
+	s.logger.Warnf("🚨 Sending Guardrail, level: %s, type: %s", event.Signal.Level, event.Signal.Type)
 
-	jsonData, err := json.Marshal(event.Signal())
+	jsonData, err := json.Marshal(event.Signal)
 	if err != nil {
 		return err
 	}
@@ -246,9 +246,9 @@ func (s *DBTunePlatformSink) sendGuardrail(ctx context.Context, event events.Gua
 
 // sendError sends error to the platform
 func (s *DBTunePlatformSink) sendError(ctx context.Context, event events.ErrorEvent) error {
-	s.logger.Errorf("🚨 Sending Error Report, type: %s, message: %s", event.Payload().ErrorType, event.Payload().ErrorMessage)
+	s.logger.Errorf("🚨 Sending Error Report, type: %s, message: %s", event.Payload.ErrorType, event.Payload.ErrorMessage)
 
-	jsonData, err := json.Marshal(event.Payload())
+	jsonData, err := json.Marshal(event.Payload)
 	if err != nil {
 		return err
 	}
