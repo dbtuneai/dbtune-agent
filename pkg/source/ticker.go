@@ -25,7 +25,7 @@ func RunWithTicker(
 
 	// Execute immediately unless SkipFirst is set
 	if !skipFirst {
-		if err := executeAndSend(ctx, out, name, logger, collect); err != nil {
+		if err := executeAndSend(ctx, out, collect); err != nil {
 			logger.Debugf("[%s] initial execution error: %v", name, err)
 		}
 	}
@@ -36,7 +36,7 @@ func RunWithTicker(
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if err := executeAndSend(ctx, out, name, logger, collect); err != nil {
+			if err := executeAndSend(ctx, out, collect); err != nil {
 				logger.Debugf("[%s] execution error: %v", name, err)
 				// Continue running even on error
 			}
@@ -48,8 +48,6 @@ func RunWithTicker(
 func executeAndSend(
 	ctx context.Context,
 	out chan<- events.Event,
-	name string,
-	logger *log.Logger,
 	collect func(context.Context) (events.Event, error),
 ) error {
 	event, err := collect(ctx)

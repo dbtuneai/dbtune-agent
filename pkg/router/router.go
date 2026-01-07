@@ -13,7 +13,7 @@ import (
 
 // Router connects sources to multiple sinks
 type Router struct {
-	sources []source.Source
+	sources []source.SourceRunner
 	sinks   []sink.Sink
 
 	eventChan chan events.Event
@@ -31,7 +31,7 @@ type Config struct {
 }
 
 // New creates a new router
-func New(sources []source.Source, sinks []sink.Sink, logger *log.Logger, config Config) *Router {
+func New(sources []source.SourceRunner, sinks []sink.Sink, logger *log.Logger, config Config) *Router {
 	return &Router{
 		sources:       sources,
 		sinks:         sinks,
@@ -49,10 +49,10 @@ func (r *Router) Run(ctx context.Context) error {
 
 	// Start all sources
 	for _, src := range r.sources {
-		go func(s source.Source) {
-			r.logger.Debugf("Starting source: %s (interval: %v)", s.Name(), s.Interval())
+		go func(s source.SourceRunner) {
+			r.logger.Debugf("Starting source: %s (interval: %v)", s.Name, s.Interval)
 			if err := s.Start(ctx, r.eventChan); err != nil && err != context.Canceled {
-				r.errChan <- fmt.Errorf("source %s: %w", s.Name(), err)
+				r.errChan <- fmt.Errorf("source %s: %w", s.Name, err)
 			}
 		}(src)
 	}

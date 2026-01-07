@@ -46,8 +46,8 @@ func RunnerNew(commonAgent *agent.CommonAgent, looper agent.AgentLooper) {
 }
 
 // createSources creates all sources from an adapter
-func createSources(commonAgent *agent.CommonAgent, looper agent.AgentLooper, logger *logrus.Logger) []source.Source {
-	sources := make([]source.Source, 0)
+func createSources(commonAgent *agent.CommonAgent, looper agent.AgentLooper, logger *logrus.Logger) []source.SourceRunner {
+	sources := make([]source.SourceRunner, 0)
 
 	// Add heartbeat source
 	sources = append(sources, source.NewHeartbeatSource(

@@ -13,50 +13,42 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// MockSource for testing
-type MockSource struct {
-	name      string
-	interval  time.Duration
-	eventFunc func() events.Event
-}
+// createMockSource creates a test SourceRunner
+func createMockSource(name string, interval time.Duration, eventFunc func() events.Event) source.SourceRunner {
+	return source.SourceRunner{
+		Name:     name,
+		Interval: interval,
+		Start: func(ctx context.Context, out chan<- events.Event) error {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
 
-func (m *MockSource) Name() string {
-	return m.name
-}
-
-func (m *MockSource) Interval() time.Duration {
-	return m.interval
-}
-
-func (m *MockSource) Start(ctx context.Context, out chan<- events.Event) error {
-	ticker := time.NewTicker(m.interval)
-	defer ticker.Stop()
-
-	// Send one event immediately
-	if m.eventFunc != nil {
-		event := m.eventFunc()
-		select {
-		case out <- event:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-
-	// Then wait for ticker or context
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			if m.eventFunc != nil {
-				event := m.eventFunc()
+			// Send one event immediately
+			if eventFunc != nil {
+				event := eventFunc()
 				select {
 				case out <- event:
 				case <-ctx.Done():
 					return ctx.Err()
 				}
 			}
-		}
+
+			// Then wait for ticker or context
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-ticker.C:
+					if eventFunc != nil {
+						event := eventFunc()
+						select {
+						case out <- event:
+						case <-ctx.Done():
+							return ctx.Err()
+						}
+					}
+				}
+			}
+		},
 	}
 }
 
@@ -114,13 +106,10 @@ func TestNewRouter(t *testing.T) {
 	logger := log.New()
 	logger.SetLevel(log.ErrorLevel)
 
-	src := &MockSource{
-		name:     "test-source",
-		interval: 100 * time.Millisecond,
-	}
+	src := createMockSource("test-source", 100*time.Millisecond, nil)
 	snk := &MockSink{name: "test-sink"}
 
-	sources := []source.Source{src}
+	sources := []source.SourceRunner{src}
 	sinks := []sink.Sink{snk}
 	config := Config{
 		BufferSize:    100,
@@ -145,16 +134,12 @@ func TestRouter_BasicOperation(t *testing.T) {
 	logger := log.New()
 	logger.SetLevel(log.ErrorLevel)
 
-	src := &MockSource{
-		name:     "test-source",
-		interval: 50 * time.Millisecond,
-		eventFunc: func() events.Event {
-			return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339))
-		},
-	}
+	src := createMockSource("test-source", 50*time.Millisecond, func() events.Event {
+		return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339))
+	})
 	snk := &MockSink{name: "test-sink"}
 
-	sources := []source.Source{src}
+	sources := []source.SourceRunner{src}
 	sinks := []sink.Sink{snk}
 	config := Config{BufferSize: 1000, FlushInterval: 5 * time.Second}
 	router := New(sources, sinks, logger, config)
@@ -180,28 +165,20 @@ func TestRouter_MultipleSources(t *testing.T) {
 	logger := log.New()
 	logger.SetLevel(log.ErrorLevel)
 
-	source1 := &MockSource{
-		name:     "source1",
-		interval: 50 * time.Millisecond,
-		eventFunc: func() events.Event {
-			return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339))
-		},
-	}
+	source1 := createMockSource("source1", 50*time.Millisecond, func() events.Event {
+		return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339))
+	})
 
-	source2 := &MockSource{
-		name:     "source2",
-		interval: 50 * time.Millisecond,
-		eventFunc: func() events.Event {
-			testMetrics := []metrics.FlatValue{
-				{Key: "test", Value: int64(42), Type: metrics.Int},
-			}
-			return events.NewMetricsEvent("test_collector", testMetrics)
-		},
-	}
+	source2 := createMockSource("source2", 50*time.Millisecond, func() events.Event {
+		testMetrics := []metrics.FlatValue{
+			{Key: "test", Value: int64(42), Type: metrics.Int},
+		}
+		return events.NewMetricsEvent("test_collector", testMetrics)
+	})
 
 	snk := &MockSink{name: "test-sink"}
 
-	sources := []source.Source{source1, source2}
+	sources := []source.SourceRunner{source1, source2}
 	sinks := []sink.Sink{snk}
 	config := Config{BufferSize: 1000, FlushInterval: 5 * time.Second}
 	router := New(sources, sinks, logger, config)
@@ -248,20 +225,16 @@ func TestRouter_FlushInterval(t *testing.T) {
 	logger := log.New()
 	logger.SetLevel(log.ErrorLevel)
 
-	src := &MockSource{
-		name:     "test-source",
-		interval: 50 * time.Millisecond,
-		eventFunc: func() events.Event {
-			return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339))
-		},
-	}
+	src := createMockSource("test-source", 50*time.Millisecond, func() events.Event {
+		return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339))
+	})
 	snk := &MockSink{name: "test-sink"}
 
 	config := Config{
 		BufferSize:    100,
 		FlushInterval: 100 * time.Millisecond,
 	}
-	sources := []source.Source{src}
+	sources := []source.SourceRunner{src}
 	sinks := []sink.Sink{snk}
 	router := New(sources, sinks, logger, config)
 
@@ -295,32 +268,28 @@ func TestRouter_EventTypes(t *testing.T) {
 	}
 	currentType := 0
 
-	src := &MockSource{
-		name:     "test-source",
-		interval: 50 * time.Millisecond,
-		eventFunc: func() events.Event {
-			var event events.Event
-			switch eventTypes[currentType%len(eventTypes)] {
-			case events.EventTypeHeartbeat:
-				event = events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339))
-			case events.EventTypeMetrics:
-				testMetrics := []metrics.FlatValue{
-					{Key: "test", Value: int64(42), Type: metrics.Int},
-				}
-				event = events.NewMetricsEvent("test", testMetrics)
-			case events.EventTypeSystemInfo:
-				info := []metrics.FlatValue{
-					{Key: "cpu", Value: int64(4), Type: metrics.Int},
-				}
-				event = events.NewSystemInfoEvent(info)
+	src := createMockSource("test-source", 50*time.Millisecond, func() events.Event {
+		var event events.Event
+		switch eventTypes[currentType%len(eventTypes)] {
+		case events.EventTypeHeartbeat:
+			event = events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339))
+		case events.EventTypeMetrics:
+			testMetrics := []metrics.FlatValue{
+				{Key: "test", Value: int64(42), Type: metrics.Int},
 			}
-			currentType++
-			return event
-		},
-	}
+			event = events.NewMetricsEvent("test", testMetrics)
+		case events.EventTypeSystemInfo:
+			info := []metrics.FlatValue{
+				{Key: "cpu", Value: int64(4), Type: metrics.Int},
+			}
+			event = events.NewSystemInfoEvent(info)
+		}
+		currentType++
+		return event
+	})
 
 	snk := &MockSink{name: "test-sink"}
-	sources := []source.Source{src}
+	sources := []source.SourceRunner{src}
 	sinks := []sink.Sink{snk}
 	config := Config{BufferSize: 1000, FlushInterval: 5 * time.Second}
 	router := New(sources, sinks, logger, config)
@@ -351,18 +320,14 @@ func TestRouter_MultipleSinks(t *testing.T) {
 	logger := log.New()
 	logger.SetLevel(log.ErrorLevel)
 
-	src := &MockSource{
-		name:     "test-source",
-		interval: 50 * time.Millisecond,
-		eventFunc: func() events.Event {
-			return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339))
-		},
-	}
+	src := createMockSource("test-source", 50*time.Millisecond, func() events.Event {
+		return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339))
+	})
 
 	sink1 := &MockSink{name: "sink1"}
 	sink2 := &MockSink{name: "sink2"}
 
-	sources := []source.Source{src}
+	sources := []source.SourceRunner{src}
 	sinks := []sink.Sink{sink1, sink2}
 	config := Config{BufferSize: 1000, FlushInterval: 5 * time.Second}
 	router := New(sources, sinks, logger, config)
