@@ -23,3 +23,9 @@ tasks:
     cmds:
       - ./scripts/local-testing.sh
     silent: false
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test ./... -v
+
