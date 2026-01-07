@@ -10,15 +10,11 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const (
-	// DefaultCollectorTimeout is the maximum time allowed for a single collector execution
-	DefaultCollectorTimeout = 10 * time.Second
-)
-
 // NewCollectorSource creates a new source from a MetricCollector
 func NewCollectorSource(
 	key string,
 	interval time.Duration,
+	timeout time.Duration,
 	collector func(ctx context.Context, state *agent.MetricsState) error,
 	state *agent.MetricsState,
 	logger *log.Logger,
@@ -35,7 +31,7 @@ func NewCollectorSource(
 				Logger:    logger,
 				Collect: func(ctx context.Context) (events.Event, error) {
 					// Create timeout context for this collection
-					collectCtx, cancel := context.WithTimeout(ctx, DefaultCollectorTimeout)
+					collectCtx, cancel := context.WithTimeout(ctx, timeout)
 					defer cancel()
 
 					// Clear metrics for this collection

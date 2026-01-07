@@ -16,6 +16,11 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	// DefaultHTTPTimeout is the timeout for HTTP requests to the DBTune platform
+	DefaultHTTPTimeout = 5 * time.Second
+)
+
 // DBTunePlatformSink sends events to the dbtune platform
 type DBTunePlatformSink struct {
 	client    *retryablehttp.Client
@@ -103,7 +108,7 @@ func (s *DBTunePlatformSink) FlushMetrics(ctx context.Context) error {
 	}
 
 	// Add a timeout context to avoid hanging
-	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, DefaultHTTPTimeout)
 	defer cancel()
 
 	req, err := retryablehttp.NewRequestWithContext(reqCtx, "POST", s.serverURL.PostMetrics(), bytes.NewBuffer(jsonData))
@@ -148,7 +153,7 @@ func (s *DBTunePlatformSink) sendHeartbeat(ctx context.Context, event events.Hea
 	}
 
 	// Add a timeout context to avoid hanging
-	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, DefaultHTTPTimeout)
 	defer cancel()
 
 	req, err := retryablehttp.NewRequestWithContext(reqCtx, "POST", s.serverURL.PostHeartbeat(), bytes.NewBuffer(jsonData))
@@ -185,7 +190,7 @@ func (s *DBTunePlatformSink) sendSystemInfo(ctx context.Context, event events.Sy
 	}
 
 	// Add a timeout context to avoid hanging
-	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, DefaultHTTPTimeout)
 	defer cancel()
 
 	req, err := retryablehttp.NewRequestWithContext(reqCtx, "PUT", s.serverURL.PostSystemInfo(), bytes.NewBuffer(jsonData))
@@ -224,7 +229,7 @@ func (s *DBTunePlatformSink) sendConfig(ctx context.Context, event events.Config
 	}
 
 	// Add a timeout context to avoid hanging
-	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, DefaultHTTPTimeout)
 	defer cancel()
 
 	req, err := retryablehttp.NewRequestWithContext(reqCtx, "POST", s.serverURL.PostActiveConfig(), bytes.NewBuffer(jsonData))
@@ -262,7 +267,7 @@ func (s *DBTunePlatformSink) sendGuardrail(ctx context.Context, event events.Gua
 	}
 
 	// Add a timeout context to avoid hanging
-	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, DefaultHTTPTimeout)
 	defer cancel()
 
 	req, err := retryablehttp.NewRequestWithContext(reqCtx, "POST", s.serverURL.PostGuardrailSignal(), bytes.NewBuffer(jsonData))
@@ -296,7 +301,7 @@ func (s *DBTunePlatformSink) sendError(ctx context.Context, event events.ErrorEv
 	}
 
 	// Add a timeout context to avoid hanging
-	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, DefaultHTTPTimeout)
 	defer cancel()
 
 	req, err := retryablehttp.NewRequestWithContext(reqCtx, "POST", s.serverURL.PostError(), bytes.NewBuffer(jsonData))

@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -27,7 +28,12 @@ func RunWithTicker(ctx context.Context, out chan<- events.Event, config TickerCo
 	// Execute immediately unless SkipFirst is set
 	if !config.SkipFirst {
 		if err := executeAndSend(ctx, out, config.Collect); err != nil {
-			config.Logger.Debugf("[%s] initial execution error: %v", config.Name, err)
+			// Log timeouts as warnings, other errors as debug
+			if errors.Is(err, context.DeadlineExceeded) {
+				config.Logger.Warnf("[%s] collector timed out on initial execution: %v", config.Name, err)
+			} else {
+				config.Logger.Debugf("[%s] initial execution error: %v", config.Name, err)
+			}
 		}
 	}
 
@@ -38,7 +44,12 @@ func RunWithTicker(ctx context.Context, out chan<- events.Event, config TickerCo
 			return ctx.Err()
 		case <-ticker.C:
 			if err := executeAndSend(ctx, out, config.Collect); err != nil {
-				config.Logger.Debugf("[%s] execution error: %v", config.Name, err)
+				// Log timeouts as warnings, other errors as debug
+				if errors.Is(err, context.DeadlineExceeded) {
+					config.Logger.Warnf("[%s] collector timed out: %v", config.Name, err)
+				} else {
+					config.Logger.Debugf("[%s] execution error: %v", config.Name, err)
+				}
 				// Continue running even on error
 			}
 		}

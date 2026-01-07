@@ -15,6 +15,9 @@ const (
 	// DefaultCollectorInterval is the default collection interval for unknown collectors
 	DefaultCollectorInterval = 5 * time.Second
 
+	// DefaultCollectorTimeout is the maximum time allowed for a single collector execution
+	DefaultCollectorTimeout = 30 * time.Second
+
 	// DefaultHeartbeatInterval is the interval for sending heartbeat events
 	DefaultHeartbeatInterval = 15 * time.Second
 
@@ -42,6 +45,9 @@ type Config struct {
 	DefaultCollectorInterval       time.Duration
 	CollectorIntervals             map[string]time.Duration
 
+	// Collector timeout
+	CollectorTimeout time.Duration
+
 	// Router config
 	RouterBufferSize    int
 	RouterFlushInterval time.Duration
@@ -57,6 +63,7 @@ func DefaultConfig() Config {
 		GuardrailsRateLimitInterval:    DefaultGuardrailsRateLimitInterval,
 		DefaultCollectorInterval:       DefaultCollectorInterval,
 		CollectorIntervals:             collectorIntervals,
+		CollectorTimeout:               DefaultCollectorTimeout,
 		RouterBufferSize:               router.DefaultBufferSize,
 		RouterFlushInterval:            router.DefaultFlushInterval,
 	}
@@ -165,6 +172,7 @@ func createSources(commonAgent *agent.CommonAgent, looper agent.AgentLooper, log
 		sources = append(sources, source.NewCollectorSource(
 			collector.Key,
 			interval,
+			config.CollectorTimeout,
 			collector.Collector,
 			&commonAgent.MetricsState,
 			logger,
