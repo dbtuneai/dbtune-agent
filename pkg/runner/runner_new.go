@@ -31,6 +31,37 @@ const (
 	DefaultGuardrailsRateLimitInterval = 15 * time.Second
 )
 
+// Config holds configuration for the runner
+type Config struct {
+	// Source intervals
+	HeartbeatInterval              time.Duration
+	SystemInfoInterval             time.Duration
+	ConfigInterval                 time.Duration
+	GuardrailsCheckInterval        time.Duration
+	GuardrailsRateLimitInterval    time.Duration
+	DefaultCollectorInterval       time.Duration
+	CollectorIntervals             map[string]time.Duration
+
+	// Router config
+	RouterBufferSize    int
+	RouterFlushInterval time.Duration
+}
+
+// DefaultConfig returns a Config with default values
+func DefaultConfig() Config {
+	return Config{
+		HeartbeatInterval:              DefaultHeartbeatInterval,
+		SystemInfoInterval:             DefaultSystemInfoInterval,
+		ConfigInterval:                 DefaultConfigInterval,
+		GuardrailsCheckInterval:        DefaultGuardrailsCheckInterval,
+		GuardrailsRateLimitInterval:    DefaultGuardrailsRateLimitInterval,
+		DefaultCollectorInterval:       DefaultCollectorInterval,
+		CollectorIntervals:             collectorIntervals,
+		RouterBufferSize:               router.DefaultBufferSize,
+		RouterFlushInterval:            router.DefaultFlushInterval,
+	}
+}
+
 // collectorIntervals defines the collection interval for each collector based on how frequently they change
 var collectorIntervals = map[string]time.Duration{
 	// Fast-changing metrics (5s)
@@ -60,8 +91,12 @@ var collectorIntervals = map[string]time.Duration{
 func RunnerNew(commonAgent *agent.CommonAgent, looper agent.AgentLooper) {
 	logger := commonAgent.Logger()
 
+	// Create config with defaults
+	// TODO: Load from config file/env vars in the future
+	config := DefaultConfig()
+
 	// Create all sources
-	sources := createSources(commonAgent, looper, logger)
+	sources := createSources(commonAgent, looper, logger, config)
 
 	// Create sinks
 	sinks := []sink.Sink{
@@ -73,11 +108,11 @@ func RunnerNew(commonAgent *agent.CommonAgent, looper agent.AgentLooper) {
 	}
 
 	// Create and run router
-	config := router.Config{
-		BufferSize:    router.DefaultBufferSize,
-		FlushInterval: router.DefaultFlushInterval,
+	routerConfig := router.Config{
+		BufferSize:    config.RouterBufferSize,
+		FlushInterval: config.RouterFlushInterval,
 	}
-	r := router.New(sources, sinks, logger, config)
+	r := router.New(sources, sinks, logger, routerConfig)
 
 	// Create a context that we can cancel
 	ctx, cancel := context.WithCancel(context.Background())
@@ -90,43 +125,43 @@ func RunnerNew(commonAgent *agent.CommonAgent, looper agent.AgentLooper) {
 }
 
 // createSources creates all sources from an adapter
-func createSources(commonAgent *agent.CommonAgent, looper agent.AgentLooper, logger *logrus.Logger) []source.SourceRunner {
+func createSources(commonAgent *agent.CommonAgent, looper agent.AgentLooper, logger *logrus.Logger, config Config) []source.SourceRunner {
 	sources := make([]source.SourceRunner, 0)
 
 	// Add heartbeat source
 	sources = append(sources, source.NewHeartbeatSource(
 		commonAgent.Version,
 		commonAgent.StartTime,
-		DefaultHeartbeatInterval,
+		config.HeartbeatInterval,
 		logger,
 	))
 
 	// Add system info source
 	sources = append(sources, source.NewSystemInfoSource(
 		looper,
-		DefaultSystemInfoInterval,
+		config.SystemInfoInterval,
 		logger,
 	))
 
 	// Add config source
 	sources = append(sources, source.NewConfigSource(
 		looper,
-		DefaultConfigInterval,
+		config.ConfigInterval,
 		logger,
 	))
 
 	// Add guardrails source
 	sources = append(sources, source.NewGuardrailsSource(
 		looper,
-		DefaultGuardrailsCheckInterval,
-		DefaultGuardrailsRateLimitInterval,
+		config.GuardrailsCheckInterval,
+		config.GuardrailsRateLimitInterval,
 		logger,
 	))
 
 	// Add metric collector sources
 	// Each collector becomes its own source with its own interval
 	for _, collector := range commonAgent.MetricsState.Collectors {
-		interval := getIntervalForCollector(collector.Key)
+		interval := getIntervalForCollector(collector.Key, config)
 		sources = append(sources, source.NewCollectorSource(
 			collector.Key,
 			interval,
@@ -140,9 +175,9 @@ func createSources(commonAgent *agent.CommonAgent, looper agent.AgentLooper, log
 }
 
 // getIntervalForCollector returns the appropriate interval for each collector
-func getIntervalForCollector(key string) time.Duration {
-	if interval, ok := collectorIntervals[key]; ok {
+func getIntervalForCollector(key string, config Config) time.Duration {
+	if interval, ok := config.CollectorIntervals[key]; ok {
 		return interval
 	}
-	return DefaultCollectorInterval
+	return config.DefaultCollectorInterval
 }
