@@ -514,7 +514,7 @@ func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
 func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
 	a.Logger().Println("Sending metrics to server")
 
-	formattedMetrics := metrics.FormatMetrics(ms)
+	formattedMetrics := metrics.FormatMetrics(ms, time.Now())
 
 	jsonData, err := json.Marshal(formattedMetrics)
 	if err != nil {

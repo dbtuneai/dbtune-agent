@@ -88,10 +88,15 @@ func (s *DBTunePlatformSink) FlushMetrics(ctx context.Context) error {
 	s.metricsBuffer = make([]metrics.FlatValue, 0)
 	s.bufferMu.Unlock()
 
-	s.logger.Println("Sending metrics to server")
+	s.logger.Info("Sending metrics to server")
 
-	// Format and send
-	formatted := metrics.FormatMetrics(metricsToSend)
+	// NOTE(eddie): Even if the metrics were collected at slightly different times,
+	// we'd like them to align on timestamp for better storage.
+	// In practice, this alignment is non-problematic as we are not polling at
+	// fine-grained intervals. If this were ever to change, we would have to handle
+	// storage of metrics differently
+	timestampForMetrics := time.Now()
+	formatted := metrics.FormatMetrics(metricsToSend, timestampForMetrics)
 	jsonData, err := json.Marshal(formatted)
 	if err != nil {
 		return err

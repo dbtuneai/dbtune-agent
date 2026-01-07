@@ -139,8 +139,8 @@ func NewMetric(key string, value interface{}, typeStr MetricType) (FlatValue, er
 
 // FormatMetrics converts the MetricsState object into a FormattedMetrics object
 // to be used as a metrics payload
-func FormatMetrics(metrics []FlatValue) FormattedMetrics {
-	metricsMap := make(map[string]interface{})
+func FormatMetrics(metrics []FlatValue, timestamp time.Time) FormattedMetrics {
+	metricsMap := make(map[string]any)
 
 	for _, metric := range metrics {
 		metricsMap[metric.Key] = metric.Value
@@ -149,7 +149,7 @@ func FormatMetrics(metrics []FlatValue) FormattedMetrics {
 	return FormattedMetrics{
 		Version:   "2.0",
 		Metrics:   metricsMap,
-		Timestamp: time.Now().Format(time.RFC3339Nano),
+		Timestamp: timestamp.Format(time.RFC3339Nano),
 	}
 }
 

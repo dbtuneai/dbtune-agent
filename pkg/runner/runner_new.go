@@ -11,6 +11,35 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const (
+	// DefaultCollectorInterval is the default collection interval for unknown collectors
+	DefaultCollectorInterval = 5 * time.Second
+)
+
+// collectorIntervals defines the collection interval for each collector based on how frequently they change
+var collectorIntervals = map[string]time.Duration{
+	// Fast-changing metrics (5s)
+	"database_average_query_runtime":     5 * time.Second,
+	"database_transactions_per_second":   5 * time.Second,
+	"pg_active_connections":              5 * time.Second,
+	"pg_idle_connections":                5 * time.Second,
+	"pg_idle_in_transaction_connections": 5 * time.Second,
+	"pg_autovacuum_count":                5 * time.Second,
+	"pg_stat_database":                   5 * time.Second,
+	"wait_events":                        5 * time.Second,
+	"hardware":                           5 * time.Second,
+
+	// Medium-changing metrics (10s)
+	"pg_stat_bgwriter":     10 * time.Second,
+	"pg_stat_wal":          10 * time.Second,
+	"pg_stat_checkpointer": 10 * time.Second,
+
+	// Slow-changing metrics (30-60s)
+	"pg_stat_user_tables": 30 * time.Second,
+	"database_size":       60 * time.Second,
+	"uptime_minutes":      60 * time.Second,
+}
+
 // RunnerNew is the new channel-based runner
 // It takes a pointer to CommonAgent which all adapters embed
 func RunnerNew(commonAgent *agent.CommonAgent, looper agent.AgentLooper) {
@@ -30,8 +59,8 @@ func RunnerNew(commonAgent *agent.CommonAgent, looper agent.AgentLooper) {
 
 	// Create and run router
 	config := router.Config{
-		BufferSize:    1000,
-		FlushInterval: 5 * time.Second,
+		BufferSize:    router.DefaultBufferSize,
+		FlushInterval: router.DefaultFlushInterval,
 	}
 	r := router.New(sources, sinks, logger, config)
 
@@ -96,36 +125,9 @@ func createSources(commonAgent *agent.CommonAgent, looper agent.AgentLooper, log
 }
 
 // getIntervalForCollector returns the appropriate interval for each collector
-// This can be made configurable later
 func getIntervalForCollector(key string) time.Duration {
-	// Define intervals per collector based on how frequently they change
-	intervals := map[string]time.Duration{
-		// Fast-changing metrics (5s)
-		"database_average_query_runtime":         5 * time.Second,
-		"database_transactions_per_second":       5 * time.Second,
-		"pg_active_connections":                  5 * time.Second,
-		"pg_idle_connections":                    5 * time.Second,
-		"pg_idle_in_transaction_connections":     5 * time.Second,
-		"pg_autovacuum_count":                    5 * time.Second,
-		"pg_stat_database":                       5 * time.Second,
-		"wait_events":                            5 * time.Second,
-		"hardware":                               5 * time.Second,
-
-		// Medium-changing metrics (10s)
-		"pg_stat_bgwriter":                       10 * time.Second,
-		"pg_stat_wal":                            10 * time.Second,
-		"pg_stat_checkpointer":                   10 * time.Second,
-
-		// Slow-changing metrics (30-60s)
-		"pg_stat_user_tables":                    30 * time.Second,
-		"database_size":                          60 * time.Second,
-		"uptime_minutes":                         60 * time.Second,
-	}
-
-	if interval, ok := intervals[key]; ok {
+	if interval, ok := collectorIntervals[key]; ok {
 		return interval
 	}
-
-	// Default interval for unknown collectors
-	return 5 * time.Second
+	return DefaultCollectorInterval
 }

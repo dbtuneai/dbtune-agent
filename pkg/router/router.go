@@ -11,6 +11,13 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	// DefaultBufferSize is the default size of the event channel buffer
+	DefaultBufferSize = 1000
+	// DefaultFlushInterval is the default interval for flushing buffered metrics
+	DefaultFlushInterval = 5 * time.Second
+)
+
 // Router connects sources to multiple sinks
 type Router struct {
 	sources []source.SourceRunner
