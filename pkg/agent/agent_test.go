@@ -56,8 +56,8 @@ func TestGetMetrics(t *testing.T) {
 			IndividualTimeout: 500 * time.Millisecond,
 		}
 
-		flat_metrics, err := agent.GetMetrics()
-		assert.NoError(t, err)
+		flat_metrics, errs := agent.GetMetrics()
+		assert.Len(t, errs, 0)
 		assert.Len(t, flat_metrics, 2)
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric1", Value: 1, Type: "int"})
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric2", Value: 2, Type: "int"})
@@ -81,8 +81,8 @@ func TestGetMetrics(t *testing.T) {
 			IndividualTimeout: 500 * time.Millisecond,
 		}
 
-		flat_metrics, err := agent.GetMetrics()
-		assert.NoError(t, err) // The function should not return error even if collectors fail
+		flat_metrics, errs := agent.GetMetrics()
+		assert.Len(t, errs, 1) // The function should return errors when collectors fail
 		assert.Len(t, flat_metrics, 1)
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric2", Value: 2, Type: "int"})
 	})
@@ -109,8 +109,8 @@ func TestGetMetrics(t *testing.T) {
 			IndividualTimeout: 500 * time.Millisecond,
 		}
 
-		flat_metrics, err := agent.GetMetrics()
-		assert.NoError(t, err)
+		flat_metrics, errs := agent.GetMetrics()
+		assert.Len(t, errs, 1) // The function should return errors when collectors timeout
 		assert.Len(t, flat_metrics, 1)
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric1", Value: 1, Type: "int"})
 	})

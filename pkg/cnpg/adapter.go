@@ -425,7 +425,7 @@ func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 }
 
 // GetMetrics overrides CommonAgent.GetMetrics to check for failover before collecting metrics
-func (adapter *CNPGAdapter) GetMetrics() ([]metrics.FlatValue, error) {
+func (adapter *CNPGAdapter) GetMetrics() ([]metrics.FlatValue, []error) {
 	logger := adapter.Logger()
 
 	// Check for failover before collecting metrics
@@ -435,10 +435,10 @@ func (adapter *CNPGAdapter) GetMetrics() ([]metrics.FlatValue, error) {
 		if failoverErr, ok := err.(*FailoverDetectedError); ok {
 			logger.Infof("[FAILOVER_RECOVERY] Operations blocked during recovery: %s", failoverErr.Message)
 			// Return FailoverDetectedError - runner will skip sending error and metrics
-			return []metrics.FlatValue{}, failoverErr
+			return []metrics.FlatValue{}, []error{failoverErr}
 		}
 		logger.Warnf("[FAILOVER_RECOVERY] BLOCKING GetMetrics due to cluster check failure: %v", err)
-		return []metrics.FlatValue{}, err
+		return []metrics.FlatValue{}, []error{err}
 	}
 
 	// Cluster is healthy - proceed with normal metrics collection

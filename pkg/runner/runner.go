@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -61,20 +62,29 @@ func Runner(adapter agent.AgentLooper) {
 
 	// Metrics collection goroutine
 	go runWithTicker(ctx, metricsTicker, "metrics", logger, false, func() error {
-		data, err := adapter.GetMetrics()
-		if err != nil {
-			// If error indicates recovery/failover, skip sending error and data
-			if isRecoveryError(err) {
-				logger.Debugf("Skipping metrics during recovery: %v", err)
-				return nil // Return nil to prevent error logging in runWithTicker
+		data, errs := adapter.GetMetrics()
+		if errs != nil && len(errs) > 0 {
+			// Format all errors into a single message
+			var errMessages []string
+
+			for _, err := range errs {
+				// If error indicates recovery/failover, skip sending error and data
+				if isRecoveryError(err) {
+					logger.Debugf("Skipping metrics during recovery: %v", err)
+					return nil // Return nil to prevent error logging in runWithTicker
+				}
+
+				errMessages = append(errMessages, err.Error())
 			}
+			combinedError := strings.Join(errMessages, "; ")
+
 			errorPayload := agent.ErrorPayload{
-				ErrorMessage: "Failed to collect metrics: " + err.Error(),
+				ErrorMessage: "Failed to collect metrics: " + combinedError,
 				ErrorType:    "metrics_error",
 				Timestamp:    time.Now().UTC().Format(time.RFC3339),
 			}
 			adapter.SendError(errorPayload)
-			return err
+			return fmt.Errorf("metrics collection failed: %s", combinedError)
 		}
 		return adapter.SendMetrics(data)
 	})

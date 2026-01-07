@@ -23,3 +23,15 @@ tasks:
     cmds:
       - ./scripts/local-testing.sh
     silent: false
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test ./... -v
+
+  build:
+    desc: Build
+    cmds:
+      - go build -x -o dbtune-agent ./cmd/agent.go
+
+
