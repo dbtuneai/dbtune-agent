@@ -29,3 +29,9 @@ tasks:
     cmds:
       - go test ./... -v
 
+  build:
+    desc: Build
+    cmds:
+      - go build -x -o dbtune-agent ./cmd/agent.go
+
+
