@@ -9,44 +9,24 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// TickerSource provides common ticker functionality for interval-based sources
-type TickerSource struct {
-	config Config
-	logger *log.Logger
-}
-
-// NewTickerSource creates a new TickerSource
-func NewTickerSource(config Config, logger *log.Logger) *TickerSource {
-	return &TickerSource{
-		config: config,
-		logger: logger,
-	}
-}
-
-// Name returns the source name
-func (s *TickerSource) Name() string {
-	return s.config.Name
-}
-
-// Interval returns the source interval
-func (s *TickerSource) Interval() time.Duration {
-	return s.config.Interval
-}
-
-// Start runs the produce function on an interval
-// The produce function should return an event or nil (nil events are skipped)
-func (s *TickerSource) Start(
+// RunWithTicker is a pure function that runs a collect function on an interval
+// It handles ticker setup, error events, and graceful shutdown
+func RunWithTicker(
 	ctx context.Context,
 	out chan<- events.Event,
-	produce func(context.Context) (events.Event, error),
+	interval time.Duration,
+	skipFirst bool,
+	logger *log.Logger,
+	name string,
+	collect func(context.Context) (events.Event, error),
 ) error {
-	ticker := time.NewTicker(s.config.Interval)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	// Execute immediately unless SkipFirst is set
-	if !s.config.SkipFirst {
-		if err := s.executeAndSend(ctx, out, produce); err != nil {
-			s.logger.Debugf("[%s] initial execution error: %v", s.Name(), err)
+	if !skipFirst {
+		if err := executeAndSend(ctx, out, name, logger, collect); err != nil {
+			logger.Debugf("[%s] initial execution error: %v", name, err)
 		}
 	}
 
@@ -56,23 +36,25 @@ func (s *TickerSource) Start(
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if err := s.executeAndSend(ctx, out, produce); err != nil {
-				s.logger.Debugf("[%s] execution error: %v", s.Name(), err)
+			if err := executeAndSend(ctx, out, name, logger, collect); err != nil {
+				logger.Debugf("[%s] execution error: %v", name, err)
 				// Continue running even on error
 			}
 		}
 	}
 }
 
-// executeAndSend executes the produce function and sends the event
-func (s *TickerSource) executeAndSend(
+// executeAndSend executes the collect function and sends the event
+func executeAndSend(
 	ctx context.Context,
 	out chan<- events.Event,
-	produce func(context.Context) (events.Event, error),
+	name string,
+	logger *log.Logger,
+	collect func(context.Context) (events.Event, error),
 ) error {
-	event, err := produce(ctx)
+	event, err := collect(ctx)
 	if err != nil {
-		// Send error event if production fails
+		// Send error event if collection fails
 		errorPayload := events.NewErrorEvent(agent.ErrorPayload{
 			ErrorMessage: err.Error(),
 			ErrorType:    "source_error",

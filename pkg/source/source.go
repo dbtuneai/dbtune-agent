@@ -19,10 +19,3 @@ type Source interface {
 	// Interval returns how often this source produces events
 	Interval() time.Duration
 }
-
-// Config holds configuration for a source
-type Config struct {
-	Name      string
-	Interval  time.Duration
-	SkipFirst bool // Skip first execution (like heartbeat)
-}

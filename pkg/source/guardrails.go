@@ -12,47 +12,56 @@ import (
 
 // GuardrailsSource monitors safety conditions
 type GuardrailsSource struct {
-	*TickerSource
-	adapter      agent.AgentLooper
-	lastSignal   time.Time
-	minInterval  time.Duration // Rate limit: minimum time between signals
-	mu           sync.Mutex
+	SourceName     string
+	SourceInterval time.Duration
+	Adapter        agent.AgentLooper
+	Logger         *log.Logger
+	SkipFirst      bool
+	MinInterval    time.Duration // Rate limit: minimum time between signals
+	lastSignal     time.Time
+	mu             sync.Mutex
 }
 
 // NewGuardrailsSource creates a new guardrails source
 func NewGuardrailsSource(adapter agent.AgentLooper, checkInterval time.Duration, signalInterval time.Duration, logger *log.Logger) *GuardrailsSource {
 	return &GuardrailsSource{
-		TickerSource: NewTickerSource(Config{
-			Name:      "guardrails",
-			Interval:  checkInterval,
-			SkipFirst: false,
-		}, logger),
-		adapter:     adapter,
-		minInterval: signalInterval,
+		SourceName:     "guardrails",
+		SourceInterval: checkInterval,
+		Adapter:        adapter,
+		Logger:         logger,
+		SkipFirst:      false,
+		MinInterval:    signalInterval,
 	}
+}
+
+// Name returns the source name
+func (s *GuardrailsSource) Name() string {
+	return s.SourceName
+}
+
+// Interval returns the source interval
+func (s *GuardrailsSource) Interval() time.Duration {
+	return s.SourceInterval
 }
 
 // Start begins checking guardrails
 func (s *GuardrailsSource) Start(ctx context.Context, out chan<- events.Event) error {
-	return s.TickerSource.Start(ctx, out, s.check)
-}
+	return RunWithTicker(ctx, out, s.SourceInterval, s.SkipFirst, s.Logger, s.SourceName, func(ctx context.Context) (events.Event, error) {
+		signal := s.Adapter.Guardrails()
 
-// check monitors guardrails and emits signals if needed
-func (s *GuardrailsSource) check(ctx context.Context) (events.Event, error) {
-	signal := s.adapter.Guardrails()
+		// Rate limiting: only emit signal if enough time has passed
+		s.mu.Lock()
+		shouldEmit := signal != nil && time.Since(s.lastSignal) >= s.MinInterval
+		if shouldEmit {
+			s.lastSignal = time.Now()
+		}
+		s.mu.Unlock()
 
-	// Rate limiting: only emit signal if enough time has passed
-	s.mu.Lock()
-	shouldEmit := signal != nil && time.Since(s.lastSignal) >= s.minInterval
-	if shouldEmit {
-		s.lastSignal = time.Now()
-	}
-	s.mu.Unlock()
+		if shouldEmit {
+			return events.NewGuardrailEvent(signal), nil
+		}
 
-	if shouldEmit {
-		return events.NewGuardrailEvent(signal), nil
-	}
-
-	// Return nil event if no signal or rate-limited
-	return nil, nil
+		// Return nil event if no signal or rate-limited
+		return nil, nil
+	})
 }

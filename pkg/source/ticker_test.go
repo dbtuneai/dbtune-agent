@@ -10,25 +10,9 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func TestTickerSource_BasicOperation(t *testing.T) {
+func TestRunWithTicker_BasicOperation(t *testing.T) {
 	logger := log.New()
 	logger.SetLevel(log.ErrorLevel)
-
-	config := Config{
-		Name:      "test-source",
-		Interval:  100 * time.Millisecond,
-		SkipFirst: false,
-	}
-
-	source := NewTickerSource(config, logger)
-
-	if source.Name() != "test-source" {
-		t.Errorf("expected name 'test-source', got %s", source.Name())
-	}
-
-	if source.Interval() != 100*time.Millisecond {
-		t.Errorf("expected interval 100ms, got %v", source.Interval())
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 350*time.Millisecond)
 	defer cancel()
@@ -41,7 +25,7 @@ func TestTickerSource_BasicOperation(t *testing.T) {
 		return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339)), nil
 	}
 
-	err := source.Start(ctx, eventChan, produce)
+	err := RunWithTicker(ctx, eventChan, 100*time.Millisecond, false, logger, "test-source", produce)
 	if err != context.DeadlineExceeded {
 		t.Errorf("expected context.DeadlineExceeded, got %v", err)
 	}
@@ -64,17 +48,9 @@ func TestTickerSource_BasicOperation(t *testing.T) {
 	}
 }
 
-func TestTickerSource_SkipFirst(t *testing.T) {
+func TestRunWithTicker_SkipFirst(t *testing.T) {
 	logger := log.New()
 	logger.SetLevel(log.ErrorLevel)
-
-	config := Config{
-		Name:      "test-source",
-		Interval:  100 * time.Millisecond,
-		SkipFirst: true,
-	}
-
-	source := NewTickerSource(config, logger)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
@@ -87,7 +63,7 @@ func TestTickerSource_SkipFirst(t *testing.T) {
 		return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339)), nil
 	}
 
-	_ = source.Start(ctx, eventChan, produce)
+	_ = RunWithTicker(ctx, eventChan, 100*time.Millisecond, true, logger, "test-source", produce)
 
 	// Should skip first and run at 100, 200ms
 	if callCount < 2 || callCount > 3 {
@@ -95,17 +71,9 @@ func TestTickerSource_SkipFirst(t *testing.T) {
 	}
 }
 
-func TestTickerSource_ErrorHandling(t *testing.T) {
+func TestRunWithTicker_ErrorHandling(t *testing.T) {
 	logger := log.New()
 	logger.SetLevel(log.ErrorLevel)
-
-	config := Config{
-		Name:      "test-source",
-		Interval:  100 * time.Millisecond,
-		SkipFirst: false,
-	}
-
-	source := NewTickerSource(config, logger)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
@@ -118,7 +86,7 @@ func TestTickerSource_ErrorHandling(t *testing.T) {
 		return nil, errors.New("test error")
 	}
 
-	_ = source.Start(ctx, eventChan, produce)
+	_ = RunWithTicker(ctx, eventChan, 100*time.Millisecond, false, logger, "test-source", produce)
 	close(eventChan)
 
 	// Should still be called despite errors
@@ -139,17 +107,9 @@ func TestTickerSource_ErrorHandling(t *testing.T) {
 	}
 }
 
-func TestTickerSource_NilEvents(t *testing.T) {
+func TestRunWithTicker_NilEvents(t *testing.T) {
 	logger := log.New()
 	logger.SetLevel(log.ErrorLevel)
-
-	config := Config{
-		Name:      "test-source",
-		Interval:  100 * time.Millisecond,
-		SkipFirst: false,
-	}
-
-	source := NewTickerSource(config, logger)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
@@ -162,7 +122,7 @@ func TestTickerSource_NilEvents(t *testing.T) {
 		return nil, nil // Nil event, no error
 	}
 
-	_ = source.Start(ctx, eventChan, produce)
+	_ = RunWithTicker(ctx, eventChan, 100*time.Millisecond, false, logger, "test-source", produce)
 	close(eventChan)
 
 	// Should be called
@@ -181,17 +141,9 @@ func TestTickerSource_NilEvents(t *testing.T) {
 	}
 }
 
-func TestTickerSource_ContextCancellation(t *testing.T) {
+func TestRunWithTicker_ContextCancellation(t *testing.T) {
 	logger := log.New()
 	logger.SetLevel(log.ErrorLevel)
-
-	config := Config{
-		Name:      "test-source",
-		Interval:  100 * time.Millisecond,
-		SkipFirst: false,
-	}
-
-	source := NewTickerSource(config, logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	eventChan := make(chan events.Event, 10)
@@ -206,7 +158,7 @@ func TestTickerSource_ContextCancellation(t *testing.T) {
 		return events.NewHeartbeatEvent("1.0.0", time.Now().Format(time.RFC3339)), nil
 	}
 
-	err := source.Start(ctx, eventChan, produce)
+	err := RunWithTicker(ctx, eventChan, 100*time.Millisecond, false, logger, "test-source", produce)
 	if err != context.Canceled {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}

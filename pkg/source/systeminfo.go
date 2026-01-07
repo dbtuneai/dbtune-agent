@@ -11,32 +11,41 @@ import (
 
 // SystemInfoSource collects system information
 type SystemInfoSource struct {
-	*TickerSource
-	adapter agent.AgentLooper
+	SourceName     string
+	SourceInterval time.Duration
+	Adapter        agent.AgentLooper
+	Logger         *log.Logger
+	SkipFirst      bool
 }
 
 // NewSystemInfoSource creates a new system info source
 func NewSystemInfoSource(adapter agent.AgentLooper, interval time.Duration, logger *log.Logger) *SystemInfoSource {
 	return &SystemInfoSource{
-		TickerSource: NewTickerSource(Config{
-			Name:      "system_info",
-			Interval:  interval,
-			SkipFirst: false,
-		}, logger),
-		adapter: adapter,
+		SourceName:     "system_info",
+		SourceInterval: interval,
+		Adapter:        adapter,
+		Logger:         logger,
+		SkipFirst:      false,
 	}
+}
+
+// Name returns the source name
+func (s *SystemInfoSource) Name() string {
+	return s.SourceName
+}
+
+// Interval returns the source interval
+func (s *SystemInfoSource) Interval() time.Duration {
+	return s.SourceInterval
 }
 
 // Start begins producing system info events
 func (s *SystemInfoSource) Start(ctx context.Context, out chan<- events.Event) error {
-	return s.TickerSource.Start(ctx, out, s.collect)
-}
-
-// collect gets system info from adapter
-func (s *SystemInfoSource) collect(ctx context.Context) (events.Event, error) {
-	info, err := s.adapter.GetSystemInfo()
-	if err != nil {
-		return nil, err
-	}
-	return events.NewSystemInfoEvent(info), nil
+	return RunWithTicker(ctx, out, s.SourceInterval, s.SkipFirst, s.Logger, s.SourceName, func(ctx context.Context) (events.Event, error) {
+		info, err := s.Adapter.GetSystemInfo()
+		if err != nil {
+			return nil, err
+		}
+		return events.NewSystemInfoEvent(info), nil
+	})
 }
