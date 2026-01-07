@@ -107,7 +107,6 @@ func (s *DBTunePlatformSink) FlushMetrics(ctx context.Context) error {
 		return err
 	}
 
-	// Add a timeout context to avoid hanging
 	reqCtx, cancel := context.WithTimeout(ctx, DefaultHTTPTimeout)
 	defer cancel()
 
@@ -152,7 +151,6 @@ func (s *DBTunePlatformSink) sendHeartbeat(ctx context.Context, event events.Hea
 		return err
 	}
 
-	// Add a timeout context to avoid hanging
 	reqCtx, cancel := context.WithTimeout(ctx, DefaultHTTPTimeout)
 	defer cancel()
 
@@ -189,7 +187,6 @@ func (s *DBTunePlatformSink) sendSystemInfo(ctx context.Context, event events.Sy
 		return err
 	}
 
-	// Add a timeout context to avoid hanging
 	reqCtx, cancel := context.WithTimeout(ctx, DefaultHTTPTimeout)
 	defer cancel()
 
@@ -228,7 +225,6 @@ func (s *DBTunePlatformSink) sendConfig(ctx context.Context, event events.Config
 		return err
 	}
 
-	// Add a timeout context to avoid hanging
 	reqCtx, cancel := context.WithTimeout(ctx, DefaultHTTPTimeout)
 	defer cancel()
 
@@ -266,7 +262,6 @@ func (s *DBTunePlatformSink) sendGuardrail(ctx context.Context, event events.Gua
 		return err
 	}
 
-	// Add a timeout context to avoid hanging
 	reqCtx, cancel := context.WithTimeout(ctx, DefaultHTTPTimeout)
 	defer cancel()
 
@@ -300,7 +295,6 @@ func (s *DBTunePlatformSink) sendError(ctx context.Context, event events.ErrorEv
 		return err
 	}
 
-	// Add a timeout context to avoid hanging
 	reqCtx, cancel := context.WithTimeout(ctx, DefaultHTTPTimeout)
 	defer cancel()
 

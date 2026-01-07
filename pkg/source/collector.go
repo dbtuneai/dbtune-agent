@@ -30,24 +30,18 @@ func NewCollectorSource(
 				SkipFirst: false,
 				Logger:    logger,
 				Collect: func(ctx context.Context) (events.Event, error) {
-					// Create timeout context for this collection
 					collectCtx, cancel := context.WithTimeout(ctx, timeout)
 					defer cancel()
 
-					// Clear metrics for this collection
-					// We need to be careful here - we'll temporarily set metrics to a new slice,
-					// run the collector, then capture what it added
+					// Temporarily swap metrics slice to isolate this collector's output
 					state.Mutex.Lock()
 					collectedMetrics := make([]metrics.FlatValue, 0)
-					// Save old metrics (in case there are any from other collectors running concurrently)
 					oldMetrics := state.Metrics
 					state.Metrics = collectedMetrics
 					state.Mutex.Unlock()
 
-					// Run the collector
 					err := collector(collectCtx, state)
 
-					// Restore and capture metrics
 					state.Mutex.Lock()
 					collectedMetrics = state.Metrics
 					state.Metrics = oldMetrics
@@ -57,7 +51,6 @@ func NewCollectorSource(
 						return nil, err
 					}
 
-					// Return metrics event
 					return events.NewMetricsEvent(key, collectedMetrics), nil
 				},
 			})

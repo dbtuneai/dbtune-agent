@@ -66,7 +66,6 @@ func (r *Router) Run(ctx context.Context) error {
 	flushTicker := time.NewTicker(r.flushInterval)
 	defer flushTicker.Stop()
 
-	// Event processing loop
 	for {
 		select {
 		case <-ctx.Done():
@@ -74,7 +73,6 @@ func (r *Router) Run(ctx context.Context) error {
 			return r.shutdown()
 
 		case event := <-r.eventChan:
-			// Process event through all sinks
 			for _, snk := range r.sinks {
 				if err := snk.Process(ctx, event); err != nil {
 					r.logger.Debugf("Sink %s error processing %s event: %v", snk.Name(), event.Type(), err)
@@ -82,7 +80,6 @@ func (r *Router) Run(ctx context.Context) error {
 			}
 
 		case <-flushTicker.C:
-			// Flush aggregated metrics for all sinks
 			for _, snk := range r.sinks {
 				if err := snk.FlushMetrics(ctx); err != nil {
 					r.logger.Debugf("Sink %s flush error: %v", snk.Name(), err)
@@ -91,7 +88,6 @@ func (r *Router) Run(ctx context.Context) error {
 
 		case err := <-r.errChan:
 			r.logger.Errorf("Source error: %v", err)
-			// Continue running even if a source fails
 		}
 	}
 }

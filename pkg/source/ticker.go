@@ -25,10 +25,8 @@ func RunWithTicker(ctx context.Context, out chan<- events.Event, config TickerCo
 	ticker := time.NewTicker(config.Interval)
 	defer ticker.Stop()
 
-	// Execute immediately unless SkipFirst is set
 	if !config.SkipFirst {
 		if err := executeAndSend(ctx, out, config.Collect); err != nil {
-			// Log timeouts as warnings, other errors as debug
 			if errors.Is(err, context.DeadlineExceeded) {
 				config.Logger.Warnf("[%s] collector timed out on initial execution: %v", config.Name, err)
 			} else {
@@ -37,20 +35,17 @@ func RunWithTicker(ctx context.Context, out chan<- events.Event, config TickerCo
 		}
 	}
 
-	// Then run on ticker
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
 			if err := executeAndSend(ctx, out, config.Collect); err != nil {
-				// Log timeouts as warnings, other errors as debug
 				if errors.Is(err, context.DeadlineExceeded) {
 					config.Logger.Warnf("[%s] collector timed out: %v", config.Name, err)
 				} else {
 					config.Logger.Debugf("[%s] execution error: %v", config.Name, err)
 				}
-				// Continue running even on error
 			}
 		}
 	}
@@ -64,7 +59,6 @@ func executeAndSend(
 ) error {
 	event, err := collect(ctx)
 	if err != nil {
-		// Send error event if collection fails
 		errorPayload := events.NewErrorEvent(agent.ErrorPayload{
 			ErrorMessage: err.Error(),
 			ErrorType:    "source_error",
@@ -78,7 +72,6 @@ func executeAndSend(
 		return err
 	}
 
-	// Send the produced event (if not nil)
 	if event != nil {
 		select {
 		case out <- event:

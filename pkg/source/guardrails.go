@@ -40,7 +40,6 @@ func NewGuardrailsSource(adapter agent.AgentLooper, checkInterval time.Duration,
 						return events.NewGuardrailEvent(signal), nil
 					}
 
-					// Return nil event if no signal or rate-limited
 					return nil, nil
 				},
 			})
