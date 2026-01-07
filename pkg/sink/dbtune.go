@@ -102,7 +102,17 @@ func (s *DBTunePlatformSink) FlushMetrics(ctx context.Context) error {
 		return err
 	}
 
-	resp, err := s.client.Post(s.serverURL.PostMetrics(), "application/json", jsonData)
+	// Add a timeout context to avoid hanging
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	req, err := retryablehttp.NewRequestWithContext(reqCtx, "POST", s.serverURL.PostMetrics(), bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -174,7 +184,14 @@ func (s *DBTunePlatformSink) sendSystemInfo(ctx context.Context, event events.Sy
 		return err
 	}
 
-	req, _ := retryablehttp.NewRequest("PUT", s.serverURL.PostSystemInfo(), bytes.NewBuffer(jsonData))
+	// Add a timeout context to avoid hanging
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	req, err := retryablehttp.NewRequestWithContext(reqCtx, "PUT", s.serverURL.PostSystemInfo(), bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.client.Do(req)
@@ -197,7 +214,7 @@ func (s *DBTunePlatformSink) sendConfig(ctx context.Context, event events.Config
 	s.logger.Println("Sending active configuration to server")
 
 	type payload struct {
-		Config interface{} `json:"config"`
+		Config any `json:"config"`
 	}
 
 	p := payload{Config: event.ActiveConfig}
@@ -206,7 +223,17 @@ func (s *DBTunePlatformSink) sendConfig(ctx context.Context, event events.Config
 		return err
 	}
 
-	resp, err := s.client.Post(s.serverURL.PostActiveConfig(), "application/json", jsonData)
+	// Add a timeout context to avoid hanging
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	req, err := retryablehttp.NewRequestWithContext(reqCtx, "POST", s.serverURL.PostActiveConfig(), bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -234,7 +261,17 @@ func (s *DBTunePlatformSink) sendGuardrail(ctx context.Context, event events.Gua
 		return err
 	}
 
-	resp, err := s.client.Post(s.serverURL.PostGuardrailSignal(), "application/json", jsonData)
+	// Add a timeout context to avoid hanging
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	req, err := retryablehttp.NewRequestWithContext(reqCtx, "POST", s.serverURL.PostGuardrailSignal(), bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -258,7 +295,17 @@ func (s *DBTunePlatformSink) sendError(ctx context.Context, event events.ErrorEv
 		return err
 	}
 
-	resp, err := s.client.Post(s.serverURL.PostError(), "application/json", jsonData)
+	// Add a timeout context to avoid hanging
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	req, err := retryablehttp.NewRequestWithContext(reqCtx, "POST", s.serverURL.PostError(), bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return err
 	}

@@ -13,14 +13,10 @@ type Sink interface {
 
 	// Name returns the sink identifier
 	Name() string
-}
 
-// Flusher is implemented by sinks that support flushing buffered data
-type Flusher interface {
+	// Flush any buffered metrics the sink may have
 	FlushMetrics(ctx context.Context) error
-}
 
-// Closer is implemented by sinks that need cleanup
-type Closer interface {
+	// Close any resources that need cleanup
 	Close() error
 }

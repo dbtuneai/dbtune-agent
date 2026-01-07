@@ -54,7 +54,6 @@ func New(sources []source.SourceRunner, sinks []sink.Sink, logger *log.Logger, c
 func (r *Router) Run(ctx context.Context) error {
 	r.logger.Infof("Starting router with %d sources and %d sinks", len(r.sources), len(r.sinks))
 
-	// Start all sources
 	for _, src := range r.sources {
 		go func(s source.SourceRunner) {
 			r.logger.Debugf("Starting source: %s (interval: %v)", s.Name, s.Interval)
@@ -64,7 +63,6 @@ func (r *Router) Run(ctx context.Context) error {
 		}(src)
 	}
 
-	// Start metrics flush ticker (for aggregated metrics)
 	flushTicker := time.NewTicker(r.flushInterval)
 	defer flushTicker.Stop()
 
@@ -84,12 +82,10 @@ func (r *Router) Run(ctx context.Context) error {
 			}
 
 		case <-flushTicker.C:
-			// Flush aggregated metrics for all flushable sinks
+			// Flush aggregated metrics for all sinks
 			for _, snk := range r.sinks {
-				if flusher, ok := snk.(sink.Flusher); ok {
-					if err := flusher.FlushMetrics(ctx); err != nil {
-						r.logger.Debugf("Sink %s flush error: %v", snk.Name(), err)
-					}
+				if err := snk.FlushMetrics(ctx); err != nil {
+					r.logger.Debugf("Sink %s flush error: %v", snk.Name(), err)
 				}
 			}
 
@@ -105,10 +101,8 @@ func (r *Router) shutdown() error {
 	r.logger.Println("Closing all sinks")
 	var firstErr error
 	for _, snk := range r.sinks {
-		if closer, ok := snk.(sink.Closer); ok {
-			if err := closer.Close(); err != nil && firstErr == nil {
-				firstErr = err
-			}
+		if err := snk.Close(); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
 	return firstErr
