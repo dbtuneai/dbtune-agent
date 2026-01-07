@@ -44,7 +44,6 @@ func TestNewDBTunePlatformSink(t *testing.T) {
 
 func TestHandleMetrics_Buffering(t *testing.T) {
 	sink := createTestSink()
-	ctx := context.Background()
 
 	// Create multiple metrics events
 	metrics1 := []metrics.FlatValue{
@@ -58,12 +57,12 @@ func TestHandleMetrics_Buffering(t *testing.T) {
 	event2 := events.NewMetricsEvent("collector2", metrics2)
 
 	// Process events
-	err := sink.handleMetrics(ctx, event1)
+	err := sink.addMetrics(event1)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	err = sink.handleMetrics(ctx, event2)
+	err = sink.addMetrics(event2)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -205,7 +204,7 @@ func TestFlushMetrics_ClearsBuffer(t *testing.T) {
 		{Key: "test", Value: int64(42), Type: metrics.Int},
 	}
 	event := events.NewMetricsEvent("test_collector", testMetrics)
-	sink.handleMetrics(ctx, event)
+	sink.addMetrics(event)
 
 	// Verify buffer has data
 	sink.bufferMu.Lock()
@@ -237,7 +236,7 @@ func TestClose(t *testing.T) {
 		{Key: "test", Value: int64(42), Type: metrics.Int},
 	}
 	event := events.NewMetricsEvent("test_collector", testMetrics)
-	sink.handleMetrics(context.Background(), event)
+	sink.addMetrics(event)
 
 	// Close should flush
 	_ = sink.Close()

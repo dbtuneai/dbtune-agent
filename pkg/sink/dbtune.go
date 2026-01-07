@@ -50,7 +50,7 @@ func (s *DBTunePlatformSink) Name() string {
 func (s *DBTunePlatformSink) Process(ctx context.Context, event events.Event) error {
 	switch e := event.(type) {
 	case events.MetricsEvent:
-		return s.handleMetrics(ctx, e)
+		return s.addMetrics(e)
 	case events.HeartbeatEvent:
 		return s.sendHeartbeat(ctx, e)
 	case events.SystemInfoEvent:
@@ -67,8 +67,8 @@ func (s *DBTunePlatformSink) Process(ctx context.Context, event events.Event) er
 	return nil
 }
 
-// handleMetrics aggregates metrics for later flushing
-func (s *DBTunePlatformSink) handleMetrics(ctx context.Context, event events.MetricsEvent) error {
+// addMetrics aggregates metrics for later flushing
+func (s *DBTunePlatformSink) addMetrics(event events.MetricsEvent) error {
 	s.bufferMu.Lock()
 	defer s.bufferMu.Unlock()
 
