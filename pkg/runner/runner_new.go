@@ -106,33 +106,30 @@ func RunnerNew(commonAgent *agent.CommonAgent, looper agent.AgentLooper) {
 
 // createSources creates all sources from an adapter
 func createSources(commonAgent *agent.CommonAgent, looper agent.AgentLooper, logger *logrus.Logger, config Config) []source.SourceRunner {
-	sources := make([]source.SourceRunner, 0)
-
-	sources = append(sources, source.NewHeartbeatSource(
-		commonAgent.Version,
-		commonAgent.StartTime,
-		config.HeartbeatInterval,
-		logger,
-	))
-
-	sources = append(sources, source.NewSystemInfoSource(
-		looper,
-		config.SystemInfoInterval,
-		logger,
-	))
-
-	sources = append(sources, source.NewConfigSource(
-		looper,
-		config.ConfigInterval,
-		logger,
-	))
-
-	sources = append(sources, source.NewGuardrailsSource(
-		looper,
-		config.GuardrailsCheckInterval,
-		config.GuardrailsRateLimitInterval,
-		logger,
-	))
+	sources := []source.SourceRunner{
+		source.NewHeartbeatSource(
+			commonAgent.Version,
+			commonAgent.StartTime,
+			config.HeartbeatInterval,
+			logger,
+		),
+		source.NewSystemInfoSource(
+			looper,
+			config.SystemInfoInterval,
+			logger,
+		),
+		source.NewConfigSource(
+			looper,
+			config.ConfigInterval,
+			logger,
+		),
+		source.NewGuardrailsSource(
+			looper,
+			config.GuardrailsCheckInterval,
+			config.GuardrailsRateLimitInterval,
+			logger,
+		),
+	}
 
 	for _, collector := range commonAgent.MetricsState.Collectors {
 		interval := getIntervalForCollector(collector.Key, config)
