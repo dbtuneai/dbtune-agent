@@ -202,8 +202,7 @@ func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResp
 		// This prevents CNPG from auto-triggering restart when it sees unchanged restart params
 		currentValue, exists := currentConfig[knob.Name]
 		if exists {
-			// Normalize for comparison (handles "2GB" vs "2048MB" etc)
-			if NormalizeValue(currentValue) == NormalizeValue(cnpgValue) {
+			if parameters.NormalizeValue(currentValue) == parameters.NormalizeValue(cnpgValue) {
 				logger.Debugf("Skipping unchanged parameter: %s = %s (current: %s)", knob.Name, cnpgValue, currentValue)
 				skippedUnchanged++
 				continue
@@ -773,51 +772,6 @@ func (adapter *CNPGAdapter) GetCurrentConfig(ctx context.Context) (map[string]st
 	}
 
 	return config, nil
-}
-
-// NormalizeValue normalizes parameter values for comparison.
-// Handles different representations: "2GB" == "2048MB" == "2097152kB"
-func NormalizeValue(value string) string {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-
-	// Try to parse as memory value and convert to bytes
-	if bytes := parseMemoryToBytes(normalized); bytes > 0 {
-		return fmt.Sprintf("%d", bytes) // Return as bytes string
-	}
-
-	// For non-memory values, return normalized string
-	return normalized
-}
-
-// parseMemoryToBytes parses memory value and returns bytes.
-// Handles: "2GB", "256MB", "64kB"
-func parseMemoryToBytes(value string) int64 {
-	value = strings.TrimSpace(value)
-
-	// Extract number and unit
-	var numStr string
-	var multiplier int64
-
-	if strings.HasSuffix(value, "gb") {
-		numStr = strings.TrimSpace(value[:len(value)-2])
-		multiplier = 1024 * 1024 * 1024
-	} else if strings.HasSuffix(value, "mb") {
-		numStr = strings.TrimSpace(value[:len(value)-2])
-		multiplier = 1024 * 1024
-	} else if strings.HasSuffix(value, "kb") {
-		numStr = strings.TrimSpace(value[:len(value)-2])
-		multiplier = 1024
-	} else {
-		return 0
-	}
-
-	// Parse number (handles decimals like "2.5")
-	numValue, err := strconv.ParseFloat(numStr, 64)
-	if err != nil {
-		return 0 // Not a valid number
-	}
-
-	return int64(numValue * float64(multiplier))
 }
 
 // CheckRestartRequired checks if any of the changed parameters require database restart.

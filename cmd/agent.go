@@ -11,6 +11,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/azureflex"
 	"github.com/dbtuneai/agent/pkg/checks"
 	"github.com/dbtuneai/agent/pkg/cloudsql"
+	"github.com/dbtuneai/agent/pkg/patroni"
 	"github.com/dbtuneai/agent/pkg/cnpg"
 	"github.com/dbtuneai/agent/pkg/docker"
 	"github.com/dbtuneai/agent/pkg/pgprem"
@@ -20,7 +21,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-const AVAILABLE_FLAGS = "--docker, --aurora, --rds, --aiven, --local, --cloudsql, --azure-flex, --cnpg"
+const AVAILABLE_FLAGS = "--docker, --aurora, --rds, --aiven, --local, --cloudsql, --azure-flex, --cnpg, --patroni"
 
 func main() {
 	// Define flags
@@ -31,6 +32,7 @@ func main() {
 	useLocal := flag.Bool("local", false, "Use local PostgreSQL adapter")
 	useCloudSQL := flag.Bool("cloudsql", false, "Use Cloud SQL adapter")
 	useCNPG := flag.Bool("cnpg", false, "Use CNPG adapter")
+	usePatroni := flag.Bool("patroni", false, "Use Patroni adapter")
 	useAzureFlex := flag.Bool("azure-flex", false, "Use Azure Flexible Server")
 	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
@@ -114,6 +116,11 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to create CNPG adapter: %v", err)
 		}
+	case *usePatroni:
+		adapter, err = patroni.CreatePatroniAdapter()
+		if err != nil {
+			log.Fatalf("Failed to create Patroni adapter: %v", err)
+		}
 	case *useAzureFlex:
 		adapter, err = azureflex.CreateAzureFlexAdapter()
 		if err != nil {
@@ -154,6 +161,10 @@ func main() {
 			log.Println("CNPG configuration detected from environment variables")
 			adapter, err = cnpg.CreateCNPGAdapter()
 
+		} else if patroni.DetectConfigFromEnv() {
+			log.Println("Patroni configuration detected from environment variables")
+			adapter, err = patroni.CreatePatroniAdapter()
+
 		} else if aiven.DetectConfigFromConfigFile() {
 			log.Println("Aiven PostgreSQL configuration detected in config file")
 			adapter, err = aiven.CreateAivenPostgreSQLAdapter()
@@ -181,6 +192,11 @@ func main() {
 		} else if cnpg.DetectConfigFromConfigFile() {
 			log.Println("CNPG configuration detected in config file")
 			adapter, err = cnpg.CreateCNPGAdapter()
+
+		} else if patroni.DetectConfigFromConfigFile() {
+			log.Println("Patroni configuration detected in config file")
+			adapter, err = patroni.CreatePatroniAdapter()
+		
 		} else {
 			// NOTE: This was the previous behavior, which is consistent with our configuration.
 			// All config files have the `postgres:` subheader, which is all the local Postgres
