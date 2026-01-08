@@ -156,6 +156,9 @@ type AgentLooper interface {
 
 	// GetLogger returns the logger for the agent
 	Logger() *log.Logger
+
+	// Common returns the embedded CommonAgent
+	Common() *CommonAgent
 }
 
 type AgentPayload struct {
@@ -382,6 +385,11 @@ func (a *CommonAgent) Logger() *log.Logger {
 	return a.logger
 }
 
+// Common returns the CommonAgent itself
+func (a *CommonAgent) Common() *CommonAgent {
+	return a
+}
+
 // SendHeartbeat sends a heartbeat to the DBtune server
 // to indicate that the agent is running.
 // This method does not need to be overridden by any adapter
@@ -514,7 +522,7 @@ func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
 func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
 	a.Logger().Println("Sending metrics to server")
 
-	formattedMetrics := metrics.FormatMetrics(ms)
+	formattedMetrics := metrics.FormatMetrics(ms, time.Now())
 
 	jsonData, err := json.Marshal(formattedMetrics)
 	if err != nil {
