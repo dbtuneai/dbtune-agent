@@ -2,6 +2,8 @@ package parameters
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 )
@@ -45,4 +47,67 @@ func ParseKnobConfigurations(proposedConfig *agent.ProposedConfigResponse) ([]Pa
 	}
 
 	return parsedKnobs, nil
+}
+
+// normalizeValue normalizes configuration values for comparison
+// Converts values to bytes for memory/size units to enable proper comparison
+// e.g., "16MB" and "16384kB" both normalize to the same value in kB
+func NormalizeValue(value string) string {
+	// Remove whitespace
+	value = strings.TrimSpace(value)
+	value = strings.ToUpper(value)
+
+	// Try to parse memory/size units and convert to kB for comparison
+	// This handles: kB, MB, GB, TB
+	if before, ok := strings.CutSuffix(value, "TB"); ok {
+		if num, err := strconv.ParseFloat(before, 64); err == nil {
+			return fmt.Sprintf("%.0fKB", num*1024*1024*1024)
+		}
+	}
+	if before, ok := strings.CutSuffix(value, "GB"); ok {
+		if num, err := strconv.ParseFloat(before, 64); err == nil {
+			return fmt.Sprintf("%.0fKB", num*1024*1024)
+		}
+	}
+	if before, ok := strings.CutSuffix(value, "MB"); ok {
+		if num, err := strconv.ParseFloat(before, 64); err == nil {
+			return fmt.Sprintf("%.0fKB", num*1024)
+		}
+	}
+
+	// Already in kB, just return uppercase version
+	if strings.HasSuffix(value, "KB") {
+		return value
+	}
+
+	// Try time units: ms, s, min, h, d
+	if before, ok := strings.CutSuffix(value, "D"); ok {
+		if num, err := strconv.ParseFloat(before, 64); err == nil {
+			return fmt.Sprintf("%.0fMS", num*24*60*60*1000)
+		}
+	}
+	if before, ok := strings.CutSuffix(value, "H"); ok {
+		if num, err := strconv.ParseFloat(before, 64); err == nil {
+			return fmt.Sprintf("%.0fMS", num*60*60*1000)
+		}
+	}
+	if before, ok := strings.CutSuffix(value, "MIN"); ok {
+		if num, err := strconv.ParseFloat(before, 64); err == nil {
+			return fmt.Sprintf("%.0fMS", num*60*1000)
+		}
+	}
+
+	// Already in ms
+	if strings.HasSuffix(value, "MS") {
+		return value
+	}
+
+	if before, ok := strings.CutSuffix(value, "S"); ok {
+		if num, err := strconv.ParseFloat(before, 64); err == nil {
+			return fmt.Sprintf("%.0fMS", num*1000)
+		}
+	}
+
+	// Return as-is for values without units or unrecognized units
+	return value
 }

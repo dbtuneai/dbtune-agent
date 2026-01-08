@@ -160,20 +160,20 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 
 	// CRITICAL: During active failover recovery, block ALL operations
 	// Check if we're tracking a failover (LastFailoverTime is set)
-	timeSinceFailover := adapter.State.TimeSinceLastFailover()
-	if timeSinceFailover > 0 {
+	timeElaspedSinceFailover := adapter.State.TimeSinceLastFailover()
+	if timeElaspedSinceFailover > 0 {
 		// FIRST: Enforce minimum stabilization period
 		// Even if cluster appears healthy, PostgreSQL promotion may not be complete
 		// (WAL application, timeline change, etc.)
-		if timeSinceFailover < FailoverStabilizationPeriod {
+		if timeElaspedSinceFailover < FailoverStabilizationPeriod {
 			logger.Infof("[FAILOVER_RECOVERY] In stabilization period (%.1fs / %.0fs)",
-				timeSinceFailover.Seconds(), FailoverStabilizationPeriod.Seconds())
+				timeElaspedSinceFailover.Seconds(), FailoverStabilizationPeriod.Seconds())
 			return &FailoverDetectedError{
 				OldPrimary:      adapter.State.GetLastKnownPrimary(),
 				NewPrimary:      "(stabilizing)",
 				InStabilization: true, // Signal that baseline configs can proceed
 				Message:         fmt.Sprintf("enforcing stabilization period: %.1fs / %.0fs",
-					timeSinceFailover.Seconds(), FailoverStabilizationPeriod.Seconds()),
+					timeElaspedSinceFailover.Seconds(), FailoverStabilizationPeriod.Seconds()),
 			}
 		}
 
@@ -185,18 +185,18 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 			return &FailoverDetectedError{
 				OldPrimary: adapter.State.GetLastKnownPrimary(),
 				NewPrimary: "(verifying health)",
-				Message:    fmt.Sprintf("cluster health check failed after %.1fs: %v", timeSinceFailover.Seconds(), err),
+				Message:    fmt.Sprintf("cluster health check failed after %.1fs: %v", timeElaspedSinceFailover.Seconds(), err),
 			}
 		}
 
 		if !healthy {
 			// Cluster still unhealthy even after stabilization - keep blocking
 			logger.Warnf("[FAILOVER_RECOVERY] Operations blocked: cluster unhealthy after stabilization (%.1fs since failover)",
-				timeSinceFailover.Seconds())
+				timeElaspedSinceFailover.Seconds())
 			return &FailoverDetectedError{
 				OldPrimary: adapter.State.GetLastKnownPrimary(),
 				NewPrimary: "(recovering)",
-				Message:    fmt.Sprintf("cluster still unhealthy: %.1fs since failover", timeSinceFailover.Seconds()),
+				Message:    fmt.Sprintf("cluster still unhealthy: %.1fs since failover", timeElaspedSinceFailover.Seconds()),
 			}
 		}
 
@@ -205,11 +205,11 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 		// Check if grace period has expired (2 minutes after failover)
 		// After grace period, clear failover tracking and resume normal operations
 		const gracePeriod = 2 * time.Minute
-		if timeSinceFailover >= gracePeriod {
+		if timeElaspedSinceFailover >= gracePeriod {
 			// Only log once when clearing
 			if !adapter.State.GetLastFailoverTime().IsZero() {
 				logger.Infof("[FAILOVER_RECOVERY] Grace period expired (%.0fs since failover) - clearing failover tracking and resuming normal operations",
-					timeSinceFailover.Seconds())
+					timeElaspedSinceFailover.Seconds())
 				adapter.State.ClearFailoverTime()
 			}
 			// After clearing, return nil to allow normal operations
@@ -221,7 +221,7 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 		// Check the flag to avoid creating multiple contexts on subsequent iterations
 		if !adapter.State.IsRecoveryContextCreated() {
 			logger.Infof("[FAILOVER_RECOVERY] Stabilization complete and cluster healthy (%.1fs since failover) - resuming operations",
-				timeSinceFailover.Seconds())
+				timeElaspedSinceFailover.Seconds())
 
 			// Create new operations context for fresh PostgreSQL queries
 			// Old context was cancelled during failover to abort stale connections
