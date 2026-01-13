@@ -26,6 +26,20 @@ import (
 	"github.com/spf13/viper"
 )
 
+// Package-level agent ID, generated once and shared across all CommonAgent instances
+var (
+	agentIDOnce sync.Once
+	sharedAgentID string
+)
+
+// GetAgentID returns the shared agent ID, generating it once on first call
+func GetAgentID() string {
+	agentIDOnce.Do(func() {
+		sharedAgentID = uuid.New().String()
+	})
+	return sharedAgentID
+}
+
 type ConfigArraySchema []any
 
 // TODO: extract PostgreSQL specific types + methods to utils/separate place
@@ -356,7 +370,7 @@ func CreateCommonAgentWithVersion(version string) *CommonAgent {
 		}
 	}
 
-	agentID := uuid.New().String()
+	agentID := GetAgentID()
 	logger.Infof("Agent instance ID: %s", agentID)
 
 	return &CommonAgent{
