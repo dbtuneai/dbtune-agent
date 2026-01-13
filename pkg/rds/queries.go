@@ -277,6 +277,12 @@ func ApplyConfig(
 		return fmt.Errorf("failed to get modified parameters: %v", err)
 	}
 
+	// Nothing to change, assume we just go ahead
+	if len(modifiedParameters) == 0 {
+		logger.Info("No parameter changes were required")
+		return nil
+	}
+
 	// Modify parameter group
 	args := &rds.ModifyDBParameterGroupInput{
 		DBParameterGroupName: aws.String(parameterGroupName),
