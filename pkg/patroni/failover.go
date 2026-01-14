@@ -24,6 +24,7 @@ const (
 	// Even after Patroni reports "running", PostgreSQL may still be completing promotion.
 	// Testing with active load may require increasing this value beyond 30s.
 	FailoverStabilizationPeriod = 30 * time.Second
+	FailoverGracePeriod         = 5 * time.Minute
 )
 
 // isPostgreSQLFailoverError checks if an error indicates PostgreSQL failover in progress
@@ -42,10 +43,10 @@ func isPostgreSQLFailoverError(err error) bool {
 // FailoverDetectedError is returned when a failover is detected during tuning.
 // This signals that the tuning session should terminate gracefully.
 type FailoverDetectedError struct {
-	OldPrimary       string
-	NewPrimary       string
-	Message          string
-	InStabilization  bool // True if we're in the stabilization period (allows baseline config)
+	OldPrimary      string
+	NewPrimary      string
+	Message         string
+	InStabilization bool // True if we're in the stabilization period (allows baseline config)
 }
 
 func (e *FailoverDetectedError) Error() string {
@@ -172,7 +173,7 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 				OldPrimary:      adapter.State.GetLastKnownPrimary(),
 				NewPrimary:      "(stabilizing)",
 				InStabilization: true, // Signal that baseline configs can proceed
-				Message:         fmt.Sprintf("enforcing stabilization period: %.1fs / %.0fs",
+				Message: fmt.Sprintf("enforcing stabilization period: %.1fs / %.0fs",
 					timeElaspedSinceFailover.Seconds(), FailoverStabilizationPeriod.Seconds()),
 			}
 		}
@@ -202,10 +203,10 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 
 		// FINALLY: Both stabilization period passed AND cluster is healthy
 
-		// Check if grace period has expired (2 minutes after failover)
+		// Check if grace period has expired (5 minutes after failover)
 		// After grace period, clear failover tracking and resume normal operations
-		const gracePeriod = 2 * time.Minute
-		if timeElaspedSinceFailover >= gracePeriod {
+
+		if timeElaspedSinceFailover >= FailoverGracePeriod {
 			// Only log once when clearing
 			if !adapter.State.GetLastFailoverTime().IsZero() {
 				logger.Infof("[FAILOVER_RECOVERY] Grace period expired (%.0fs since failover) - clearing failover tracking and resuming normal operations",
@@ -260,8 +261,8 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 					errorPayload := agent.ErrorPayload{
 						ErrorMessage: fmt.Sprintf("failover detected: %s -> NO PRIMARY DETECTED: cluster status unavailable: %v",
 							lastKnownPrimary, err),
-						ErrorType:    "failover_detected",
-						Timestamp:    time.Now().UTC().Format(time.RFC3339),
+						ErrorType: "failover_detected",
+						Timestamp: time.Now().UTC().Format(time.RFC3339),
 					}
 					adapter.SendError(errorPayload)
 					logger.Info("Failover notification sent to backend (cluster status unavailable)")
@@ -301,8 +302,8 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 				errorPayload := agent.ErrorPayload{
 					ErrorMessage: fmt.Sprintf("failover detected: %s -> NO PRIMARY DETECTED: cluster state: %s",
 						lastKnownPrimary, clusterStatus.State),
-					ErrorType:    "failover_detected",
-					Timestamp:    time.Now().UTC().Format(time.RFC3339),
+					ErrorType: "failover_detected",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
 				}
 				adapter.SendError(errorPayload)
 				logger.Info("Failover notification sent to backend (no current primary)")
@@ -360,8 +361,8 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 			errorPayload := agent.ErrorPayload{
 				ErrorMessage: fmt.Sprintf("failover detected: %s -> %s: cluster state: %s",
 					lastKnownPrimary, currentPrimary, clusterStatus.State),
-				ErrorType:    "failover_detected",
-				Timestamp:    time.Now().UTC().Format(time.RFC3339),
+				ErrorType: "failover_detected",
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
 			}
 			adapter.SendError(errorPayload)
 			logger.Info("Failover notification sent to backend")

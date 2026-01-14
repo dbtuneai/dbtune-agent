@@ -197,8 +197,7 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 	// Check if we're already in a grace period from a previous failover
 	// This needs to be checked BEFORE CheckForFailover to avoid race conditions
 	timeSinceFailover := adapter.State.TimeSinceLastFailover()
-	recentFailoverGracePeriod := 2 * time.Minute
-	hadRecentFailover := timeSinceFailover > 0 && timeSinceFailover < recentFailoverGracePeriod
+	hadRecentFailover := timeSinceFailover > 0 && timeSinceFailover < FailoverGracePeriod
 
 	// Check for failover before applying new configuration
 	// This ensures we don't apply tuning parameters after a failover has occurred
@@ -233,10 +232,10 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 
 	// Re-check failover status after CheckForFailover (may have been updated by new failover)
 	timeSinceFailover = adapter.State.TimeSinceLastFailover()
-	hadRecentFailover = timeSinceFailover > 0 && timeSinceFailover < recentFailoverGracePeriod
+	hadRecentFailover = timeSinceFailover > 0 && timeSinceFailover < FailoverGracePeriod
 
 	// Clear failover time if grace period has expired
-	if timeSinceFailover > 0 && timeSinceFailover >= recentFailoverGracePeriod {
+	if timeSinceFailover > 0 && timeSinceFailover >= FailoverGracePeriod {
 		logger.Infof("[FAILOVER_RECOVERY] Grace period expired (%.0fs since failover) - clearing failover tracking and resuming normal standby checks",
 			timeSinceFailover.Seconds())
 		adapter.State.ClearFailoverTime()
@@ -266,7 +265,7 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 		}
 	} else if hadRecentFailover {
 		logger.Infof("[FAILOVER_RECOVERY] Skipping standby check due to recent failover (%.0fs ago, grace period: %.0fs)",
-			timeSinceFailover.Seconds(), recentFailoverGracePeriod.Seconds())
+			timeSinceFailover.Seconds(), FailoverGracePeriod.Seconds())
 	}
 
 	logger.Infof("[FAILOVER_RECOVERY] Failover check PASSED - proceeding with config application")
