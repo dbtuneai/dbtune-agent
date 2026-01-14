@@ -24,6 +24,7 @@ const (
 	// Even after Patroni reports "running", PostgreSQL may still be completing promotion.
 	// Testing with active load may require increasing this value beyond 30s.
 	FailoverStabilizationPeriod = 30 * time.Second
+	FailoverGracePeriod         = 5 * time.Minute
 )
 
 // isPostgreSQLFailoverError checks if an error indicates PostgreSQL failover in progress
@@ -202,10 +203,10 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 
 		// FINALLY: Both stabilization period passed AND cluster is healthy
 
-		// Check if grace period has expired (2 minutes after failover)
+		// Check if grace period has expired (5 minutes after failover)
 		// After grace period, clear failover tracking and resume normal operations
-		const gracePeriod = 5 * time.Minute
-		if timeElaspedSinceFailover >= gracePeriod {
+
+		if timeElaspedSinceFailover >= FailoverGracePeriod {
 			// Only log once when clearing
 			if !adapter.State.GetLastFailoverTime().IsZero() {
 				logger.Infof("[FAILOVER_RECOVERY] Grace period expired (%.0fs since failover) - clearing failover tracking and resuming normal operations",
