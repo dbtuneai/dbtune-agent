@@ -197,7 +197,7 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 	// Check if we're already in a grace period from a previous failover
 	// This needs to be checked BEFORE CheckForFailover to avoid race conditions
 	timeSinceFailover := adapter.State.TimeSinceLastFailover()
-	recentFailoverGracePeriod := 2 * time.Minute
+	recentFailoverGracePeriod := 5 * time.Minute
 	hadRecentFailover := timeSinceFailover > 0 && timeSinceFailover < recentFailoverGracePeriod
 
 	// Check for failover before applying new configuration

@@ -42,10 +42,10 @@ func isPostgreSQLFailoverError(err error) bool {
 // FailoverDetectedError is returned when a failover is detected during tuning.
 // This signals that the tuning session should terminate gracefully.
 type FailoverDetectedError struct {
-	OldPrimary       string
-	NewPrimary       string
-	Message          string
-	InStabilization  bool // True if we're in the stabilization period (allows baseline config)
+	OldPrimary      string
+	NewPrimary      string
+	Message         string
+	InStabilization bool // True if we're in the stabilization period (allows baseline config)
 }
 
 func (e *FailoverDetectedError) Error() string {
@@ -172,7 +172,7 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 				OldPrimary:      adapter.State.GetLastKnownPrimary(),
 				NewPrimary:      "(stabilizing)",
 				InStabilization: true, // Signal that baseline configs can proceed
-				Message:         fmt.Sprintf("enforcing stabilization period: %.1fs / %.0fs",
+				Message: fmt.Sprintf("enforcing stabilization period: %.1fs / %.0fs",
 					timeElaspedSinceFailover.Seconds(), FailoverStabilizationPeriod.Seconds()),
 			}
 		}
@@ -204,7 +204,7 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 
 		// Check if grace period has expired (2 minutes after failover)
 		// After grace period, clear failover tracking and resume normal operations
-		const gracePeriod = 2 * time.Minute
+		const gracePeriod = 5 * time.Minute
 		if timeElaspedSinceFailover >= gracePeriod {
 			// Only log once when clearing
 			if !adapter.State.GetLastFailoverTime().IsZero() {
@@ -260,8 +260,8 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 					errorPayload := agent.ErrorPayload{
 						ErrorMessage: fmt.Sprintf("failover detected: %s -> NO PRIMARY DETECTED: cluster status unavailable: %v",
 							lastKnownPrimary, err),
-						ErrorType:    "failover_detected",
-						Timestamp:    time.Now().UTC().Format(time.RFC3339),
+						ErrorType: "failover_detected",
+						Timestamp: time.Now().UTC().Format(time.RFC3339),
 					}
 					adapter.SendError(errorPayload)
 					logger.Info("Failover notification sent to backend (cluster status unavailable)")
@@ -301,8 +301,8 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 				errorPayload := agent.ErrorPayload{
 					ErrorMessage: fmt.Sprintf("failover detected: %s -> NO PRIMARY DETECTED: cluster state: %s",
 						lastKnownPrimary, clusterStatus.State),
-					ErrorType:    "failover_detected",
-					Timestamp:    time.Now().UTC().Format(time.RFC3339),
+					ErrorType: "failover_detected",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
 				}
 				adapter.SendError(errorPayload)
 				logger.Info("Failover notification sent to backend (no current primary)")
@@ -360,8 +360,8 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 			errorPayload := agent.ErrorPayload{
 				ErrorMessage: fmt.Sprintf("failover detected: %s -> %s: cluster state: %s",
 					lastKnownPrimary, currentPrimary, clusterStatus.State),
-				ErrorType:    "failover_detected",
-				Timestamp:    time.Now().UTC().Format(time.RFC3339),
+				ErrorType: "failover_detected",
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
 			}
 			adapter.SendError(errorPayload)
 			logger.Info("Failover notification sent to backend")
