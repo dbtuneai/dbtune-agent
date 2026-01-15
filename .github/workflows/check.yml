@@ -26,8 +26,10 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.24.x"
-      - name: Ensure dependencies are tidy
-        run: go mod tidy
+      - name: Verify go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum || (echo "go.mod or go.sum is not tidy. Run 'go mod tidy' and commit the changes." && exit 1)
       - name: Build
         run: go build -o dbtune-agent cmd/agent.go
       - name: Run tests
