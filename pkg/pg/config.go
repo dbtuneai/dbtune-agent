@@ -17,6 +17,7 @@ type Config struct {
 	ServiceName            string `mapstructure:"service_name"` // TODO(eddie): Should be moved under pgprem, as it doesn't apply to all other PG providers
 	IncludeQueries         bool   `mapstructure:"include_queries"`
 	MaximumQueryTextLength int    `mapstructure:"maximum_query_text_length"`
+	AllowRestart           bool   `mapstructure:"allow_restart"`
 }
 
 func ConfigFromViper(key *string) (Config, error) {
@@ -44,10 +45,12 @@ func ConfigFromViper(key *string) (Config, error) {
 	dbtuneConfig.BindEnv("service_name", "DBT_POSTGRESQL_SERVICE_NAME")
 	dbtuneConfig.BindEnv("include_queries", "DBT_POSTGRESQL_INCLUDE_QUERIES")
 	dbtuneConfig.BindEnv("maximum_query_text_length", "DBT_POSTGRESQL_MAXIMUM_QUERY_TEXT_LENGTH")
+	dbtuneConfig.BindEnv("allow_restart", "DBT_POSTGRESQL_ALLOW_RESTART")
 
 	// Set defaults
 	dbtuneConfig.SetDefault("include_queries", true)
 	dbtuneConfig.SetDefault("maximum_query_text_length", 50_000)
+	dbtuneConfig.SetDefault("allow_restart", false)
 
 	var pgConfig Config
 
