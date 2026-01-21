@@ -14,6 +14,7 @@ const (
 
 type Config struct {
 	ContainerName string `mapstructure:"container_name" validate:"required"`
+	SwarmMode     bool   `mapstructure:"swarm_mode"`
 }
 
 func ConfigFromViper(key *string) (Config, error) {
@@ -30,6 +31,7 @@ func ConfigFromViper(key *string) (Config, error) {
 	}
 
 	dbtuneConfig.BindEnv("container_name", "DBT_DOCKER_CONTAINER_NAME")
+	dbtuneConfig.BindEnv("swarm_mode", "DBT_DOCKER_SWARM_MODE")
 
 	var dockerConfig Config
 	err := dbtuneConfig.Unmarshal(&dockerConfig)
@@ -51,6 +53,7 @@ func DetectConfigFromConfigFile() bool {
 func DetectConfigFromEnv() bool {
 	envKeysToDetect := []string{
 		"DBT_DOCKER_CONTAINER_NAME",
+		"DBT_DOCKER_SWARM_MODE",
 	}
 
 	for _, envKey := range envKeysToDetect {
