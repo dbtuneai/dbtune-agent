@@ -35,7 +35,14 @@ func main() {
 	usePatroni := flag.Bool("patroni", false, "Use Patroni adapter")
 	useAzureFlex := flag.Bool("azure-flex", false, "Use Azure Flexible Server")
 	showVersion := flag.Bool("version", false, "Show version information")
+	allowRestart := flag.Bool("allow-restart", false, "Allow the agent to restart PostgreSQL")
 	flag.Parse()
+
+	// Set postgresql.allow_restart in viper from flag
+	viper.SetDefault("postgresql.allow_restart", false)
+	if *allowRestart {
+		viper.Set("postgresql.allow_restart", true)
+	}
 
 	// Handle version flag
 	if *showVersion {

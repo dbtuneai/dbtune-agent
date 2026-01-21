@@ -3,7 +3,8 @@
 postgresql:
   connection_url: postgresql://user:password@localhost:5432/database # Database connection string
   include_queries: true # Whether to include query text when sending stats
-  
+  allow_restart: false  # Allow the agent to restart PostgreSQL. Defaults to false.
+
 # Only for plain RDS
 rds:
   # AWS credentials are optional
@@ -33,7 +34,7 @@ guardrail_settings:
   memory_threshold: 90  # The percentage at which the dbtune-agent triggers a memory gaurdrail
                         # DBtune will act to prevent an OOM if this threshold is reached
                         # during tuning
-  
+
 debug: false # Enable debug logging
 ```
 
@@ -52,4 +53,5 @@ export DBT_RDS_PARAMETER_GROUP_NAME=
 export DBT_AWS_REGION=
 export DBT_AWS_ACCESS_KEY_ID=  # Optional, see above in yaml config
 export DBT_AWS_SECRET_ACCESS_KEY=  # Optional, see above in yaml config
+export DBT_POSTGRESQL_ALLOW_RESTART=false  # Set to true to allow PostgreSQL restarts
 ```

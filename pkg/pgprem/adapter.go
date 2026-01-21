@@ -218,6 +218,11 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 
 	switch proposedConfig.KnobApplication {
 	case "restart":
+		if !agent.IsRestartAllowed() {
+			return &agent.RestartNotAllowedError{
+				Message: "restart is not allowed in the agent",
+			}
+		}
 		// Restart the service
 		adapter.Logger().Warn("Restarting service")
 		// Execute systemctl restart command if it fails try executing it with sudo

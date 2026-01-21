@@ -99,6 +99,11 @@ func (adapter *AzureFlexAdapter) ApplyConfig(proposedConfig *agent.ProposedConfi
 			return err
 		}
 		if (proposedConfig.KnobApplication == "restart") && shouldRestart {
+			if !agent.IsRestartAllowed() {
+				return &agent.RestartNotAllowedError{
+					Message: "restart is not allowed in the agent",
+				}
+			}
 			// Restart the service
 			adapter.Logger().Warn("Restarting service")
 			restartResp, err := clientFactory.NewServersClient().BeginRestart(ctx, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, nil)

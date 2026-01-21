@@ -3,6 +3,7 @@
 postgresql:
   connection_url: postgresql://user:password@cluster-rw:5432/database # Database connection string
   include_queries: true # Whether to include query text when sending stats
+  allow_restart: false  # Allow the agent to restart PostgreSQL. Defaults to false.
 
 cnpg:
   namespace: "" # REQUIRED: The Kubernetes namespace where your CNPG cluster is deployed
@@ -44,4 +45,5 @@ export DBT_CNPG_CLUSTER_NAME=my-cluster
 export DBT_CNPG_POD_NAME=my-cluster-1  # If not set, auto-discovers primary pod
 export DBT_CNPG_CONTAINER_NAME=postgres  # Defaults to "postgres"
 export DBT_CNPG_KUBECONFIG_PATH=/path/to/kubeconfig  # Defaults to ~/.kube/config or in-cluster
+export DBT_POSTGRESQL_ALLOW_RESTART=false  # Set to true to allow PostgreSQL restarts
 ```

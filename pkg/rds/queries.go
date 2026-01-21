@@ -304,6 +304,11 @@ func ApplyConfig(
 
 	// If restart is required and specified
 	if applyMethod == rdsTypes.ApplyMethodPendingReboot {
+		if !agent.IsRestartAllowed() {
+			return &agent.RestartNotAllowedError{
+				Message: "restart is not allowed in the agent",
+			}
+		}
 		args := &rds.RebootDBInstanceInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
 		_, err = clients.RDSClient.RebootDBInstance(ctx, args)
 		if err != nil {

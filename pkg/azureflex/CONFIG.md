@@ -3,6 +3,7 @@
 postgresql:
   connection_url: postgresql://user:password@localhost:5432/database # Database connection string
   include_queries: true # Whether to include query text when sending stats
+  allow_restart: false  # Allow the agent to restart PostgreSQL. Defaults to false.
 
 azure_flex:
   subscription_id: "" # The subscription id which contains your Azure Flex
@@ -19,7 +20,7 @@ guardrail_settings:
   memory_threshold: 90  # The percentage at which the dbtune-agent triggers a memory gaurdrail
                         # DBtune will act to prevent an OOM if this threshold is reached
                         # during tuning
-  
+
 debug: false # Enable debug logging
 ```
 
@@ -36,4 +37,5 @@ export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/d
 export DBT_AZURE_FLEX_SUBSCRIPTION_ID=,
 export DBT_AZURE_FLEX_RESOURCE_GROUP_NAME=,
 export DBT_AZURE_FLEX_SERVER_NAME=,
+export DBT_POSTGRESQL_ALLOW_RESTART=false  # Set to true to allow PostgreSQL restarts
 ```

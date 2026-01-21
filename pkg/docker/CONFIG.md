@@ -3,6 +3,7 @@
 postgresql:
   connection_url: postgresql://user:password@localhost:5432/database # Database connection string
   include_queries: true # Whether to include query text when sending stats
+  allow_restart: false  # Allow the agent to restart PostgreSQL. Defaults to false.
 
 docker:
   container_name: postgres # Name of your PostgreSQL container
@@ -17,7 +18,7 @@ guardrail_settings:
   memory_threshold: 90  # The percentage at which the dbtune-agent triggers a memory gaurdrail
                         # DBtune will act to prevent an OOM if this threshold is reached
                         # during tuning
-  
+
 debug: false # Enable debug logging
 ```
 
@@ -30,6 +31,7 @@ export DBT_DBTUNE_DATABASE_ID=your-database-id
 export DBT_POSTGRESQL_INCLUDE_QUERIES=true
 
 # Your database specific
-export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database 
+export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database
 export DBT_CONTAINER_NAME=
+export DBT_POSTGRESQL_ALLOW_RESTART=false  # Set to true to allow PostgreSQL restarts
 ```

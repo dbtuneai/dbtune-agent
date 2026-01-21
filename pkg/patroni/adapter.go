@@ -411,6 +411,11 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 
 	// If restart is needed, trigger PostgreSQL restart via Patroni API
 	if needsRestart {
+		if !agent.IsRestartAllowed() {
+			return &agent.RestartNotAllowedError{
+				Message: "restart is not allowed in the agent",
+			}
+		}
 		logger.Info("Configuration requires restart, triggering PostgreSQL restart via Patroni API...")
 
 		// Mark that we're entering an intentional restart window
