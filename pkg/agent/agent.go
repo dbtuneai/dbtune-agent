@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -535,7 +536,23 @@ func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.PostMetrics(), "application/json", jsonData)
+	var buf bytes.Buffer
+	gzWriter := gzip.NewWriter(&buf)
+	if _, err := gzWriter.Write(jsonData); err != nil {
+		return err
+	}
+	if err := gzWriter.Close(); err != nil {
+		return err
+	}
+
+	req, err := retryablehttp.NewRequest("POST", a.ServerURLs.PostMetrics(), &buf)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+
+	resp, err := a.APIClient.Do(req)
 	if err != nil {
 		return err
 	}
