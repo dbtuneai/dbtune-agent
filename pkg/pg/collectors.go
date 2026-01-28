@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -211,7 +212,7 @@ func PGStatStatements(pgPool *pgxpool.Pool, includeQueries bool, maxQueryTextLen
 }
 
 const ConnectionStatsQuery = `
-SELECT 
+SELECT
     COUNT(*) FILTER (WHERE state = 'active') AS active_connections,
     COUNT(*) FILTER (WHERE state = 'idle') AS idle_connections,
     COUNT(*) FILTER (WHERE state = 'idle in transaction') AS idle_in_transaction_connections
@@ -550,6 +551,8 @@ func PGStatDatabase(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent
 	}
 }
 
+var PGStatUserTablesLimit = 125
+
 const PGStatUserTablesQuery = `
 SELECT JSON_OBJECT_AGG(
 	CONCAT(relname, '_', relid),
@@ -592,88 +595,79 @@ func PGStatUserTables(pgPool *pgxpool.Pool) func(ctx context.Context, state *age
 			return err
 		}
 
+		if len(tableStats) > PGStatUserTablesLimit {
+			type tableEntry struct {
+				key   string
+				stats utils.PGUserTables
+			}
+			entries := make([]tableEntry, 0, len(tableStats))
+			for k, v := range tableStats {
+				entries = append(entries, tableEntry{key: k, stats: v})
+			}
+			sort.Slice(entries, func(i, j int) bool {
+				totalI := entries[i].stats.NLiveTup + entries[i].stats.NDeadTup
+				totalJ := entries[j].stats.NLiveTup + entries[j].stats.NDeadTup
+				if totalI != totalJ {
+					return totalI > totalJ
+				}
+				return entries[i].key < entries[j].key
+			})
+			tableStats = make(map[string]utils.PGUserTables, PGStatUserTablesLimit)
+			for i := range PGStatUserTablesLimit {
+				tableStats[entries[i].key] = entries[i].stats
+			}
+		}
+
 		// tableStats should now be a mapping from strings ('{name}_{id}') to values
 		// some of those values are cumulative other are not.
 
 		if state.Cache.PGUserTables != nil {
-			// Prepare maps for each metric
-			lastAutoVacuumMap := make(map[string]time.Time)
-			lastAutoAnalyzeMap := make(map[string]time.Time)
-			autoVacuumCountMap := make(map[string]int64)
-			autoAnalyzeCountMap := make(map[string]int64)
-			liveTuplesMap := make(map[string]int64)
-			deadTuplesMap := make(map[string]int64)
-			nModSinceAnalyzeMap := make(map[string]int64)
-			nInsSinceVacuumMap := make(map[string]int64)
-			seqScansMap := make(map[string]int64)
-			seqTuplesReadMap := make(map[string]int64)
-			idxScansMap := make(map[string]int64)
-			idxTuplesFetchMap := make(map[string]int64)
+			tableMetricsMap := make(map[string]utils.PGUserTableMetrics, len(tableStats))
 
 			for tableKey, currentStats := range tableStats {
 				if previousStats, exists := state.Cache.PGUserTables[tableKey]; exists {
-					autoVacuumCountDelta := currentStats.AutoVacuumCount - previousStats.AutoVacuumCount
-					autoAnalyzeCountDelta := currentStats.AutoAnalyzeCount - previousStats.AutoAnalyzeCount
-					seqScanDelta := currentStats.SeqScan - previousStats.SeqScan
-					seqTupReadDelta := currentStats.SeqTupRead - previousStats.SeqTupRead
-					idxScanDelta := currentStats.IdxScan - previousStats.IdxScan
-					idxTupFetchDelta := currentStats.IdxTupFetch - previousStats.IdxTupFetch
+					tableMetric := utils.PGUserTableMetrics{
+						NLiveTup:         currentStats.NLiveTup,
+						NDeadTup:         currentStats.NDeadTup,
+						NModSinceAnalyze: currentStats.NModSinceAnalyze,
+						NInsSinceVacuum:  currentStats.NInsSinceVacuum,
+					}
 
+					// Set timestamps if not zero
 					if !currentStats.LastAutoVacuum.IsZero() {
-						lastAutoVacuumMap[tableKey] = currentStats.LastAutoVacuum
+						tableMetric.LastAutoVacuum = &currentStats.LastAutoVacuum
 					}
 					if !currentStats.LastAutoAnalyze.IsZero() {
-						lastAutoAnalyzeMap[tableKey] = currentStats.LastAutoAnalyze
+						tableMetric.LastAutoAnalyze = &currentStats.LastAutoAnalyze
 					}
 
-					if autoVacuumCountDelta >= 0 {
-						autoVacuumCountMap[tableKey] = autoVacuumCountDelta
+					// Calculate deltas for cumulative metrics (only include if non-negative)
+					if delta := currentStats.AutoVacuumCount - previousStats.AutoVacuumCount; delta >= 0 {
+						tableMetric.AutoVacuumCount = delta
 					}
-					if autoAnalyzeCountDelta >= 0 {
-						autoAnalyzeCountMap[tableKey] = autoAnalyzeCountDelta
+					if delta := currentStats.AutoAnalyzeCount - previousStats.AutoAnalyzeCount; delta >= 0 {
+						tableMetric.AutoAnalyzeCount = delta
 					}
-					liveTuplesMap[tableKey] = currentStats.NLiveTup
-					deadTuplesMap[tableKey] = currentStats.NDeadTup
-					nModSinceAnalyzeMap[tableKey] = currentStats.NModSinceAnalyze
-					nInsSinceVacuumMap[tableKey] = currentStats.NInsSinceVacuum
-					if seqScanDelta >= 0 {
-						seqScansMap[tableKey] = seqScanDelta
+					if delta := currentStats.SeqScan - previousStats.SeqScan; delta >= 0 {
+						tableMetric.SeqScan = delta
 					}
-					if seqTupReadDelta >= 0 {
-						seqTuplesReadMap[tableKey] = seqTupReadDelta
+					if delta := currentStats.SeqTupRead - previousStats.SeqTupRead; delta >= 0 {
+						tableMetric.SeqTupRead = delta
 					}
-					if idxScanDelta >= 0 {
-						idxScansMap[tableKey] = idxScanDelta
+					if delta := currentStats.IdxScan - previousStats.IdxScan; delta >= 0 {
+						tableMetric.IdxScan = delta
 					}
-					if idxTupFetchDelta >= 0 {
-						idxTuplesFetchMap[tableKey] = idxTupFetchDelta
+					if delta := currentStats.IdxTupFetch - previousStats.IdxTupFetch; delta >= 0 {
+						tableMetric.IdxTupFetch = delta
 					}
+
+					tableMetricsMap[tableKey] = tableMetric
 				}
 			}
 
-			metricsToEmit := []struct {
-				metric metrics.MetricDef
-				value  any
-			}{
-				{metrics.PGLastAutoVacuum, lastAutoVacuumMap},
-				{metrics.PGLastAutoAnalyze, lastAutoAnalyzeMap},
-				{metrics.PGAutoVacuumCountM, autoVacuumCountMap},
-				{metrics.PGAutoAnalyzeCount, autoAnalyzeCountMap},
-				{metrics.PGNLiveTuples, liveTuplesMap},
-				{metrics.PGNDeadTuples, deadTuplesMap},
-				{metrics.PGNModSinceAnalyze, nModSinceAnalyzeMap},
-				{metrics.PGNInsSinceVacuum, nInsSinceVacuumMap},
-				{metrics.PGSeqScan, seqScansMap},
-				{metrics.PGSeqTupRead, seqTuplesReadMap},
-				{metrics.PGIdxScan, idxScansMap},
-				{metrics.PGIdxTupFetch, idxTuplesFetchMap},
-			}
-
-			for _, m := range metricsToEmit {
-				err = EmitMetric(state, m.metric, m.value)
-				if err != nil {
-					return err
-				}
+			err = EmitMetric(state, metrics.PGUserTableStats, tableMetricsMap)
+			if err != nil {
+				return err
 			}
 		}
 		state.Cache.PGUserTables = tableStats

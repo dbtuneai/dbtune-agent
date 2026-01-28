@@ -13,17 +13,18 @@ import (
 type MetricType string
 
 const (
-	Int        MetricType = "int"
-	Float      MetricType = "float"
-	String     MetricType = "string"
-	Bytes      MetricType = "bytes"
-	Boolean    MetricType = "boolean"
-	Time       MetricType = "time"
-	Percentage MetricType = "percentage"
-	PgssDelta  MetricType = "pgss_delta"
-	IntMap     MetricType = "int_map"
-	FloatMap   MetricType = "float_map"
-	TimeMap    MetricType = "time_map"
+	Int           MetricType = "int"
+	Float         MetricType = "float"
+	String        MetricType = "string"
+	Bytes         MetricType = "bytes"
+	Boolean       MetricType = "boolean"
+	Time          MetricType = "time"
+	Percentage    MetricType = "percentage"
+	PgssDelta     MetricType = "pgss_delta"
+	IntMap        MetricType = "int_map"
+	FloatMap      MetricType = "float_map"
+	TimeMap       MetricType = "time_map"
+	TableStatsMap MetricType = "table_stats_map"
 )
 
 // FlatValue is a struct that represents
@@ -125,6 +126,10 @@ func NewMetric(key string, value interface{}, typeStr MetricType) (FlatValue, er
 	case "time_map":
 		if _, ok := value.(map[string]time.Time); !ok {
 			return FlatValue{}, fmt.Errorf("time_map data is not of type map[string]time.Time")
+		}
+	case "table_stats_map":
+		if _, ok := value.(map[string]utils.PGUserTableMetrics); !ok {
+			return FlatValue{}, fmt.Errorf("table_stats_map data is not of type map[string]utils.PGUserTableMetrics")
 		}
 	default:
 		return FlatValue{}, fmt.Errorf("unknown type: %s", typeStr)
@@ -251,21 +256,9 @@ var (
 
 	PGIdleInTransactionTime = MetricDef{Key: "pg_idle_in_transaction_time", Type: Float}
 
-	PGAutoVacuumCountM = MetricDef{Key: "pg_autovacuum_count_per_table", Type: IntMap}
-	PGAutoAnalyzeCount = MetricDef{Key: "pg_auto_analyze_count", Type: IntMap}
-	PGNLiveTuples      = MetricDef{Key: "pg_live_tuples", Type: IntMap}
-	PGNDeadTuples      = MetricDef{Key: "pg_dead_tuples", Type: IntMap}
-	PGNModSinceAnalyze = MetricDef{Key: "pg_n_mod_since_analyze", Type: IntMap}
-	PGNInsSinceVacuum  = MetricDef{Key: "pg_n_ins_since_vacuum", Type: IntMap}
-	PGLastAutoVacuum   = MetricDef{Key: "pg_last_autovacuum", Type: TimeMap}
-	PGLastAutoAnalyze  = MetricDef{Key: "pg_last_autoanalyze", Type: TimeMap}
-
 	PGDeadlocks = MetricDef{Key: "pg_deadlocks", Type: Int}
 
-	PGSeqScan     = MetricDef{Key: "pg_seq_scan", Type: IntMap}
-	PGSeqTupRead  = MetricDef{Key: "pg_sec_tup_read", Type: IntMap}
-	PGIdxScan     = MetricDef{Key: "pg_idx_scan", Type: IntMap}
-	PGIdxTupFetch = MetricDef{Key: "pg_idx_tup_fetch", Type: IntMap}
+	PGUserTableStats = MetricDef{Key: "pg_user_table_stats", Type: TableStatsMap}
 
 	// BG writing
 	PGBGWBuffersClean    = MetricDef{Key: "pg_bg_buffers_clean", Type: Int}
