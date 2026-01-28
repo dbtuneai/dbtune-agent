@@ -307,6 +307,11 @@ func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfi
 	}
 
 	if proposedConfig.KnobApplication == "restart" {
+		if !agent.IsRestartAllowed() {
+			return &agent.RestartNotAllowedError{
+				Message: "restart is not allowed in the agent",
+			}
+		}
 		// Restart the service
 		d.Logger().Warn("Restarting service")
 

@@ -276,6 +276,11 @@ func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResp
 	}
 
 	if requiresRestart {
+		if !agent.IsRestartAllowed() {
+			return &agent.RestartNotAllowedError{
+				Message: "restart is not allowed in the agent",
+			}
+		}
 		// Trigger rolling restart for restart-required parameters
 		err = kubernetes.TriggerCNPGRollingRestart(ctx, adapter.K8sClient, clusterName, logger)
 		if err != nil {

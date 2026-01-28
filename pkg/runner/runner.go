@@ -126,9 +126,13 @@ func Runner(adapter agent.AgentLooper) {
 		if proposedConfig != nil {
 			err := adapter.ApplyConfig(proposedConfig)
 			if err != nil {
+				errorType := "config_apply_error"
+				if _, ok := err.(*agent.RestartNotAllowedError); ok {
+					errorType = "restart_not_allowed"
+				}
 				errorPayload := agent.ErrorPayload{
 					ErrorMessage: "Failed to apply configuration: " + err.Error(),
-					ErrorType:    "config_apply_error",
+					ErrorType:    errorType,
 					Timestamp:    time.Now().UTC().Format(time.RFC3339),
 				}
 				adapter.SendError(errorPayload)
