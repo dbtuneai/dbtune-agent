@@ -132,7 +132,7 @@ func (adapter *CNPGAdapter) CheckForFailover(ctx context.Context) error {
 			return &FailoverDetectedError{
 				OldPrimary: lastKnownPrimary,
 				NewPrimary: "(stabilizing)",
-				Message: fmt.Sprintf("cluster healthy but stabilizing, %v remaining", remainingTime.Round(time.Second)),
+				Message:    fmt.Sprintf("cluster healthy but stabilizing, %v remaining", remainingTime.Round(time.Second)),
 			}
 		}
 

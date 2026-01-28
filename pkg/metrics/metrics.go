@@ -228,17 +228,17 @@ var (
 	// The PG stats are fetched from pg_stat_statements (https://www.postgresql.org/docs/current/pgstatstatements.html)
 	// as well as a number of native pg stats views.    (https://www.postgresql.org/docs/current/monitoring-stats.html)
 
-	PGVersion                  = MetricDef{Key: "pg_version", Type: String}
-	PGMaxConnections           = MetricDef{Key: "pg_max_connections", Type: Int}
-	PGRole                     = MetricDef{Key: "pg_role", Type: String}
-	PGStatStatementsDelta      = MetricDef{Key: "pg_stat_statements_delta", Type: PgssDelta}
-	PGStatStatementsDeltaCount = MetricDef{Key: "pg_stat_statements_delta_count", Type: Int}
-	PGActiveConnections        = MetricDef{Key: "pg_active_connections", Type: Int}
-	PGIdleConnections          = MetricDef{Key: "pg_idle_connections", Type: Int}
+	PGVersion                      = MetricDef{Key: "pg_version", Type: String}
+	PGMaxConnections               = MetricDef{Key: "pg_max_connections", Type: Int}
+	PGRole                         = MetricDef{Key: "pg_role", Type: String}
+	PGStatStatementsDelta          = MetricDef{Key: "pg_stat_statements_delta", Type: PgssDelta}
+	PGStatStatementsDeltaCount     = MetricDef{Key: "pg_stat_statements_delta_count", Type: Int}
+	PGActiveConnections            = MetricDef{Key: "pg_active_connections", Type: Int}
+	PGIdleConnections              = MetricDef{Key: "pg_idle_connections", Type: Int}
 	PGIdleInTransactionConnections = MetricDef{Key: "pg_idle_in_transaction_connections", Type: Int}
-	PGInstanceSize             = MetricDef{Key: "pg_instance_size", Type: Bytes}
-	PGAutoVacuumCount          = MetricDef{Key: "pg_autovacuum_count", Type: Int}
-	PGCacheHitRatio            = MetricDef{Key: "pg_cache_hit_ratio", Type: Percentage}
+	PGInstanceSize                 = MetricDef{Key: "pg_instance_size", Type: Bytes}
+	PGAutoVacuumCount              = MetricDef{Key: "pg_autovacuum_count", Type: Int}
+	PGCacheHitRatio                = MetricDef{Key: "pg_cache_hit_ratio", Type: Percentage}
 
 	PGTuplesReturned = MetricDef{Key: "pg_tuples_returned", Type: Int}
 	PGTuplesFetched  = MetricDef{Key: "pg_tuples_fetched", Type: Int}

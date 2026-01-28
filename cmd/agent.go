@@ -11,9 +11,9 @@ import (
 	"github.com/dbtuneai/agent/pkg/azureflex"
 	"github.com/dbtuneai/agent/pkg/checks"
 	"github.com/dbtuneai/agent/pkg/cloudsql"
-	"github.com/dbtuneai/agent/pkg/patroni"
 	"github.com/dbtuneai/agent/pkg/cnpg"
 	"github.com/dbtuneai/agent/pkg/docker"
+	"github.com/dbtuneai/agent/pkg/patroni"
 	"github.com/dbtuneai/agent/pkg/pgprem"
 	"github.com/dbtuneai/agent/pkg/rds"
 	"github.com/dbtuneai/agent/pkg/runner"
@@ -196,7 +196,7 @@ func main() {
 		} else if patroni.DetectConfigFromConfigFile() {
 			log.Println("Patroni configuration detected in config file")
 			adapter, err = patroni.CreatePatroniAdapter()
-		
+
 		} else {
 			// NOTE: This was the previous behavior, which is consistent with our configuration.
 			// All config files have the `postgres:` subheader, which is all the local Postgres
