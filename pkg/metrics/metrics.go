@@ -149,7 +149,7 @@ func FormatMetrics(metrics []FlatValue) FormattedMetrics {
 	return FormattedMetrics{
 		Version:   "2.0",
 		Metrics:   metricsMap,
-		Timestamp: time.Now().Format(time.RFC3339Nano),
+		Timestamp: time.Now().Format(time.RFC3339),
 	}
 }
 
@@ -165,7 +165,7 @@ func FormatSystemInfo(metrics []FlatValue) FormattedSystemInfo {
 
 	return FormattedSystemInfo{
 		SystemInfo: metricsMap,
-		Timestamp:  time.Now().Format(time.RFC3339Nano), // Current timestamp in RFC3339 format
+		Timestamp:  time.Now().Format(time.RFC3339),
 	}
 }
 
