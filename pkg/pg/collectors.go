@@ -2,8 +2,6 @@ package pg
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -551,24 +549,21 @@ func PGStatDatabase(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent
 }
 
 const PGStatUserTablesQuery = `
-SELECT JSON_OBJECT_AGG(
-	CONCAT(relname, '_', relid),
-	JSON_BUILD_OBJECT(
-        'last_autovacuum',last_autovacuum,
-        'last_autoanalyze',last_autoanalyze,
-        'autovacuum_count',autovacuum_count,
-        'autoanalyze_count',autoanalyze_count,
-        'n_live_tup',n_live_tup,
-        'n_dead_tup',n_dead_tup,
-        'n_mod_since_analyze',n_mod_since_analyze,
-        'n_ins_since_vacuum',n_ins_since_vacuum,
-        'seq_scan',seq_scan,
-        'seq_tup_read',seq_tup_read,
-        'idx_scan',idx_scan,
-        'idx_tup_fetch',idx_tup_fetch
-    )
-)
-as stats
+SELECT
+	relname,
+	relid,
+	last_autovacuum,
+	last_autoanalyze,
+	autovacuum_count,
+	autoanalyze_count,
+	n_live_tup,
+	n_dead_tup,
+	n_mod_since_analyze,
+	n_ins_since_vacuum,
+	seq_scan,
+	seq_tup_read,
+	idx_scan,
+	idx_tup_fetch
 FROM pg_stat_user_tables
 `
 
@@ -577,25 +572,63 @@ FROM pg_stat_user_tables
 // and sequential/index scans, providing insights into table activity and performance over time.
 func PGStatUserTables(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-		var jsonResult string
-		err := utils.QueryRowWithPrefix(pgPool, ctx, PGStatUserTablesQuery).Scan(&jsonResult)
+		rows, err := utils.QueryWithPrefix(pgPool, ctx, PGStatUserTablesQuery)
 		if err != nil {
-			if err.Error() == "can't scan into dest[0]: cannot scan NULL into *string" {
-				return errors.New("pg_stat_user_tables returned no data, likely this means there are no user tables in the database")
-			}
 			return err
 		}
 
-		var tableStats map[string]utils.PGUserTables
-		err = json.Unmarshal([]byte(jsonResult), &tableStats)
-		if err != nil {
-			return err
+		tableStats := make(map[string]utils.PGUserTables)
+		for rows.Next() {
+			var relname string
+			var relid uint32
+			var lastAutoVacuum, lastAutoAnalyze *time.Time
+			var autoVacuumCount, autoAnalyzeCount, nLiveTup, nDeadTup int64
+			var nModSinceAnalyze, nInsSinceVacuum, seqScan, seqTupRead int64
+			var idxScan, idxTupFetch int64
+
+			err = rows.Scan(
+				&relname, &relid,
+				&lastAutoVacuum, &lastAutoAnalyze,
+				&autoVacuumCount, &autoAnalyzeCount,
+				&nLiveTup, &nDeadTup,
+				&nModSinceAnalyze, &nInsSinceVacuum,
+				&seqScan, &seqTupRead,
+				&idxScan, &idxTupFetch,
+			)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+
+			tableKey := fmt.Sprintf("%s_%d", relname, relid)
+			stats := utils.PGUserTables{
+				Name:             relname,
+				Relid:            relid,
+				AutoVacuumCount:  autoVacuumCount,
+				AutoAnalyzeCount: autoAnalyzeCount,
+				NLiveTup:         nLiveTup,
+				NDeadTup:         nDeadTup,
+				NModSinceAnalyze: nModSinceAnalyze,
+				NInsSinceVacuum:  nInsSinceVacuum,
+				SeqScan:          seqScan,
+				SeqTupRead:       seqTupRead,
+				IdxScan:          idxScan,
+				IdxTupFetch:      idxTupFetch,
+			}
+			if lastAutoVacuum != nil {
+				stats.LastAutoVacuum = *lastAutoVacuum
+			}
+			if lastAutoAnalyze != nil {
+				stats.LastAutoAnalyze = *lastAutoAnalyze
+			}
+			tableStats[tableKey] = stats
 		}
+		rows.Close()
 
 		// tableStats should now be a mapping from strings ('{name}_{id}') to values
 		// some of those values are cumulative other are not.
 
-		if state.Cache.PGUserTables != nil {
+		if state.Cache.PGUserTables != nil && len(tableStats) > 0 {
 			// Prepare maps for each metric
 			lastAutoVacuumMap := make(map[string]time.Time)
 			lastAutoAnalyzeMap := make(map[string]time.Time)
@@ -829,6 +862,375 @@ func PGStatCheckpointer(pgPool *pgxpool.Pool) func(ctx context.Context, state *a
 			SyncTime:       syncTime,
 			BuffersWritten: BuffersWritten,
 			Timestamp:      time.Now(),
+		}
+
+		return nil
+	}
+}
+
+const PGClassQuery = `
+SELECT
+	relname,
+	oid,
+	age(relfrozenxid) as xid_age,
+	mxid_age(relminmxid) as mxid_age,
+	relallvisible
+FROM pg_class
+WHERE relkind IN ('r', 'p', 't', 'm')
+AND relname NOT LIKE 'pg_%'
+AND relname NOT LIKE 'sql_%'
+`
+
+// PGClass collects statistics from pg_class for vacuum freeze monitoring.
+// It tracks the unfrozen transaction ID age (age(relfrozenxid)), unfrozen multixact ID age (mxid_age(relminmxid)),
+// and the number of all-visible pages (relallvisible) per table.
+func PGClass(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
+		rows, err := utils.QueryWithPrefix(pgPool, ctx, PGClassQuery)
+		if err != nil {
+			return err
+		}
+
+		classStats := make(map[string]utils.PGClass)
+		for rows.Next() {
+			var relname string
+			var oid uint32
+			var xidAge, mxidAge, relallvisible int64
+
+			err = rows.Scan(&relname, &oid, &xidAge, &mxidAge, &relallvisible)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+
+			tableKey := fmt.Sprintf("%s_%d", relname, oid)
+			classStats[tableKey] = utils.PGClass{
+				UnfrozenAge:     xidAge,
+				UnfrozenMXIDAge: mxidAge,
+				RelAllVisible:   relallvisible,
+			}
+		}
+		rows.Close()
+
+		// Always emit current snapshot values (these are not cumulative)
+		unfrozenAgeMap := make(map[string]int64)
+		unfrozenMXIDAgeMap := make(map[string]int64)
+		relAllVisibleMap := make(map[string]int64)
+
+		for tableKey, stats := range classStats {
+			unfrozenAgeMap[tableKey] = stats.UnfrozenAge
+			unfrozenMXIDAgeMap[tableKey] = stats.UnfrozenMXIDAge
+			relAllVisibleMap[tableKey] = stats.RelAllVisible
+		}
+
+		metricsToEmit := []struct {
+			metric metrics.MetricDef
+			value  any
+		}{
+			{metrics.PGUnfrozenAge, unfrozenAgeMap},
+			{metrics.PGUnfrozenMXIDAge, unfrozenMXIDAgeMap},
+			{metrics.PGRelAllVisible, relAllVisibleMap},
+		}
+
+		for _, m := range metricsToEmit {
+			err = EmitMetric(state, m.metric, m.value)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+}
+
+const PGStatProgressVacuumQuery = `
+SELECT
+	pc.relname,
+	spv.relid,
+	CASE phase
+		WHEN 'initializing' THEN 0
+		WHEN 'scanning heap' THEN 1
+		WHEN 'vacuuming indexes' THEN 2
+		WHEN 'vacuuming heap' THEN 3
+		WHEN 'cleaning up indexes' THEN 4
+		WHEN 'truncating heap' THEN 5
+		WHEN 'performing final cleanup' THEN 6
+		ELSE -1
+	END as phase,
+	heap_blks_total,
+	heap_blks_scanned,
+	heap_blks_vacuumed,
+	index_vacuum_count
+FROM pg_stat_progress_vacuum spv
+JOIN pg_class pc ON spv.relid = pc.oid
+WHERE spv.datname = current_database()
+`
+
+// PGStatProgressVacuum collects real-time vacuum progress statistics from pg_stat_progress_vacuum.
+// It tracks heap blocks processed, index vacuum operations, and dead tuple counts for tables currently being vacuumed.
+// Note: This collector only returns data for tables that are actively being vacuumed at the time of collection.
+//
+// Phase mapping:
+// 0 = initializing
+// 1 = scanning heap
+// 2 = vacuuming indexes
+// 3 = vacuuming heap
+// 4 = cleaning up indexes
+// 5 = truncating heap
+// 6 = performing final cleanup
+// -1 = unknown phase
+func PGStatProgressVacuum(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
+		rows, err := utils.QueryWithPrefix(pgPool, ctx, PGStatProgressVacuumQuery)
+		if err != nil {
+			return err
+		}
+
+		vacuumStats := make(map[string]utils.PGStatProgressVacuum)
+		for rows.Next() {
+			var relname string
+			var relid uint32
+			var phase, heapBlksTotal, heapBlksScanned, heapBlksVacuumed, indexVacuumCount int64
+
+			err = rows.Scan(&relname, &relid, &phase, &heapBlksTotal, &heapBlksScanned, &heapBlksVacuumed, &indexVacuumCount)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+
+			tableKey := fmt.Sprintf("%s_%d", relname, relid)
+			vacuumStats[tableKey] = utils.PGStatProgressVacuum{
+				Phase:            phase,
+				HeapBlksTotal:    heapBlksTotal,
+				HeapBlksScanned:  heapBlksScanned,
+				HeapBlksVacuumed: heapBlksVacuumed,
+				IndexVacuumCount: indexVacuumCount,
+			}
+		}
+		rows.Close()
+
+		// If no vacuums are running, don't emit any metrics
+		if len(vacuumStats) == 0 {
+			return nil
+		}
+
+		// Emit current snapshot values (these represent active vacuums)
+		phaseMap := make(map[string]int64)
+		heapBlksTotalMap := make(map[string]int64)
+		heapBlksScannedMap := make(map[string]int64)
+		heapBlksVacuumedMap := make(map[string]int64)
+		indexVacuumCountMap := make(map[string]int64)
+
+		for tableKey, stats := range vacuumStats {
+			phaseMap[tableKey] = stats.Phase
+			heapBlksTotalMap[tableKey] = stats.HeapBlksTotal
+			heapBlksScannedMap[tableKey] = stats.HeapBlksScanned
+			heapBlksVacuumedMap[tableKey] = stats.HeapBlksVacuumed
+			indexVacuumCountMap[tableKey] = stats.IndexVacuumCount
+		}
+
+		metricsToEmit := []struct {
+			metric metrics.MetricDef
+			value  any
+		}{
+			{metrics.PGVacuumPhase, phaseMap},
+			{metrics.PGVacuumHeapBlksTotal, heapBlksTotalMap},
+			{metrics.PGVacuumHeapBlksScanned, heapBlksScannedMap},
+			{metrics.PGVacuumHeapBlksVacuumed, heapBlksVacuumedMap},
+			{metrics.PGVacuumIndexVacuumCount, indexVacuumCountMap},
+		}
+
+		for _, m := range metricsToEmit {
+			err = EmitMetric(state, m.metric, m.value)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+}
+
+const PGOldestTransactionQuery = `
+SELECT pid, datname, usename, state, backend_xmin, age(backend_xmin) as xmin_age
+FROM pg_stat_activity
+WHERE backend_xmin IS NOT NULL
+  AND age(backend_xmin) > 100000000
+ORDER BY age(backend_xmin) DESC
+LIMIT 5
+`
+
+const PGOldestIdleTransactionQuery = `
+SELECT pid, datname, usename, backend_xmin, age(backend_xmin) as xmin_age
+FROM pg_stat_activity
+WHERE backend_xmin IS NOT NULL
+  AND state = 'idle in transaction'
+  AND age(backend_xmin) > 15000000
+ORDER BY age(backend_xmin) DESC
+LIMIT 5
+`
+
+const PGPreparedTransactionsQuery = `
+SELECT gid, database, age(transaction) as xact_age
+FROM pg_prepared_xacts
+WHERE age(transaction) > 10000000
+ORDER BY age(transaction) DESC
+LIMIT 5
+`
+
+const PGReplicationSlotsQuery = `
+SELECT slot_name, slot_type, database, xmin, age(xmin) as xmin_age
+FROM pg_replication_slots
+WHERE xmin IS NOT NULL
+ORDER BY age(xmin) DESC
+LIMIT 5
+`
+
+const PGInactiveReplicationSlotsQuery = `
+SELECT slot_name, slot_type, database, age(xmin) as xmin_age
+FROM pg_replication_slots
+WHERE active = false
+  AND xmin IS NOT NULL
+ORDER BY age(xmin) DESC
+LIMIT 5
+`
+
+// PGOldTransactions collects information about old transactions and replication slots that may be holding back vacuum.
+// It tracks:
+// 1. Top 5 oldest queries with backend_xmin age > 100M
+// 2. Top 5 idle in transaction sessions with backend_xmin age > 15M
+// 3. Uncommitted prepared transactions
+// 4. Replication slots ordered by xmin age
+// 5. Inactive replication slots
+func PGOldTransactions(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
+		// 1. Top 5 oldest queries with backend_xmin age > 100M
+		oldestTransactionMap := make(map[string]int64)
+		rows, err := utils.QueryWithPrefix(pgPool, ctx, PGOldestTransactionQuery)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var pid int
+			var datname, usename, state string
+			var backendXmin *int64
+			var xminAge int64
+			err = rows.Scan(&pid, &datname, &usename, &state, &backendXmin, &xminAge)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			key := fmt.Sprintf("pid_%d_%s_%s", pid, datname, usename)
+			oldestTransactionMap[key] = xminAge
+		}
+		rows.Close()
+
+		// 2. Top 5 idle in transaction with backend_xmin age > 15M
+		oldestIdleTransactionMap := make(map[string]int64)
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, PGOldestIdleTransactionQuery)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var pid int
+			var datname, usename string
+			var backendXmin *int64
+			var xminAge int64
+			err = rows.Scan(&pid, &datname, &usename, &backendXmin, &xminAge)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			key := fmt.Sprintf("pid_%d_%s_%s", pid, datname, usename)
+			oldestIdleTransactionMap[key] = xminAge
+		}
+		rows.Close()
+
+		// 3. Uncommitted prepared transactions
+		preparedTransactionsMap := make(map[string]int64)
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, PGPreparedTransactionsQuery)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var gid, database string
+			var xactAge int64
+			err = rows.Scan(&gid, &database, &xactAge)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			key := fmt.Sprintf("%s_%s", gid, database)
+			preparedTransactionsMap[key] = xactAge
+		}
+		rows.Close()
+
+		// 4. Replication slots ordered by xmin age
+		replicationSlotsMap := make(map[string]int64)
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, PGReplicationSlotsQuery)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var slotName, slotType string
+			var database *string
+			var xmin *int64
+			var xminAge int64
+			err = rows.Scan(&slotName, &slotType, &database, &xmin, &xminAge)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			dbName := "null"
+			if database != nil {
+				dbName = *database
+			}
+			key := fmt.Sprintf("%s_%s_%s", slotName, slotType, dbName)
+			replicationSlotsMap[key] = xminAge
+		}
+		rows.Close()
+
+		// 5. Inactive replication slots (active = false)
+		inactiveReplicationSlotsMap := make(map[string]int64)
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, PGInactiveReplicationSlotsQuery)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var slotName, slotType string
+			var database *string
+			var xminAge int64
+			err = rows.Scan(&slotName, &slotType, &database, &xminAge)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			dbName := "null"
+			if database != nil {
+				dbName = *database
+			}
+			key := fmt.Sprintf("%s_%s_%s", slotName, slotType, dbName)
+			inactiveReplicationSlotsMap[key] = xminAge
+		}
+		rows.Close()
+
+		// Emit all metrics
+		metricsToEmit := []struct {
+			metric metrics.MetricDef
+			value  any
+		}{
+			{metrics.PGOldestTransactionAge, oldestTransactionMap},
+			{metrics.PGOldestIdleTransactionAge, oldestIdleTransactionMap},
+			{metrics.PGPreparedTransactionAge, preparedTransactionsMap},
+			{metrics.PGOldestReplicationSlotAge, replicationSlotsMap},
+			{metrics.PGOldestInactiveReplicationSlotAge, inactiveReplicationSlotsMap},
+		}
+
+		for _, m := range metricsToEmit {
+			err = EmitMetric(state, m.metric, m.value)
+			if err != nil {
+				return err
+			}
 		}
 
 		return nil
