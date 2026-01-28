@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -595,28 +594,7 @@ func PGStatUserTables(pgPool *pgxpool.Pool) func(ctx context.Context, state *age
 			return err
 		}
 
-		if len(tableStats) > PGStatUserTablesLimit {
-			type tableEntry struct {
-				key   string
-				stats utils.PGUserTables
-			}
-			entries := make([]tableEntry, 0, len(tableStats))
-			for k, v := range tableStats {
-				entries = append(entries, tableEntry{key: k, stats: v})
-			}
-			sort.Slice(entries, func(i, j int) bool {
-				totalI := entries[i].stats.NLiveTup + entries[i].stats.NDeadTup
-				totalJ := entries[j].stats.NLiveTup + entries[j].stats.NDeadTup
-				if totalI != totalJ {
-					return totalI > totalJ
-				}
-				return entries[i].key < entries[j].key
-			})
-			tableStats = make(map[string]utils.PGUserTables, PGStatUserTablesLimit)
-			for i := range PGStatUserTablesLimit {
-				tableStats[entries[i].key] = entries[i].stats
-			}
-		}
+		tableStats = utils.FilterTopTables(tableStats, PGStatUserTablesLimit)
 
 		// tableStats should now be a mapping from strings ('{name}_{id}') to values
 		// some of those values are cumulative other are not.

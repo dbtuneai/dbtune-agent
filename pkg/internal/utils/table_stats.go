@@ -1,6 +1,9 @@
 package utils
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 type PGUserTables struct {
 	Name             string    `json:"name"`
@@ -33,4 +36,36 @@ type PGUserTableMetrics struct {
 	SeqTupRead       int64      `json:"seq_tup_read"`
 	IdxScan          int64      `json:"idx_scan"`
 	IdxTupFetch      int64      `json:"idx_tup_fetch"`
+}
+
+// FilterTopTables filters a map of table stats to keep only the top N tables
+// sorted by total tuples (NLiveTup + NDeadTup) in descending order.
+// If there are fewer tables than the limit, the original map is returned unchanged.
+func FilterTopTables(tableStats map[string]PGUserTables, limit int) map[string]PGUserTables {
+	if len(tableStats) <= limit {
+		return tableStats
+	}
+
+	type tableEntry struct {
+		key   string
+		stats PGUserTables
+	}
+	entries := make([]tableEntry, 0, len(tableStats))
+	for k, v := range tableStats {
+		entries = append(entries, tableEntry{key: k, stats: v})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		totalI := entries[i].stats.NLiveTup + entries[i].stats.NDeadTup
+		totalJ := entries[j].stats.NLiveTup + entries[j].stats.NDeadTup
+		if totalI != totalJ {
+			return totalI > totalJ
+		}
+		return entries[i].key < entries[j].key
+	})
+
+	result := make(map[string]PGUserTables, limit)
+	for i := range limit {
+		result[entries[i].key] = entries[i].stats
+	}
+	return result
 }
