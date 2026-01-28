@@ -1032,4 +1032,3 @@ func (pc *PodClient) IsPodReady(ctx context.Context) (bool, error) {
 
 	return false, nil
 }
-

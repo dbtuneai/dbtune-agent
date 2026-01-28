@@ -139,7 +139,7 @@ func PGStatStatements(pgPool *pgxpool.Pool, includeQueries bool, maxQueryTextLen
 			// These we use for calculations
 			fieldValuesHasNull := (calls == nil || totalExecTime == nil || rowCount == nil)
 
-			if (identifiersHasNull || fieldValuesHasNull ){
+			if identifiersHasNull || fieldValuesHasNull {
 				continue
 			}
 
@@ -219,33 +219,33 @@ FROM pg_stat_activity
 `
 
 func Connections(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
-    return func(ctx context.Context, state *agent.MetricsState) error {
-        var active, idle, idleInTransaction int
-        err := utils.QueryRowWithPrefix(pgPool, ctx, ConnectionStatsQuery).Scan(&active, &idle, &idleInTransaction)
-        if err != nil {
-            return err
-        }
+	return func(ctx context.Context, state *agent.MetricsState) error {
+		var active, idle, idleInTransaction int
+		err := utils.QueryRowWithPrefix(pgPool, ctx, ConnectionStatsQuery).Scan(&active, &idle, &idleInTransaction)
+		if err != nil {
+			return err
+		}
 
-        activeEntry, err := metrics.PGActiveConnections.AsFlatValue(active)
-        if err != nil {
-            return err
-        }
-        state.AddMetric(activeEntry)
+		activeEntry, err := metrics.PGActiveConnections.AsFlatValue(active)
+		if err != nil {
+			return err
+		}
+		state.AddMetric(activeEntry)
 
-        idleEntry, err := metrics.PGIdleConnections.AsFlatValue(idle)
-        if err != nil {
-            return err
-        }
-        state.AddMetric(idleEntry)
+		idleEntry, err := metrics.PGIdleConnections.AsFlatValue(idle)
+		if err != nil {
+			return err
+		}
+		state.AddMetric(idleEntry)
 
-        idleInTransactionEntry, err := metrics.PGIdleInTransactionConnections.AsFlatValue(idleInTransaction)
-        if err != nil {
-            return err
-        }
-        state.AddMetric(idleInTransactionEntry)
+		idleInTransactionEntry, err := metrics.PGIdleInTransactionConnections.AsFlatValue(idleInTransaction)
+		if err != nil {
+			return err
+		}
+		state.AddMetric(idleInTransactionEntry)
 
-        return nil
-    }
+		return nil
+	}
 }
 
 const TransactionsPerSecondQuery = `

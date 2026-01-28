@@ -52,4 +52,3 @@ func HardwareInfoPatroni() func(ctx context.Context, state *agent.MetricsState) 
 		return nil
 	}
 }
-

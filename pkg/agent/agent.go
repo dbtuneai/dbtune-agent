@@ -28,7 +28,7 @@ import (
 
 // Package-level agent ID, generated once and shared across all CommonAgent instances
 var (
-	agentIDOnce sync.Once
+	agentIDOnce   sync.Once
 	sharedAgentID string
 )
 
