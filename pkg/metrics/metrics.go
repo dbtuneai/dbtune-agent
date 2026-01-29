@@ -143,7 +143,11 @@ func FormatMetrics(metrics []FlatValue) FormattedMetrics {
 	metricsMap := make(map[string]interface{})
 
 	for _, metric := range metrics {
-		metricsMap[metric.Key] = metric.Value
+		value := metric.Value
+		if f, ok := value.(float64); ok {
+			value = truncateFloat(f)
+		}
+		metricsMap[metric.Key] = value
 	}
 
 	return FormattedMetrics{
@@ -157,9 +161,13 @@ func FormatSystemInfo(metrics []FlatValue) FormattedSystemInfo {
 	metricsMap := make(map[string]MetricData)
 
 	for _, metric := range metrics {
+		value := metric.Value
+		if f, ok := value.(float64); ok {
+			value = truncateFloat(f)
+		}
 		metricsMap[metric.Key] = MetricData{
 			Type:  string(metric.Type), // Assuming MetricType is a string type, adjust if necessary
-			Value: metric.Value,
+			Value: value,
 		}
 	}
 
@@ -174,6 +182,10 @@ func TryUint64ToInt64(value uint64) (int64, error) {
 		return 0, fmt.Errorf("value is too large to convert to int64")
 	}
 	return int64(value), nil
+}
+
+func truncateFloat(value float64) float64 {
+	return math.Round(value*1000) / 1000
 }
 
 type MetricDef struct {
