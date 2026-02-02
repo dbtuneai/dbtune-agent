@@ -1,7 +1,9 @@
 package utils
 
 import (
-	"sort"
+	"cmp"
+	"maps"
+	"slices"
 	"time"
 )
 
@@ -46,26 +48,19 @@ func FilterTopTables(tableStats map[string]PGUserTables, limit int) map[string]P
 		return tableStats
 	}
 
-	type tableEntry struct {
-		key   string
-		stats PGUserTables
-	}
-	entries := make([]tableEntry, 0, len(tableStats))
-	for k, v := range tableStats {
-		entries = append(entries, tableEntry{key: k, stats: v})
-	}
-	sort.Slice(entries, func(i, j int) bool {
-		totalI := entries[i].stats.NLiveTup + entries[i].stats.NDeadTup
-		totalJ := entries[j].stats.NLiveTup + entries[j].stats.NDeadTup
-		if totalI != totalJ {
-			return totalI > totalJ
-		}
-		return entries[i].key < entries[j].key
+	keys := slices.Collect(maps.Keys(tableStats))
+	slices.SortFunc(keys, func(a, b string) int {
+		totalA := tableStats[a].NLiveTup + tableStats[a].NDeadTup
+		totalB := tableStats[b].NLiveTup + tableStats[b].NDeadTup
+		return cmp.Or(
+			cmp.Compare(totalB, totalA), // descending by total tuples
+			cmp.Compare(a, b),           // ascending by key (tie-breaker)
+		)
 	})
 
 	result := make(map[string]PGUserTables, limit)
-	for i := range limit {
-		result[entries[i].key] = entries[i].stats
+	for _, k := range keys[:limit] {
+		result[k] = tableStats[k]
 	}
 	return result
 }
