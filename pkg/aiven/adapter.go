@@ -613,3 +613,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 
 	return configRows, nil
 }
+
+func (adapter *AivenPostgreSQLAdapter) GetSchemaSnapshot() (*agent.SchemaSnapshot, error) {
+	return pg.CollectSchemaSnapshot(adapter.PGDriver, adapter.pgConfig.AllowDDLCollection, adapter.Logger())
+}

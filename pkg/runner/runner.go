@@ -51,6 +51,7 @@ func Runner(adapter agent.AgentLooper) {
 	configTicker := time.NewTicker(5 * time.Second)
 	heartbeatTicker := time.NewTicker(15 * time.Second)
 	guardrailTicker := time.NewTicker(1 * time.Second)
+	schemaSnapshotTicker := time.NewTicker(1 * time.Minute)
 
 	// Create a context that we can cancel
 	ctx, cancel := context.WithCancel(context.Background())
@@ -174,6 +175,25 @@ func Runner(adapter agent.AgentLooper) {
 			lastCheck = &now
 		}
 		return nil
+	})
+
+	// Schema snapshot goroutine
+	go runWithTicker(ctx, schemaSnapshotTicker, "schema snapshot", logger, false, func() error {
+		snapshot, err := adapter.GetSchemaSnapshot()
+		if err != nil {
+			if isRecoveryError(err) {
+				logger.Debugf("Skipping schema snapshot during recovery: %v", err)
+				return nil
+			}
+			errorPayload := agent.ErrorPayload{
+				ErrorMessage: "Failed to collect schema snapshot: " + err.Error(),
+				ErrorType:    "schema_snapshot_error",
+				Timestamp:    time.Now().UTC().Format(time.RFC3339),
+			}
+			adapter.SendError(errorPayload)
+			return err
+		}
+		return adapter.SendSchemaSnapshot(snapshot)
 	})
 
 	// Block forever

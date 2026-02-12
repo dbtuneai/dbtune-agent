@@ -91,6 +91,19 @@ func (m *MockAgentLooper) SendError(payload agent.ErrorPayload) error {
 	return args.Error(0)
 }
 
+func (m *MockAgentLooper) GetSchemaSnapshot() (*agent.SchemaSnapshot, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*agent.SchemaSnapshot), args.Error(1)
+}
+
+func (m *MockAgentLooper) SendSchemaSnapshot(snapshot *agent.SchemaSnapshot) error {
+	args := m.Called(snapshot)
+	return args.Error(0)
+}
+
 // Test runWithTicker function
 func TestRunWithTicker(t *testing.T) {
 	logger := logrus.New()
@@ -170,6 +183,8 @@ func TestRunner(t *testing.T) {
 	mockAgent.On("SendActiveConfig", mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig").Return(nil, nil)
 	mockAgent.On("Guardrails").Return(nil)
+	mockAgent.On("GetSchemaSnapshot").Return(&agent.SchemaSnapshot{}, nil)
+	mockAgent.On("SendSchemaSnapshot", mock.Anything).Return(nil)
 
 	// Run the Runner in a goroutine with a timeout
 	done := make(chan bool)
@@ -199,6 +214,7 @@ func TestRunnerWithErrors(t *testing.T) {
 	mockAgent.On("SendError", mock.AnythingOfType("agent.ErrorPayload")).Return(nil)
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, errors.New("config error"))
 	mockAgent.On("Guardrails").Return(nil)
+	mockAgent.On("GetSchemaSnapshot").Return(nil, errors.New("schema snapshot error"))
 
 	// Run the Runner in a goroutine with a timeout
 	done := make(chan bool)
@@ -233,6 +249,8 @@ func TestRunnerWhenGetProposedConfigReturnsAConfigThenApplyConfigShouldBeCalled(
 	mockAgent.On("SendActiveConfig", mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig").Return(mockRecommendation, nil)
 	mockAgent.On("ApplyConfig", mockRecommendation).Return(nil)
+	mockAgent.On("GetSchemaSnapshot").Return(&agent.SchemaSnapshot{}, nil)
+	mockAgent.On("SendSchemaSnapshot", mock.Anything).Return(nil)
 
 	// Run the Runner in a goroutine with a timeout
 	done := make(chan bool)
@@ -264,6 +282,8 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig").Return(nil, nil)
+	mockAgent.On("GetSchemaSnapshot").Return(&agent.SchemaSnapshot{}, nil)
+	mockAgent.On("SendSchemaSnapshot", mock.Anything).Return(nil)
 
 	// Run the Runner in a goroutine with a timeout
 	done := make(chan bool)

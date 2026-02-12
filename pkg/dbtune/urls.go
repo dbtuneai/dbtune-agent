@@ -85,3 +85,8 @@ func (s ServerURLs) PostGuardrailSignal() string {
 func (s ServerURLs) PostError() string {
 	return fmt.Sprintf("%s/api/v1/agent/log-entries?uuid=%s", s.ServerUrl, s.DbID)
 }
+
+// PostSchemaSnapshot generates the URL for posting schema snapshots.
+func (s ServerURLs) PostSchemaSnapshot() string {
+	return fmt.Sprintf("%s/api/v1/agent/schema-snapshot?uuid=%s", s.ServerUrl, s.DbID)
+}

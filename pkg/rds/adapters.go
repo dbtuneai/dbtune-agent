@@ -336,6 +336,10 @@ func (adapter *RDSAdapter) Guardrails() *guardrails.Signal {
 	return nil
 }
 
+func (adapter *RDSAdapter) GetSchemaSnapshot() (*agent.SchemaSnapshot, error) {
+	return pg.CollectSchemaSnapshot(adapter.PGDriver, adapter.pgConfig.AllowDDLCollection, adapter.Logger())
+}
+
 // NOTE: For now, Aurora doesn't deviate from RDS in any functional way via API or how we
 // query things. If it were to change, we can expand upon this.
 type AuroraRDSAdapter struct {

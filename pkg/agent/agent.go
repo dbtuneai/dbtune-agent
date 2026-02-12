@@ -168,6 +168,11 @@ type AgentLooper interface {
 	// SendError sends an error report to the DBtune server
 	SendError(payload ErrorPayload) error
 
+	// GetSchemaSnapshot collects the database schema snapshot (DDL)
+	GetSchemaSnapshot() (*SchemaSnapshot, error)
+	// SendSchemaSnapshot sends the schema snapshot to the DBtune server
+	SendSchemaSnapshot(snapshot *SchemaSnapshot) error
+
 	// GetLogger returns the logger for the agent
 	Logger() *log.Logger
 }
@@ -545,6 +550,29 @@ func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
 		body, _ := io.ReadAll(resp.Body)
 		a.Logger().Warnf("Failed to send metrics. Response body: %s", string(body))
 		return fmt.Errorf("failed to send metrics, code: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (a *CommonAgent) SendSchemaSnapshot(snapshot *SchemaSnapshot) error {
+	a.Logger().Println("Sending schema snapshot to server")
+
+	jsonData, err := json.Marshal(snapshot)
+	if err != nil {
+		return err
+	}
+
+	resp, err := a.APIClient.Post(a.ServerURLs.PostSchemaSnapshot(), "application/json", jsonData)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 && resp.StatusCode != 204 {
+		body, _ := io.ReadAll(resp.Body)
+		a.Logger().Warnf("Failed to send schema snapshot. Response body: %s", string(body))
+		return fmt.Errorf("failed to send schema snapshot, code: %d", resp.StatusCode)
 	}
 
 	return nil

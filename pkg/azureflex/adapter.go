@@ -283,6 +283,10 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return systemInfo, nil
 }
 
+func (adapter *AzureFlexAdapter) GetSchemaSnapshot() (*agent.SchemaSnapshot, error) {
+	return pg.CollectSchemaSnapshot(adapter.PGDriver, adapter.pgConfig.AllowDDLCollection, adapter.Logger())
+}
+
 func (adapter *AzureFlexAdapter) Guardrails() *guardrails.Signal {
 	memoryUsagePercent, err := MemoryPercent(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName)()
 	if err != nil {

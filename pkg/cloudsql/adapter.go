@@ -309,3 +309,7 @@ func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
 	}
 	return collectors
 }
+
+func (adapter *CloudSQLAdapter) GetSchemaSnapshot() (*agent.SchemaSnapshot, error) {
+	return pg.CollectSchemaSnapshot(adapter.PGDriver, adapter.pgConfig.AllowDDLCollection, adapter.Logger())
+}
