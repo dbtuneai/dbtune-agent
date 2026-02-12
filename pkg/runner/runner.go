@@ -51,7 +51,7 @@ func Runner(adapter agent.AgentLooper) {
 	configTicker := time.NewTicker(5 * time.Second)
 	heartbeatTicker := time.NewTicker(15 * time.Second)
 	guardrailTicker := time.NewTicker(1 * time.Second)
-	schemaSnapshotTicker := time.NewTicker(1 * time.Minute)
+	schemaSnapshotTicker := time.NewTicker(5 * time.Minute)
 
 	// Create a context that we can cancel
 	ctx, cancel := context.WithCancel(context.Background())

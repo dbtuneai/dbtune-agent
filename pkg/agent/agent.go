@@ -334,6 +334,8 @@ type CommonAgent struct {
 	IndividualTimeout time.Duration // Timeout for each individual collector
 	// Version information
 	Version string
+	// Cached schema hash to skip heavy DDL queries when schema hasn't changed
+	LastSchemaHash string
 }
 
 func CreateCommonAgent() *CommonAgent {

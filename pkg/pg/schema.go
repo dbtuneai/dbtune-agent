@@ -3,7 +3,6 @@ package pg
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
@@ -72,14 +71,14 @@ LIMIT $1;
 
 // CollectSchemaSnapshot gathers the database schema snapshot.
 // It always collects the schema hash and counts.
-// If allowDDLCollection is true, it also collects table columns and index definitions.
-func CollectSchemaSnapshot(pool *pgxpool.Pool, allowDDLCollection bool, logger *logrus.Logger) (*agent.SchemaSnapshot, error) {
+// If allowDDLCollection is true, it also collects table columns and index definitions,
+// but only when the schema hash has changed compared to lastSchemaHash.
+func CollectSchemaSnapshot(pool *pgxpool.Pool, allowDDLCollection bool, lastSchemaHash string, logger *logrus.Logger) (*agent.SchemaSnapshot, error) {
 	ctx := context.Background()
-	snapshot := &agent.SchemaSnapshot{
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-	}
+	snapshot := &agent.SchemaSnapshot{}
 
 	// Always collect hash
+	logger.Info("Fetching schema hash")
 	var schemaHash *string
 	err := utils.QueryRowWithPrefix(pool, ctx, schemaHashQuery).Scan(&schemaHash)
 	if err != nil {
@@ -99,8 +98,13 @@ func CollectSchemaSnapshot(pool *pgxpool.Pool, allowDDLCollection bool, logger *
 		return nil, fmt.Errorf("schema counts query failed: %w", err)
 	}
 
-	// Conditionally collect DDL details
-	if allowDDLCollection {
+	// Conditionally collect DDL details only when schema has changed
+	if allowDDLCollection && snapshot.SchemaHash != lastSchemaHash {
+		if lastSchemaHash != "" {
+			logger.Infof("Schema hash changed (%s -> %s), collecting DDL details", lastSchemaHash, snapshot.SchemaHash)
+		} else {
+			logger.Infof("Collecting initial DDL details")
+		}
 		// Collect table columns
 		rows, err := utils.QueryWithPrefix(pool, ctx, schemaTablesQuery, agent.MaxDDLTableColumns)
 		if err != nil {

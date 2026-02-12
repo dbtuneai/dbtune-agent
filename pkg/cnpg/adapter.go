@@ -546,7 +546,12 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 
 func (adapter *CNPGAdapter) GetSchemaSnapshot() (*agent.SchemaSnapshot, error) {
 	pgConfig, _ := pg.ConfigFromViper(nil)
-	return pg.CollectSchemaSnapshot(adapter.PGDriver, pgConfig.AllowDDLCollection, adapter.Logger())
+	snapshot, err := pg.CollectSchemaSnapshot(adapter.PGDriver, pgConfig.AllowDDLCollection, adapter.LastSchemaHash, adapter.Logger())
+	if err != nil {
+		return nil, err
+	}
+	adapter.LastSchemaHash = snapshot.SchemaHash
+	return snapshot, nil
 }
 
 func (adapter *CNPGAdapter) Guardrails() *guardrails.Signal {

@@ -24,5 +24,4 @@ type SchemaSnapshot struct {
 	ConstraintCount int            `json:"constraint_count"`
 	Tables          []SchemaColumn `json:"tables,omitempty"`
 	Indexes         []SchemaIndex  `json:"indexes,omitempty"`
-	Timestamp       string         `json:"timestamp"`
 }

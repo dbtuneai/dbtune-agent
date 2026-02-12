@@ -311,5 +311,10 @@ func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
 }
 
 func (adapter *CloudSQLAdapter) GetSchemaSnapshot() (*agent.SchemaSnapshot, error) {
-	return pg.CollectSchemaSnapshot(adapter.PGDriver, adapter.pgConfig.AllowDDLCollection, adapter.Logger())
+	snapshot, err := pg.CollectSchemaSnapshot(adapter.PGDriver, adapter.pgConfig.AllowDDLCollection, adapter.LastSchemaHash, adapter.Logger())
+	if err != nil {
+		return nil, err
+	}
+	adapter.LastSchemaHash = snapshot.SchemaHash
+	return snapshot, nil
 }

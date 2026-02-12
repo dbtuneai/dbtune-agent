@@ -261,7 +261,12 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 // 2. Fetches current memory usage
 // 3. If memory usage is greater than 90% of total memory, triggers a critical guardrail
 func (adapter *DefaultPostgreSQLAdapter) GetSchemaSnapshot() (*agent.SchemaSnapshot, error) {
-	return pg.CollectSchemaSnapshot(adapter.pgDriver, adapter.pgConfig.AllowDDLCollection, adapter.Logger())
+	snapshot, err := pg.CollectSchemaSnapshot(adapter.pgDriver, adapter.pgConfig.AllowDDLCollection, adapter.LastSchemaHash, adapter.Logger())
+	if err != nil {
+		return nil, err
+	}
+	adapter.LastSchemaHash = snapshot.SchemaHash
+	return snapshot, nil
 }
 
 func (adapter *DefaultPostgreSQLAdapter) Guardrails() *guardrails.Signal {

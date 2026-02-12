@@ -284,7 +284,12 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 }
 
 func (adapter *AzureFlexAdapter) GetSchemaSnapshot() (*agent.SchemaSnapshot, error) {
-	return pg.CollectSchemaSnapshot(adapter.PGDriver, adapter.pgConfig.AllowDDLCollection, adapter.Logger())
+	snapshot, err := pg.CollectSchemaSnapshot(adapter.PGDriver, adapter.pgConfig.AllowDDLCollection, adapter.LastSchemaHash, adapter.Logger())
+	if err != nil {
+		return nil, err
+	}
+	adapter.LastSchemaHash = snapshot.SchemaHash
+	return snapshot, nil
 }
 
 func (adapter *AzureFlexAdapter) Guardrails() *guardrails.Signal {
