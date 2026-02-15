@@ -20,6 +20,33 @@ builds:
       - goos: darwin
         goarch: amd64
 
+dockers_v2:
+  - images:
+      - "public.ecr.aws/dbtune/dbtune/agent"
+    tags:
+      - "{{ .Version }}"
+      - "latest"
+    dockerfile: Dockerfile
+    extra_files:
+      - go.mod
+      - go.sum
+      - cmd/
+      - pkg/
+    flags:
+      - "--pull"
+    labels:
+      "org.opencontainers.image.created": "{{.Date}}"
+      "org.opencontainers.image.title": "dbtune-agent"
+      "org.opencontainers.image.revision": "{{.FullCommit}}"
+      "org.opencontainers.image.version": "{{.Version}}"
+    build_args:
+      VERSION: "{{ .Version }}"
+      COMMIT: "{{ .Commit }}"
+      DATE: "{{ .Date }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+
 archives:
   - formats: [tar.gz]
     name_template: >-
