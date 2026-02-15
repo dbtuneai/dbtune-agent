@@ -45,7 +45,6 @@ dockers_v2:
       DATE: "{{ .Date }}"
     platforms:
       - linux/amd64
-      - linux/arm64
 
 archives:
   - formats: [tar.gz]
