@@ -195,6 +195,9 @@ func truncateFloat(value float64) float64 {
 	return math.Round(value*1000) / 1000
 }
 
+// HashJSON computes a SHA256 hash of the JSON-serialized value.
+// Go's encoding/json sorts map keys lexicographically, so the output
+// is deterministic for maps with string keys and deterministic values.
 func HashJSON(v interface{}) (string, error) {
 	data, err := json.Marshal(v)
 	if err != nil {

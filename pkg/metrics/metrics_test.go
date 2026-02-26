@@ -94,6 +94,39 @@ func TestFormatMetrics_TruncatesFloats(t *testing.T) {
 	}
 }
 
+func TestHashJSON(t *testing.T) {
+	t.Run("deterministic for same input", func(t *testing.T) {
+		input := map[string]MetricData{
+			"cpu": {Type: "float", Value: 0.5},
+			"mem": {Type: "int", Value: 1024},
+		}
+		hash1, err1 := HashJSON(input)
+		hash2, err2 := HashJSON(input)
+		if err1 != nil || err2 != nil {
+			t.Fatalf("unexpected error: %v, %v", err1, err2)
+		}
+		if hash1 != hash2 {
+			t.Errorf("same input produced different hashes: %s vs %s", hash1, hash2)
+		}
+	})
+
+	t.Run("different input produces different hash", func(t *testing.T) {
+		hash1, _ := HashJSON(map[string]int{"a": 1})
+		hash2, _ := HashJSON(map[string]int{"a": 2})
+		if hash1 == hash2 {
+			t.Error("different inputs produced the same hash")
+		}
+	})
+
+	t.Run("returns error on unmarshalable input", func(t *testing.T) {
+		ch := make(chan int)
+		_, err := HashJSON(ch)
+		if err == nil {
+			t.Error("expected error for unmarshalable input")
+		}
+	})
+}
+
 func TestFormatSystemInfo_TruncatesFloats(t *testing.T) {
 	metrics := []FlatValue{
 		{Key: "float_metric", Value: 99.99999, Type: Float},
@@ -131,5 +164,14 @@ func TestFormatSystemInfo_TruncatesFloats(t *testing.T) {
 	}
 	if intVal != 100 {
 		t.Errorf("int_metric = %v, expected 100", intVal)
+	}
+
+	// Check hash is present and deterministic
+	if result.Hash == "" {
+		t.Error("expected non-empty hash")
+	}
+	result2 := FormatSystemInfo(metrics)
+	if result.Hash != result2.Hash {
+		t.Errorf("same input produced different hashes: %s vs %s", result.Hash, result2.Hash)
 	}
 }
