@@ -774,6 +774,15 @@ func (adapter *PatroniAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return systemInfo, nil
 }
 
+func (adapter *PatroniAdapter) GetSchemaSnapshot() (*agent.SchemaSnapshot, error) {
+	snapshot, err := pg.CollectSchemaSnapshot(adapter.PGDriver, adapter.pgConfig.AllowDDLCollection, adapter.LastSchemaHash, adapter.Logger())
+	if err != nil {
+		return nil, err
+	}
+	adapter.LastSchemaHash = snapshot.SchemaHash
+	return snapshot, nil
+}
+
 func (adapter *PatroniAdapter) Guardrails() *guardrails.Signal {
 	// Get memory info
 	memoryInfo, err := mem.VirtualMemory()

@@ -544,6 +544,16 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return flatValues, nil
 }
 
+func (adapter *CNPGAdapter) GetSchemaSnapshot() (*agent.SchemaSnapshot, error) {
+	pgConfig, _ := pg.ConfigFromViper(nil)
+	snapshot, err := pg.CollectSchemaSnapshot(adapter.PGDriver, pgConfig.AllowDDLCollection, adapter.LastSchemaHash, adapter.Logger())
+	if err != nil {
+		return nil, err
+	}
+	adapter.LastSchemaHash = snapshot.SchemaHash
+	return snapshot, nil
+}
+
 func (adapter *CNPGAdapter) Guardrails() *guardrails.Signal {
 	// Check if enough time has passed since the last guardrail check
 	if adapter.State.TimeSinceLastGuardrailCheck() < 5*time.Second {

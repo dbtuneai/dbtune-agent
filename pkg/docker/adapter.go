@@ -330,3 +330,12 @@ func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfi
 
 	return nil
 }
+
+func (d *DockerContainerAdapter) GetSchemaSnapshot() (*agent.SchemaSnapshot, error) {
+	snapshot, err := pg.CollectSchemaSnapshot(d.PGDriver, d.pgConfig.AllowDDLCollection, d.LastSchemaHash, d.Logger())
+	if err != nil {
+		return nil, err
+	}
+	d.LastSchemaHash = snapshot.SchemaHash
+	return snapshot, nil
+}
