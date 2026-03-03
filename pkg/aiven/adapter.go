@@ -16,8 +16,6 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
-
-	"github.com/jackc/pgx/v5/pgtype"
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -578,15 +576,26 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 			continue
 		}
 
+		row.Setting = pg.InferNumericType(row.Setting)
+
 		if row.Name == "work_mem" {
-			workMemKb := row.Setting.(pgtype.Numeric)
-			workMemKbInt, err := workMemKb.Int64Value()
-			if err != nil {
-				adapter.Logger().Error("Error converting work_mem to int64", err)
+			var workMemKb int64
+			switch v := row.Setting.(type) {
+			case int64:
+				workMemKb = v
+			case string:
+				parsed, err := strconv.ParseInt(v, 10, 64)
+				if err != nil {
+					adapter.Logger().Error("Error converting work_mem to int64", err)
+					continue
+				}
+				workMemKb = parsed
+			default:
+				adapter.Logger().Error("Error: unexpected work_mem type")
 				continue
 			}
 			// Convert KB to MB using integer division
-			workMemMB := int(workMemKbInt.Int64 / 1024)
+			workMemMB := int(workMemKb / 1024)
 			configRows = append(configRows, agent.PGConfigRow{
 				Name:    "work_mem",
 				Setting: workMemMB,
