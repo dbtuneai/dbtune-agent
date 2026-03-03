@@ -607,6 +607,8 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 		return err
 	}
 
+	a.Logger().Debugf("Active config payload: %s", string(jsonData))
+
 	resp, err := a.APIClient.Post(a.ServerURLs.PostActiveConfig(), "application/json", jsonData)
 	if err != nil {
 		return err

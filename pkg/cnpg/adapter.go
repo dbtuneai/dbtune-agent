@@ -14,7 +14,6 @@ import (
 	"github.com/dbtuneai/agent/pkg/kubernetes"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	log "github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -709,36 +708,11 @@ func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName st
 }
 
 // extractSettingValue converts row.Setting to string for comparison.
-// This is necessary because pg.GetActiveConfig() uses `::numeric` cast in queries,
-// which causes pgx to return pgtype.Numeric struct instead of primitive types.
-// We convert back to string to enable value comparison in GetCurrentConfig().
 func extractSettingValue(setting interface{}) string {
 	switch v := setting.(type) {
 	case string:
 		return v
-	case int, int8, int16, int32, int64:
-		return fmt.Sprintf("%d", v)
-	case uint, uint8, uint16, uint32, uint64:
-		return fmt.Sprintf("%d", v)
-	case float32, float64:
-		return fmt.Sprintf("%v", v)
-	case pgtype.Numeric:
-		// pgtype.Numeric is returned by pgx when scanning PostgreSQL numeric types
-		// Convert to int64 if it's a valid integer
-		if v.Valid {
-			// Try to convert to int64 first (most PostgreSQL settings are integers)
-			if i64Val, err := v.Int64Value(); err == nil && i64Val.Valid {
-				return fmt.Sprintf("%d", i64Val.Int64)
-			}
-			// Fall back to float64 for real numbers
-			if f64Val, err := v.Float64Value(); err == nil && f64Val.Valid {
-				return fmt.Sprintf("%v", f64Val.Float64)
-			}
-		}
-		// Fallback: use string representation for unexpected numeric formats
-		return fmt.Sprintf("%v", v)
 	default:
-		// For any other type, use fmt.Sprintf as fallback
 		return fmt.Sprintf("%v", v)
 	}
 }
@@ -759,7 +733,7 @@ func (adapter *CNPGAdapter) GetCurrentConfig(ctx context.Context) (map[string]st
 			continue
 		}
 
-		// Extract the actual value from row.Setting (handles pgtype.Numeric and other types)
+		// Extract the actual value from row.Setting
 		settingStr := extractSettingValue(row.Setting)
 
 		// Convert PostgreSQL format to CNPG format for comparison
