@@ -583,9 +583,12 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 
 	type Payload struct {
 		Config ConfigArraySchema `json:"config"`
+		Hash   string            `json:"hash"`
 	}
 
-	jsonData, err := json.Marshal(Payload{Config: config})
+	hash, _ := metrics.HashJSON(config)
+
+	jsonData, err := json.Marshal(Payload{Config: config, Hash: hash})
 	if err != nil {
 		return err
 	}

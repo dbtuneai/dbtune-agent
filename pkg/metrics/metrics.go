@@ -1,6 +1,9 @@
 package metrics
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"reflect"
@@ -49,6 +52,7 @@ type FormattedMetrics struct {
 type FormattedSystemInfo struct {
 	SystemInfo map[string]MetricData `json:"system_info"`
 	Timestamp  string                `json:"timestamp"`
+	Hash       string                `json:"hash"`
 }
 
 // validatePgssDeltaItems validates that the input is an array of CachedPGStatStatement items
@@ -171,9 +175,12 @@ func FormatSystemInfo(metrics []FlatValue) FormattedSystemInfo {
 		}
 	}
 
+	hash, _ := HashJSON(metricsMap)
+
 	return FormattedSystemInfo{
 		SystemInfo: metricsMap,
 		Timestamp:  time.Now().Format(time.RFC3339),
+		Hash:       hash,
 	}
 }
 
@@ -186,6 +193,18 @@ func TryUint64ToInt64(value uint64) (int64, error) {
 
 func truncateFloat(value float64) float64 {
 	return math.Round(value*1000) / 1000
+}
+
+// HashJSON computes a SHA256 hash of the JSON-serialized value.
+// Go's encoding/json sorts map keys lexicographically, so the output
+// is deterministic for maps with string keys and deterministic values.
+func HashJSON(v interface{}) (string, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:]), nil
 }
 
 type MetricDef struct {
