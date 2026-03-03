@@ -254,6 +254,11 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 	}
 
 	if restartRequired {
+		if !agent.IsRestartAllowed() {
+			return &agent.RestartNotAllowedError{
+				Message: "restart is not allowed in the agent",
+			}
+		}
 		adapter.Logger().Info("Restart was required, checking if Aiven PostgreSQL service has restarted")
 		err := adapter.waitForServiceState(service.ServiceStateTypeRunning)
 		if err != nil {

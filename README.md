@@ -46,7 +46,7 @@ docker run \
     -v $(pwd)/dbtune.yaml:/app/dbtune.yaml \
     --name dbtune-agent \
     public.ecr.aws/dbtune/dbtune/agent:latest
-        
+
 # OR... run with environment variables.
 docker run \
     -e DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database \
@@ -90,6 +90,8 @@ postgresql:
                         # This is provided so that you can identify you queries by their text.
                         # DBtune does not require this info, and will instead display query ids
                         # if this is disabled.
+  allow_restart: false  # Whether to allow the agent to restart PostgreSQL when applying
+                        # configuration changes that require a restart. Defaults to false.
 
 # Optional
 guardrail_settings:
@@ -111,9 +113,10 @@ export DBT_DBTUNE_SERVER_URL="https://app.dbtune.com"
 export DBT_DBTUNE_API_KEY=""
 export DBT_DBTUNE_DATABASE_ID=""
 export DBT_POSTGRESQL_INCLUDE_QUERIES=true
+export DBT_POSTGRESQL_ALLOW_RESTART=false  # Set to true to allow PostgreSQL restarts
 
 # Your database specific
-export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database 
+export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database
 ```
 
 ## Advanced deployments

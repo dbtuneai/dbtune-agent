@@ -176,6 +176,19 @@ type AgentPayload struct {
 	AgentVersion   string `json:"agent_version"`
 	AgentStartTime string `json:"agent_start_time"`
 	AgentID        string `json:"agent_identifier"`
+	AllowRestart   bool   `json:"allow_restart"`
+}
+
+type RestartNotAllowedError struct {
+	Message string
+}
+
+func (e *RestartNotAllowedError) Error() string {
+	return e.Message
+}
+
+func IsRestartAllowed() bool {
+	return viper.GetBool("postgresql.allow_restart")
 }
 
 type ErrorPayload struct {
@@ -406,6 +419,7 @@ func (a *CommonAgent) SendHeartbeat() error {
 		AgentVersion:   a.Version,
 		AgentStartTime: a.StartTime,
 		AgentID:        a.AgentID,
+		AllowRestart:   IsRestartAllowed(),
 	}
 
 	jsonData, err := json.Marshal(payload)
