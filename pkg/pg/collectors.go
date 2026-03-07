@@ -211,17 +211,18 @@ func PGStatStatements(pgPool *pgxpool.Pool, includeQueries bool, maxQueryTextLen
 }
 
 const ConnectionStatsQuery = `
-SELECT 
+SELECT
     COUNT(*) FILTER (WHERE state = 'active') AS active_connections,
     COUNT(*) FILTER (WHERE state = 'idle') AS idle_connections,
-    COUNT(*) FILTER (WHERE state = 'idle in transaction') AS idle_in_transaction_connections
+    COUNT(*) FILTER (WHERE state = 'idle in transaction') AS idle_in_transaction_connections,
+    COUNT(*) FILTER (WHERE state = 'idle in transaction (aborted)') AS idle_in_transaction_aborted_connections
 FROM pg_stat_activity
 `
 
 func Connections(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-		var active, idle, idleInTransaction int
-		err := utils.QueryRowWithPrefix(pgPool, ctx, ConnectionStatsQuery).Scan(&active, &idle, &idleInTransaction)
+		var active, idle, idleInTransaction, idleInTransactionAborted int
+		err := utils.QueryRowWithPrefix(pgPool, ctx, ConnectionStatsQuery).Scan(&active, &idle, &idleInTransaction, &idleInTransactionAborted)
 		if err != nil {
 			return err
 		}
@@ -243,6 +244,19 @@ func Connections(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.Me
 			return err
 		}
 		state.AddMetric(idleInTransactionEntry)
+
+		idleInTransactionAbortedEntry, err := metrics.PGIdleInTransactionAbortedConnections.AsFlatValue(idleInTransactionAborted)
+		if err != nil {
+			return err
+		}
+		state.AddMetric(idleInTransactionAbortedEntry)
+
+		total := active + idle + idleInTransaction + idleInTransactionAborted
+		totalEntry, err := metrics.PGTotalConnections.AsFlatValue(total)
+		if err != nil {
+			return err
+		}
+		state.AddMetric(totalEntry)
 
 		return nil
 	}
