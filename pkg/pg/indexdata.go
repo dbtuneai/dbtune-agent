@@ -22,6 +22,8 @@ func HashDDL(ddl string) string {
 
 // schemaColumnsQuery returns all columns for all user tables in the public schema,
 // including nullability and defaults needed to reconstruct valid CREATE TABLE DDL.
+// NOTE: intentionally limited to the 'public' schema — this is the standard schema
+// for application tables and matches the scope expected by the backend's index advisor.
 const schemaColumnsQuery = `
 SELECT
     c.relname AS table_name,
