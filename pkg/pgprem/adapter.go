@@ -19,11 +19,10 @@ import (
 
 type DefaultPostgreSQLAdapter struct {
 	agent.CommonAgent
-	pgDriver        *pgPool.Pool
+	pg.CatalogGetter
 	pgConfig        pg.Config
 	GuardrailConfig guardrails.Config
 	PGVersion       string
-	PGMajorVersion  int
 }
 
 func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
@@ -48,13 +47,16 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
 
+	pgMajorVersion := pg.ParsePgMajorVersion(PGVersion)
 	c := &DefaultPostgreSQLAdapter{
-		CommonAgent:     *commonAgent,
-		pgDriver:        dbpool,
+		CommonAgent: *commonAgent,
+		CatalogGetter: pg.CatalogGetter{
+			PGPool:         dbpool,
+			PGMajorVersion: pgMajorVersion,
+		},
 		pgConfig:        pgConfig,
 		GuardrailConfig: guardrailSettings,
 		PGVersion:       PGVersion,
-		PGMajorVersion:  pg.ParsePgMajorVersion(PGVersion),
 	}
 	collectors := DefaultCollectors(c)
 	c.InitCollectors(collectors)
@@ -63,7 +65,7 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 }
 
 func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollector {
-	pgDriver := pgAdapter.pgDriver
+	pgDriver := pgAdapter.PGPool
 	collectors := []agent.MetricCollector{
 		{
 			Key:       "database_average_query_runtime",
@@ -123,10 +125,10 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 	return collectors
 }
 
-func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	adapter.Logger().Println("Collecting system info")
 
-	pgDriver := adapter.pgDriver
+	pgDriver := adapter.PGPool
 	pgVersion, err := pg.PGVersion(pgDriver)
 	if err != nil {
 		return nil, err
@@ -152,7 +154,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, e
 		return nil, err
 	}
 
-	diskType, err := GetDiskType(adapter.pgDriver)
+	diskType, err := GetDiskType(adapter.PGPool)
 	if err != nil {
 		adapter.Logger().Warnf("Error getting disk type: %v", err)
 	}
@@ -184,123 +186,11 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, e
 	return systemInfo, nil
 }
 
-func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(adapter.pgDriver, context.Background(), adapter.Logger())
+func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
+	return pg.GetActiveConfig(adapter.PGPool, ctx, adapter.Logger())
 }
 
-func (adapter *DefaultPostgreSQLAdapter) pgMajorVersion() int {
-	return adapter.PGMajorVersion
-}
-
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
-	rows, err := pg.CollectPgStatActivity(adapter.pgDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatActivityPayload{Rows: rows}, nil
-}
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatDatabaseAll() (*agent.PgStatDatabasePayload, error) {
-	rows, err := pg.CollectPgStatDatabase(adapter.pgDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatDatabasePayload{Rows: rows}, nil
-}
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatDatabaseConflicts() (*agent.PgStatDatabaseConflictsPayload, error) {
-	rows, err := pg.CollectPgStatDatabaseConflicts(adapter.pgDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatDatabaseConflictsPayload{Rows: rows}, nil
-}
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatArchiver() (*agent.PgStatArchiverPayload, error) {
-	rows, err := pg.CollectPgStatArchiver(adapter.pgDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatArchiverPayload{Rows: rows}, nil
-}
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatBgwriterAll() (*agent.PgStatBgwriterPayload, error) {
-	rows, err := pg.CollectPgStatBgwriter(adapter.pgDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatBgwriterPayload{Rows: rows}, nil
-}
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatCheckpointerAll() (*agent.PgStatCheckpointerPayload, error) {
-	rows, err := pg.CollectPgStatCheckpointer(adapter.pgDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatCheckpointerPayload{Rows: rows}, nil
-}
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatWalAll() (*agent.PgStatWalPayload, error) {
-	rows, err := pg.CollectPgStatWal(adapter.pgDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatWalPayload{Rows: rows}, nil
-}
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatIO() (*agent.PgStatIOPayload, error) {
-	rows, err := pg.CollectPgStatIO(adapter.pgDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatIOPayload{Rows: rows}, nil
-}
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatReplication() (*agent.PgStatReplicationPayload, error) {
-	rows, err := pg.CollectPgStatReplication(adapter.pgDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatReplicationPayload{Rows: rows}, nil
-}
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatReplicationSlots() (*agent.PgStatReplicationSlotsPayload, error) {
-	rows, err := pg.CollectPgStatReplicationSlots(adapter.pgDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatReplicationSlotsPayload{Rows: rows}, nil
-}
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatSlru() (*agent.PgStatSlruPayload, error) {
-	rows, err := pg.CollectPgStatSlru(adapter.pgDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatSlruPayload{Rows: rows}, nil
-}
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatUserIndexes() (*agent.PgStatUserIndexesPayload, error) {
-	rows, err := pg.CollectPgStatUserIndexes(adapter.pgDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatUserIndexesPayload{Rows: rows}, nil
-}
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatioUserTables() (*agent.PgStatioUserTablesPayload, error) {
-	rows, err := pg.CollectPgStatioUserTables(adapter.pgDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatioUserTablesPayload{Rows: rows}, nil
-}
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatioUserIndexes() (*agent.PgStatioUserIndexesPayload, error) {
-	rows, err := pg.CollectPgStatioUserIndexes(adapter.pgDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatioUserIndexesPayload{Rows: rows}, nil
-}
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatUserFunctions() (*agent.PgStatUserFunctionsPayload, error) {
-	rows, err := pg.CollectPgStatUserFunctions(adapter.pgDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatUserFunctionsPayload{Rows: rows}, nil
-}
-
-func (adapter *DefaultPostgreSQLAdapter) GetDDL() (*agent.DDLPayload, error) {
-	ddl, err := pg.CollectDDL(adapter.pgDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.DDLPayload{DDL: ddl, Hash: pg.HashDDL(ddl)}, nil
-}
-
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatistic() (*agent.PgStatisticPayload, error) {
-	rows, err := pg.CollectPgStatistic(adapter.pgDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatisticPayload{Rows: rows}, nil
-}
-
-func (adapter *DefaultPostgreSQLAdapter) GetPgStatUserTables() (*agent.PgStatUserTablePayload, error) {
-	rows, err := pg.CollectPgStatUserTables(adapter.pgDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatUserTablePayload{Rows: rows}, nil
-}
-
-func (adapter *DefaultPostgreSQLAdapter) GetPgClass() (*agent.PgClassPayload, error) {
-	rows, err := pg.CollectPgClass(adapter.pgDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgClassPayload{Rows: rows}, nil
-}
-
-func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	adapter.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
 	if proposedConfig.KnobApplication == "restart" {
@@ -316,7 +206,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 	}
 
 	for _, knob := range parsedKnobs {
-		err = pg.AlterSystem(adapter.pgDriver, knob.Name, knob.SettingValue)
+		err = pg.AlterSystem(adapter.PGPool, knob.Name, knob.SettingValue)
 		if err != nil {
 			return fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)
 		}
@@ -345,13 +235,13 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 			adapter.Logger().Warn("Service restarted.")
 		}
 
-		err := pg.WaitPostgresReady(adapter.pgDriver)
+		err := pg.WaitPostgresReady(adapter.PGPool)
 		if err != nil {
 			return fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)
 		}
 	case "reload":
 		// Reload database when everything is applied
-		err := pg.ReloadConfig(adapter.pgDriver)
+		err := pg.ReloadConfig(adapter.PGPool)
 		if err != nil {
 			return err
 		}
@@ -359,7 +249,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 		// TODO(eddie): We should make this more explicit somehow.
 		// This happens when nothing is sent from the backend about this.
 		// We should send an explicit string instead of leaving it blank.
-		err := pg.ReloadConfig(adapter.pgDriver)
+		err := pg.ReloadConfig(adapter.PGPool)
 		if err != nil {
 			return err
 		}
@@ -371,7 +261,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 // 1. Checks if the total memory is set. If not fetches it from the system and sets it in cache.
 // 2. Fetches current memory usage
 // 3. If memory usage is greater than 90% of total memory, triggers a critical guardrail
-func (adapter *DefaultPostgreSQLAdapter) Guardrails() *guardrails.Signal {
+func (adapter *DefaultPostgreSQLAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	// Get memory info
 	memoryInfo, err := mem.VirtualMemory()
 	if err != nil {

@@ -155,7 +155,7 @@ func (adapter *PatroniAdapter) isClusterHealthy() (bool, error) {
 
 // CheckForFailover checks if a failover has occurred since last check.
 // Returns FailoverDetectedError if primary changed or cluster unhealthy, nil otherwise.
-func (adapter *PatroniAdapter) CheckForFailover(_ context.Context) error {
+func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 	logger := adapter.Logger()
 
 	// CRITICAL: During active failover recovery, block ALL operations
@@ -263,7 +263,7 @@ func (adapter *PatroniAdapter) CheckForFailover(_ context.Context) error {
 						ErrorType: "failover_detected",
 						Timestamp: time.Now().UTC().Format(time.RFC3339),
 					}
-					if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+					if sendErr := adapter.SendError(ctx, errorPayload); sendErr != nil {
 						logger.Errorf("failed to send error report: %v", sendErr)
 					}
 					logger.Info("Failover notification sent to backend (cluster status unavailable)")
@@ -306,7 +306,7 @@ func (adapter *PatroniAdapter) CheckForFailover(_ context.Context) error {
 					ErrorType: "failover_detected",
 					Timestamp: time.Now().UTC().Format(time.RFC3339),
 				}
-				if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+				if sendErr := adapter.SendError(ctx, errorPayload); sendErr != nil {
 					logger.Errorf("failed to send error report: %v", sendErr)
 				}
 				logger.Info("Failover notification sent to backend (no current primary)")
@@ -367,7 +367,7 @@ func (adapter *PatroniAdapter) CheckForFailover(_ context.Context) error {
 				ErrorType: "failover_detected",
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 			}
-			if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+			if sendErr := adapter.SendError(ctx, errorPayload); sendErr != nil {
 				logger.Errorf("failed to send error report: %v", sendErr)
 			}
 			logger.Info("Failover notification sent to backend")

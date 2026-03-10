@@ -27,12 +27,12 @@ import (
 
 type PatroniAdapter struct {
 	agent.CommonAgent
+	pg.CatalogGetter
 	PatroniConfig   Config
 	PGDriver        *pgxpool.Pool
 	GuardrailConfig guardrails.Config
 	pgConfig        pg.Config
 	PGVersion       string
-	PGMajorVersion  int
 	HTTPClient      *http.Client
 	State           *State
 }
@@ -73,9 +73,20 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 		GuardrailConfig: guardrailConfig,
 		pgConfig:        pgConfig,
 		PGVersion:       pgVersion,
-		PGMajorVersion:  pg.ParsePgMajorVersion(pgVersion),
 		HTTPClient:      &http.Client{Timeout: 60 * time.Second}, // Increased for restart operations
 		State:           &State{},
+	}
+
+	adpt.CatalogGetter = pg.CatalogGetter{
+		PGPool:         pgPool,
+		PGMajorVersion: pg.ParsePgMajorVersion(pgVersion),
+		PrepareContext: func(ctx context.Context) (context.Context, error) {
+			opsCtx := adpt.State.GetOperationsContext()
+			if err := adpt.checkFailoverBeforeOperation(ctx, "catalog_query"); err != nil {
+				return nil, err
+			}
+			return opsCtx, nil
+		},
 	}
 
 	adpt.InitCollectors(adpt.Collectors())
@@ -150,24 +161,24 @@ func (adapter *PatroniAdapter) checkFailoverBeforeOperation(ctx context.Context,
 // handlePossibleFailoverError checks if an error indicates a PostgreSQL failover,
 // records it if first detection, sends notification, and returns a FailoverDetectedError.
 // Returns nil if the error is not a failover error.
-func (adapter *PatroniAdapter) handlePossibleFailoverError(err error, context string) *FailoverDetectedError {
+func (adapter *PatroniAdapter) handlePossibleFailoverError(ctx context.Context, err error, description string) *FailoverDetectedError {
 	if !isPostgreSQLFailoverError(err) {
 		return nil
 	}
 
 	logger := adapter.Logger()
-	logger.Warnf("[FAILOVER_RECOVERY] PostgreSQL failover detected %s: %v", context, err)
+	logger.Warnf("[FAILOVER_RECOVERY] PostgreSQL failover detected %s: %v", description, err)
 
 	if adapter.State.TimeSinceLastFailover() == 0 {
 		adapter.State.SetLastFailoverTime(time.Now())
-		logger.Errorf("[FAILOVER_RECOVERY] Failover detected via PostgreSQL error %s", context)
+		logger.Errorf("[FAILOVER_RECOVERY] Failover detected via PostgreSQL error %s", description)
 
 		errorPayload := agent.ErrorPayload{
 			ErrorMessage: fmt.Sprintf("Failover detected: %s", err.Error()),
 			ErrorType:    "failover_detected",
 			Timestamp:    time.Now().UTC().Format(time.RFC3339),
 		}
-		if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+		if sendErr := adapter.SendError(ctx, errorPayload); sendErr != nil {
 			logger.Errorf("failed to send error report: %v", sendErr)
 		}
 		logger.Info("Failover notification sent to backend")
@@ -190,10 +201,10 @@ func (adapter *PatroniAdapter) isStandbyNode(ctx context.Context) (bool, error) 
 	return inRecovery, nil
 }
 
-func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	// Use operations context that will be cancelled during failover
 	// This ensures queries during config application are aborted if failover occurs
-	ctx := adapter.State.GetOperationsContext()
+	opsCtx := adapter.State.GetOperationsContext()
 	logger := adapter.Logger()
 
 	logger.Infof("[FAILOVER_RECOVERY] ApplyConfig called: knob_application=%s, num_params=%d",
@@ -255,7 +266,7 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 	if failoverCheckErr == nil && !hadRecentFailover {
 		// Normal operation - check if we're on a standby node
 		// This prevents tuning sessions from starting on standby nodes
-		isStandby, err := adapter.isStandbyNode(ctx)
+		isStandby, err := adapter.isStandbyNode(opsCtx)
 		if err == nil && isStandby {
 			errMsg := "Tuning operation rejected: Agent is running on a Standby node."
 			logger.Error(errMsg)
@@ -265,7 +276,7 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 				ErrorType:    "standby_node_detected",
 				Timestamp:    time.Now().UTC().Format(time.RFC3339),
 			}
-			if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+			if sendErr := adapter.SendError(ctx, errorPayload); sendErr != nil {
 				logger.Errorf("failed to send error report: %v", sendErr)
 			}
 			return fmt.Errorf("%s", errMsg)
@@ -343,7 +354,7 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 
 	// Create HTTP PATCH request with context
 	// This allows the request to be cancelled if failover occurs
-	req, err := http.NewRequestWithContext(ctx, "PATCH", configURL, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(opsCtx, "PATCH", configURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		logger.Errorf("Error creating request: %v", err)
 		return fmt.Errorf("failed to create HTTP request: %w", err)
@@ -406,7 +417,7 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 		logger.Infof("Checking if any of %d parameters require restart: %v", len(paramNames), paramNames)
 
 		// Check if any parameter requires restart (context='postmaster')
-		restartRequired, err := adapter.requiresPostgreSQLRestart(ctx, paramNames)
+		restartRequired, err := adapter.requiresPostgreSQLRestart(opsCtx, paramNames)
 		switch {
 		case err != nil:
 			logger.Errorf("Failed to check for restart-required parameters: %v", err)
@@ -434,7 +445,7 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 		defer adapter.State.SetInRestartWindow(false) // Clear flag when done (success or failure)
 
 		// Trigger the restart
-		err = adapter.triggerPostgreSQLRestart(ctx)
+		err = adapter.triggerPostgreSQLRestart(opsCtx)
 		if err != nil {
 			return fmt.Errorf("failed to trigger PostgreSQL restart: %w", err)
 		}
@@ -443,7 +454,7 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 		logger.Info("Waiting for PostgreSQL to be ready after restart...")
 		err = pg.WaitPostgresReady(adapter.PGDriver)
 		if err != nil {
-			if failoverErr := adapter.handlePossibleFailoverError(err, "during restart wait"); failoverErr != nil {
+			if failoverErr := adapter.handlePossibleFailoverError(ctx, err, "during restart wait"); failoverErr != nil {
 				return failoverErr
 			}
 			return fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)
@@ -453,7 +464,7 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 		// Create a new operations context after successful restart
 		// The old context may have been used during restart and needs to be refreshed
 		adapter.State.CreateOperationsContext()
-		ctx = adapter.State.GetOperationsContext()
+		opsCtx = adapter.State.GetOperationsContext()
 		logger.Info("Created new operations context after PostgreSQL restart")
 	}
 
@@ -465,9 +476,9 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 		query := `SELECT setting, unit FROM pg_settings WHERE name = $1`
 		var actualSetting string
 		var unit *string
-		err := utils.QueryRowWithPrefix(adapter.PGDriver, ctx, query, knob.Name).Scan(&actualSetting, &unit)
+		err := utils.QueryRowWithPrefix(adapter.PGDriver, opsCtx, query, knob.Name).Scan(&actualSetting, &unit)
 		if err != nil {
-			if failoverErr := adapter.handlePossibleFailoverError(err, "during verification"); failoverErr != nil {
+			if failoverErr := adapter.handlePossibleFailoverError(ctx, err, "during verification"); failoverErr != nil {
 				return failoverErr
 			}
 			return fmt.Errorf("failed to verify parameter %s in pg_settings: %w", knob.Name, err)
@@ -683,9 +694,9 @@ type PatroniPatchRequest struct {
 	} `json:"postgresql"`
 }
 
-func (adapter *PatroniAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
+func (adapter *PatroniAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	logger := adapter.Logger()
-	ctx := adapter.State.GetOperationsContext()
+	opsCtx := adapter.State.GetOperationsContext()
 
 	if err := adapter.checkFailoverBeforeOperation(ctx, "GetActiveConfig"); err != nil {
 		return nil, err
@@ -695,9 +706,9 @@ func (adapter *PatroniAdapter) GetActiveConfig() (agent.ConfigArraySchema, error
 	// currently active configuration. The Patroni DCS can have stale data or not
 	// reflect local overrides in postgresql.auto.conf, so we must query PostgreSQL directly.
 	logger.Info("Fetching active configuration from PostgreSQL")
-	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx, logger)
+	config, err := pg.GetActiveConfig(adapter.PGDriver, opsCtx, logger)
 	if err != nil {
-		if failoverErr := adapter.handlePossibleFailoverError(err, "in GetActiveConfig"); failoverErr != nil {
+		if failoverErr := adapter.handlePossibleFailoverError(ctx, err, "in GetActiveConfig"); failoverErr != nil {
 			logger.Infof("[FAILOVER_RECOVERY] Returning failover error to prevent empty data being sent")
 			return nil, failoverErr
 		}
@@ -725,167 +736,8 @@ func (adapter *PatroniAdapter) GetActiveConfig() (agent.ConfigArraySchema, error
 	return filteredConfig, nil
 }
 
-func (adapter *PatroniAdapter) GetDDL() (*agent.DDLPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetDDL"); err != nil {
-		return nil, err
-	}
-	ddl, err := pg.CollectDDL(adapter.PGDriver, ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &agent.DDLPayload{DDL: ddl, Hash: pg.HashDDL(ddl)}, nil
-}
-
-func (adapter *PatroniAdapter) GetPgStatistic() (*agent.PgStatisticPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatistic"); err != nil {
-		return nil, err
-	}
-	rows, err := pg.CollectPgStatistic(adapter.PGDriver, ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatisticPayload{Rows: rows}, nil
-}
-
-func (adapter *PatroniAdapter) GetPgStatUserTables() (*agent.PgStatUserTablePayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatUserTables"); err != nil {
-		return nil, err
-	}
-	rows, err := pg.CollectPgStatUserTables(adapter.PGDriver, ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatUserTablePayload{Rows: rows}, nil
-}
-
-func (adapter *PatroniAdapter) pgMajorVersion() int {
-	return adapter.PGMajorVersion
-}
-
-func (adapter *PatroniAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatActivity"); err != nil { return nil, err }
-	rows, err := pg.CollectPgStatActivity(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatActivityPayload{Rows: rows}, nil
-}
-func (adapter *PatroniAdapter) GetPgStatDatabaseAll() (*agent.PgStatDatabasePayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatDatabaseAll"); err != nil { return nil, err }
-	rows, err := pg.CollectPgStatDatabase(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatDatabasePayload{Rows: rows}, nil
-}
-func (adapter *PatroniAdapter) GetPgStatDatabaseConflicts() (*agent.PgStatDatabaseConflictsPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatDatabaseConflicts"); err != nil { return nil, err }
-	rows, err := pg.CollectPgStatDatabaseConflicts(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatDatabaseConflictsPayload{Rows: rows}, nil
-}
-func (adapter *PatroniAdapter) GetPgStatArchiver() (*agent.PgStatArchiverPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatArchiver"); err != nil { return nil, err }
-	rows, err := pg.CollectPgStatArchiver(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatArchiverPayload{Rows: rows}, nil
-}
-func (adapter *PatroniAdapter) GetPgStatBgwriterAll() (*agent.PgStatBgwriterPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatBgwriterAll"); err != nil { return nil, err }
-	rows, err := pg.CollectPgStatBgwriter(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatBgwriterPayload{Rows: rows}, nil
-}
-func (adapter *PatroniAdapter) GetPgStatCheckpointerAll() (*agent.PgStatCheckpointerPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatCheckpointerAll"); err != nil { return nil, err }
-	rows, err := pg.CollectPgStatCheckpointer(adapter.PGDriver, ctx, adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatCheckpointerPayload{Rows: rows}, nil
-}
-func (adapter *PatroniAdapter) GetPgStatWalAll() (*agent.PgStatWalPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatWalAll"); err != nil { return nil, err }
-	rows, err := pg.CollectPgStatWal(adapter.PGDriver, ctx, adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatWalPayload{Rows: rows}, nil
-}
-func (adapter *PatroniAdapter) GetPgStatIO() (*agent.PgStatIOPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatIO"); err != nil { return nil, err }
-	rows, err := pg.CollectPgStatIO(adapter.PGDriver, ctx, adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatIOPayload{Rows: rows}, nil
-}
-func (adapter *PatroniAdapter) GetPgStatReplication() (*agent.PgStatReplicationPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatReplication"); err != nil { return nil, err }
-	rows, err := pg.CollectPgStatReplication(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatReplicationPayload{Rows: rows}, nil
-}
-func (adapter *PatroniAdapter) GetPgStatReplicationSlots() (*agent.PgStatReplicationSlotsPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatReplicationSlots"); err != nil { return nil, err }
-	rows, err := pg.CollectPgStatReplicationSlots(adapter.PGDriver, ctx, adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatReplicationSlotsPayload{Rows: rows}, nil
-}
-func (adapter *PatroniAdapter) GetPgStatSlru() (*agent.PgStatSlruPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatSlru"); err != nil { return nil, err }
-	rows, err := pg.CollectPgStatSlru(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatSlruPayload{Rows: rows}, nil
-}
-func (adapter *PatroniAdapter) GetPgStatUserIndexes() (*agent.PgStatUserIndexesPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatUserIndexes"); err != nil { return nil, err }
-	rows, err := pg.CollectPgStatUserIndexes(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatUserIndexesPayload{Rows: rows}, nil
-}
-func (adapter *PatroniAdapter) GetPgStatioUserTables() (*agent.PgStatioUserTablesPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatioUserTables"); err != nil { return nil, err }
-	rows, err := pg.CollectPgStatioUserTables(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatioUserTablesPayload{Rows: rows}, nil
-}
-func (adapter *PatroniAdapter) GetPgStatioUserIndexes() (*agent.PgStatioUserIndexesPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatioUserIndexes"); err != nil { return nil, err }
-	rows, err := pg.CollectPgStatioUserIndexes(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatioUserIndexesPayload{Rows: rows}, nil
-}
-func (adapter *PatroniAdapter) GetPgStatUserFunctions() (*agent.PgStatUserFunctionsPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatUserFunctions"); err != nil { return nil, err }
-	rows, err := pg.CollectPgStatUserFunctions(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatUserFunctionsPayload{Rows: rows}, nil
-}
-
-func (adapter *PatroniAdapter) GetPgClass() (*agent.PgClassPayload, error) {
-	ctx := adapter.State.GetOperationsContext()
-	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgClass"); err != nil {
-		return nil, err
-	}
-	rows, err := pg.CollectPgClass(adapter.PGDriver, ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgClassPayload{Rows: rows}, nil
-}
-
-func (adapter *PatroniAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *PatroniAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	logger := adapter.Logger()
-	ctx := adapter.State.GetOperationsContext()
 
 	logger.Println("Collecting system info for Patroni cluster")
 
@@ -895,7 +747,7 @@ func (adapter *PatroniAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 
 	pgVersion, err := pg.PGVersion(adapter.PGDriver)
 	if err != nil {
-		if failoverErr := adapter.handlePossibleFailoverError(err, "in GetSystemInfo (PGVersion)"); failoverErr != nil {
+		if failoverErr := adapter.handlePossibleFailoverError(ctx, err, "in GetSystemInfo (PGVersion)"); failoverErr != nil {
 			return nil, failoverErr
 		}
 		return nil, err
@@ -903,7 +755,7 @@ func (adapter *PatroniAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 
 	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
 	if err != nil {
-		if failoverErr := adapter.handlePossibleFailoverError(err, "in GetSystemInfo (MaxConnections)"); failoverErr != nil {
+		if failoverErr := adapter.handlePossibleFailoverError(ctx, err, "in GetSystemInfo (MaxConnections)"); failoverErr != nil {
 			return nil, failoverErr
 		}
 		return nil, err
@@ -949,7 +801,7 @@ func (adapter *PatroniAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return systemInfo, nil
 }
 
-func (adapter *PatroniAdapter) Guardrails() *guardrails.Signal {
+func (adapter *PatroniAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	// Get memory info
 	memoryInfo, err := mem.VirtualMemory()
 	if err != nil {

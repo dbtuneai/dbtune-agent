@@ -14,14 +14,13 @@ import (
 
 type RDSAdapter struct {
 	agent.CommonAgent
+	pg.CatalogGetter
 	Config            Config
 	GuardrailSettings guardrails.Config
 	pgConfig          pg.Config
 	State             State
 	AWSClients        AWSClients
-	PGDriver          *pgxpool.Pool
 	PGVersion         string
-	PGMajorVersion    int
 }
 
 func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
@@ -80,18 +79,21 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 	if err != nil {
 		return nil, err
 	}
+	pgMajorVersion := pg.ParsePgMajorVersion(PGVersion)
 	adapter := &RDSAdapter{
 		CommonAgent: *commonAgent,
-		Config:      config,
-		pgConfig:    pgConfig,
+		CatalogGetter: pg.CatalogGetter{
+			PGPool:         dbpool,
+			PGMajorVersion: pgMajorVersion,
+		},
+		Config:   config,
+		pgConfig: pgConfig,
 		State: State{
 			DBInfo: &dbInfo,
 		},
 		AWSClients:        clients,
 		GuardrailSettings: guardrailSettings,
-		PGDriver:          dbpool,
 		PGVersion:         PGVersion,
-		PGMajorVersion:    pg.ParsePgMajorVersion(PGVersion),
 	}
 	return adapter, nil
 }
@@ -106,14 +108,14 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 	return rdsAdapter, nil
 }
 
-func (adapter *RDSAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *RDSAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	adapter.Logger().Info("Collecting system info")
 
 	// Refreshes self
 	dbInfo, err := FetchDBInfo(
 		adapter.Config.RDSDatabaseIdentifier,
 		&adapter.AWSClients,
-		context.Background(),
+		ctx,
 	)
 	if err != nil {
 		return nil, err
@@ -128,7 +130,7 @@ func (adapter *RDSAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	}
 
 	// PGVersion
-	pgVersion, err := pg.PGVersion(adapter.PGDriver)
+	pgVersion, err := pg.PGVersion(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +143,7 @@ func (adapter *RDSAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	info = append(info, version)
 
 	// MaxConnections
-	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
+	maxConnections, err := pg.MaxConnections(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
@@ -156,123 +158,11 @@ func (adapter *RDSAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return info, nil
 }
 
-func (adapter *RDSAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(adapter.PGDriver, context.Background(), adapter.Logger())
+func (adapter *RDSAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
+	return pg.GetActiveConfig(adapter.PGPool, ctx, adapter.Logger())
 }
 
-func (adapter *RDSAdapter) GetDDL() (*agent.DDLPayload, error) {
-	ddl, err := pg.CollectDDL(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.DDLPayload{DDL: ddl, Hash: pg.HashDDL(ddl)}, nil
-}
-
-func (adapter *RDSAdapter) GetPgStatistic() (*agent.PgStatisticPayload, error) {
-	rows, err := pg.CollectPgStatistic(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatisticPayload{Rows: rows}, nil
-}
-
-func (adapter *RDSAdapter) GetPgStatUserTables() (*agent.PgStatUserTablePayload, error) {
-	rows, err := pg.CollectPgStatUserTables(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatUserTablePayload{Rows: rows}, nil
-}
-
-func (adapter *RDSAdapter) GetPgClass() (*agent.PgClassPayload, error) {
-	rows, err := pg.CollectPgClass(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgClassPayload{Rows: rows}, nil
-}
-
-func (adapter *RDSAdapter) pgMajorVersion() int {
-	return adapter.PGMajorVersion
-}
-
-func (adapter *RDSAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
-	rows, err := pg.CollectPgStatActivity(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatActivityPayload{Rows: rows}, nil
-}
-func (adapter *RDSAdapter) GetPgStatDatabaseAll() (*agent.PgStatDatabasePayload, error) {
-	rows, err := pg.CollectPgStatDatabase(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatDatabasePayload{Rows: rows}, nil
-}
-func (adapter *RDSAdapter) GetPgStatDatabaseConflicts() (*agent.PgStatDatabaseConflictsPayload, error) {
-	rows, err := pg.CollectPgStatDatabaseConflicts(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatDatabaseConflictsPayload{Rows: rows}, nil
-}
-func (adapter *RDSAdapter) GetPgStatArchiver() (*agent.PgStatArchiverPayload, error) {
-	rows, err := pg.CollectPgStatArchiver(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatArchiverPayload{Rows: rows}, nil
-}
-func (adapter *RDSAdapter) GetPgStatBgwriterAll() (*agent.PgStatBgwriterPayload, error) {
-	rows, err := pg.CollectPgStatBgwriter(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatBgwriterPayload{Rows: rows}, nil
-}
-func (adapter *RDSAdapter) GetPgStatCheckpointerAll() (*agent.PgStatCheckpointerPayload, error) {
-	rows, err := pg.CollectPgStatCheckpointer(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatCheckpointerPayload{Rows: rows}, nil
-}
-func (adapter *RDSAdapter) GetPgStatWalAll() (*agent.PgStatWalPayload, error) {
-	rows, err := pg.CollectPgStatWal(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatWalPayload{Rows: rows}, nil
-}
-func (adapter *RDSAdapter) GetPgStatIO() (*agent.PgStatIOPayload, error) {
-	rows, err := pg.CollectPgStatIO(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatIOPayload{Rows: rows}, nil
-}
-func (adapter *RDSAdapter) GetPgStatReplication() (*agent.PgStatReplicationPayload, error) {
-	rows, err := pg.CollectPgStatReplication(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatReplicationPayload{Rows: rows}, nil
-}
-func (adapter *RDSAdapter) GetPgStatReplicationSlots() (*agent.PgStatReplicationSlotsPayload, error) {
-	rows, err := pg.CollectPgStatReplicationSlots(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatReplicationSlotsPayload{Rows: rows}, nil
-}
-func (adapter *RDSAdapter) GetPgStatSlru() (*agent.PgStatSlruPayload, error) {
-	rows, err := pg.CollectPgStatSlru(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatSlruPayload{Rows: rows}, nil
-}
-func (adapter *RDSAdapter) GetPgStatUserIndexes() (*agent.PgStatUserIndexesPayload, error) {
-	rows, err := pg.CollectPgStatUserIndexes(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatUserIndexesPayload{Rows: rows}, nil
-}
-func (adapter *RDSAdapter) GetPgStatioUserTables() (*agent.PgStatioUserTablesPayload, error) {
-	rows, err := pg.CollectPgStatioUserTables(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatioUserTablesPayload{Rows: rows}, nil
-}
-func (adapter *RDSAdapter) GetPgStatioUserIndexes() (*agent.PgStatioUserIndexesPayload, error) {
-	rows, err := pg.CollectPgStatioUserIndexes(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatioUserIndexesPayload{Rows: rows}, nil
-}
-func (adapter *RDSAdapter) GetPgStatUserFunctions() (*agent.PgStatUserFunctionsPayload, error) {
-	rows, err := pg.CollectPgStatUserFunctions(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatUserFunctionsPayload{Rows: rows}, nil
-}
-
-func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	// If the last applied config is less than 1 minute ago, return
 	if adapter.State.LastAppliedConfig.Add(1 * time.Minute).After(time.Now()) {
 		adapter.Logger().Info("Last applied config is less than 1 minute ago, skipping")
@@ -285,7 +175,7 @@ func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigRespo
 		adapter.Config.RDSParameterGroupName,
 		adapter.Config.RDSDatabaseIdentifier,
 		adapter.Logger(),
-		context.Background(),
+		ctx,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to apply config: %w", err)
@@ -301,7 +191,7 @@ func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigRespo
 
 	// Instance is online, we validate that PostgreSQL is back online also
 	adapter.Logger().Info("Waiting for PostgreSQL to come back online...")
-	err = pg.WaitPostgresReady(adapter.PGDriver)
+	err = pg.WaitPostgresReady(adapter.PGPool)
 	if err != nil {
 		return fmt.Errorf("error waiting for PostgreSQL to come back online: %w", err)
 	}
@@ -311,7 +201,7 @@ func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigRespo
 }
 
 func (adapter *RDSAdapter) Collectors(aurora bool) []agent.MetricCollector {
-	pool := adapter.PGDriver
+	pool := adapter.PGPool
 	collectors := []agent.MetricCollector{
 		{
 			Key:       "database_average_query_runtime",
@@ -380,7 +270,7 @@ func (adapter *RDSAdapter) Collectors(aurora bool) []agent.MetricCollector {
 }
 
 // Guardrails checks memory utilization and returns Critical if thresholds are exceeded
-func (adapter *RDSAdapter) Guardrails() *guardrails.Signal {
+func (adapter *RDSAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	if time.Since(adapter.State.LastGuardrailCheck) < 5*time.Second {
 		return nil
 	}
