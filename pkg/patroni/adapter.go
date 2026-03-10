@@ -32,6 +32,7 @@ type PatroniAdapter struct {
 	GuardrailConfig guardrails.Config
 	pgConfig        pg.Config
 	PGVersion       string
+	PGMajorVersion  int
 	HTTPClient      *http.Client
 	State           *State
 }
@@ -72,6 +73,7 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 		GuardrailConfig: guardrailConfig,
 		pgConfig:        pgConfig,
 		PGVersion:       pgVersion,
+		PGMajorVersion:  pg.ParsePgMajorVersion(pgVersion),
 		HTTPClient:      &http.Client{Timeout: 60 * time.Second}, // Increased for restart operations
 		State:           &State{},
 	}
@@ -760,7 +762,7 @@ func (adapter *PatroniAdapter) GetPgStatUserTables() (*agent.PgStatUserTablePayl
 }
 
 func (adapter *PatroniAdapter) pgMajorVersion() int {
-	return pg.ParsePgMajorVersion(adapter.PGVersion)
+	return adapter.PGMajorVersion
 }
 
 func (adapter *PatroniAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
@@ -1021,13 +1023,7 @@ func (adapter *PatroniAdapter) Collectors() []agent.MetricCollector {
 		},
 	}
 
-	majorVersion := strings.Split(adapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
+	if adapter.PGMajorVersion >= 17 {
 		collectors = append(collectors, agent.MetricCollector{
 			Key:       "pg_checkpointer",
 			Collector: pg.PGStatCheckpointer(pool),

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
@@ -13,6 +14,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// DefaultCatalogQueryTimeout is the maximum time allowed for a single catalog query.
+// This prevents stuck queries (e.g., due to lock contention) from hanging goroutines forever.
+const DefaultCatalogQueryTimeout = 30 * time.Second
+
+// ensureTimeout returns a context with DefaultCatalogQueryTimeout if the given context
+// has no deadline. If the context already has a deadline, it is returned as-is.
+func ensureTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, DefaultCatalogQueryTimeout)
+}
 
 // pgStatsQuery reads from the pg_stats view which provides a human-readable
 // form of pg_statistic. Array columns use format() to stringify anyarray values
@@ -51,6 +65,8 @@ const pgStatUserTablesQuery = `SELECT * FROM pg_stat_user_tables ORDER BY schema
 
 // CollectPgStatistic queries the pg_stats view and returns rows for the backend.
 func CollectPgStatistic(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatisticRow, error) {
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatsQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stats: %w", err)
@@ -109,6 +125,8 @@ func CollectPgStatistic(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgSt
 
 // CollectPgStatUserTables queries pg_stat_user_tables and returns rows for the backend.
 func CollectPgStatUserTables(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatUserTableRow, error) {
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatUserTablesQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stat_user_tables: %w", err)
@@ -133,6 +151,8 @@ ORDER BY n.nspname, c.relname;
 
 // CollectPgClass queries pg_class for reltuples and relpages of user tables.
 func CollectPgClass(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgClassRow, error) {
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgClassQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_class: %w", err)
@@ -182,6 +202,8 @@ FROM pg_stat_activity a
 `
 
 func CollectPgStatActivity(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatActivityRow, error) {
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatActivityQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stat_activity: %w", err)
@@ -194,6 +216,8 @@ func CollectPgStatActivity(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.P
 const pgStatDatabaseQuery = `SELECT * FROM pg_stat_database`
 
 func CollectPgStatDatabase(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatDatabaseRow, error) {
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatDatabaseQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stat_database: %w", err)
@@ -206,6 +230,8 @@ func CollectPgStatDatabase(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.P
 const pgStatDatabaseConflictsQuery = `SELECT * FROM pg_stat_database_conflicts`
 
 func CollectPgStatDatabaseConflicts(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatDatabaseConflictsRow, error) {
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatDatabaseConflictsQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stat_database_conflicts: %w", err)
@@ -218,6 +244,8 @@ func CollectPgStatDatabaseConflicts(pgPool *pgxpool.Pool, ctx context.Context) (
 const pgStatArchiverQuery = `SELECT * FROM pg_stat_archiver`
 
 func CollectPgStatArchiver(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatArchiverRow, error) {
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatArchiverQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stat_archiver: %w", err)
@@ -230,6 +258,8 @@ func CollectPgStatArchiver(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.P
 const pgStatBgwriterRawQuery = `SELECT * FROM pg_stat_bgwriter`
 
 func CollectPgStatBgwriter(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatBgwriterRow, error) {
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatBgwriterRawQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stat_bgwriter: %w", err)
@@ -245,6 +275,8 @@ func CollectPgStatCheckpointer(pgPool *pgxpool.Pool, ctx context.Context, pgMajo
 	if pgMajorVersion < 17 {
 		return nil, nil
 	}
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatCheckpointerRawQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stat_checkpointer: %w", err)
@@ -272,6 +304,8 @@ func CollectPgStatWal(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion 
 	if pgMajorVersion < 14 {
 		return nil, nil
 	}
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatWalQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stat_wal: %w", err)
@@ -287,6 +321,8 @@ func CollectPgStatIO(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion i
 	if pgMajorVersion < 16 {
 		return nil, nil
 	}
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatIOQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stat_io: %w", err)
@@ -317,6 +353,8 @@ FROM pg_stat_replication
 `
 
 func CollectPgStatReplication(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatReplicationRow, error) {
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatReplicationQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stat_replication: %w", err)
@@ -332,6 +370,8 @@ func CollectPgStatReplicationSlots(pgPool *pgxpool.Pool, ctx context.Context, pg
 	if pgMajorVersion < 14 {
 		return nil, nil
 	}
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatReplicationSlotsQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stat_replication_slots: %w", err)
@@ -344,6 +384,8 @@ func CollectPgStatReplicationSlots(pgPool *pgxpool.Pool, ctx context.Context, pg
 const pgStatSlruQuery = `SELECT * FROM pg_stat_slru`
 
 func CollectPgStatSlru(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatSlruRow, error) {
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatSlruQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stat_slru: %w", err)
@@ -356,6 +398,8 @@ func CollectPgStatSlru(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgSta
 const pgStatUserIndexesQuery = `SELECT * FROM pg_stat_user_indexes`
 
 func CollectPgStatUserIndexes(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatUserIndexesRow, error) {
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatUserIndexesQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stat_user_indexes: %w", err)
@@ -379,6 +423,8 @@ LIMIT 500
 `
 
 func CollectPgStatioUserTables(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatioUserTablesRow, error) {
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatioUserTablesQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_statio_user_tables: %w", err)
@@ -396,6 +442,8 @@ WHERE COALESCE(idx_blks_read,0) + COALESCE(idx_blks_hit,0) > 0
 `
 
 func CollectPgStatioUserIndexes(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatioUserIndexesRow, error) {
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatioUserIndexesQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_statio_user_indexes: %w", err)
@@ -414,6 +462,8 @@ LIMIT 500
 `
 
 func CollectPgStatUserFunctions(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatUserFunctionsRow, error) {
+	ctx, cancel := ensureTimeout(ctx)
+	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatUserFunctionsQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stat_user_functions: %w", err)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -48,6 +47,7 @@ type CNPGAdapter struct {
 	Config            Config
 	PGDriver          *pgxpool.Pool
 	PGVersion         string
+	PGMajorVersion    int
 	K8sClient         kubernetes.Client
 	State             *State
 }
@@ -112,6 +112,7 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 		GuardrailSettings: guardrailSettings,
 		PGDriver:          dbpool,
 		PGVersion:         pgVersion,
+		PGMajorVersion:    pg.ParsePgMajorVersion(pgVersion),
 		K8sClient:         client,
 		State:             &State{LastGuardrailCheck: time.Now()},
 	}
@@ -126,7 +127,7 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 		client,
 		config.ClusterName,
 		config.ContainerName,
-		pgVersion,
+		adapter.PGMajorVersion,
 		adapter.Logger(),
 	))
 
@@ -469,7 +470,7 @@ func (adapter *CNPGAdapter) GetPgStatUserTables() (*agent.PgStatUserTablePayload
 }
 
 func (adapter *CNPGAdapter) pgMajorVersion() int {
-	return pg.ParsePgMajorVersion(adapter.PGVersion)
+	return adapter.PGMajorVersion
 }
 
 func (adapter *CNPGAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
@@ -795,7 +796,7 @@ func (adapter *CNPGAdapter) Guardrails() *guardrails.Signal {
 	return nil
 }
 
-func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName string, containerName string, pgVersion string, logger *log.Logger) []agent.MetricCollector {
+func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName string, containerName string, pgMajorVersion int, logger *log.Logger) []agent.MetricCollector {
 	// Get PG config for query settings
 	pgConfig, _ := pg.ConfigFromViper(nil)
 
@@ -857,17 +858,11 @@ func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName st
 	}
 
 	// Add pg_checkpointer for PostgreSQL 17+
-	majorVersion := strings.Split(pgVersion, ".")
-	if len(majorVersion) > 0 {
-		intMajorVersion, err := strconv.Atoi(majorVersion[0])
-		if err != nil {
-			logger.Warn("Failed to parse PostgreSQL major version, skipping pg_checkpointer collector", "version", pgVersion, "error", err)
-		} else if intMajorVersion >= 17 {
-			collectors = append(collectors, agent.MetricCollector{
-				Key:       "pg_checkpointer",
-				Collector: pg.PGStatCheckpointer(pool),
-			})
-		}
+	if pgMajorVersion >= 17 {
+		collectors = append(collectors, agent.MetricCollector{
+			Key:       "pg_checkpointer",
+			Collector: pg.PGStatCheckpointer(pool),
+		})
 	}
 
 	return collectors

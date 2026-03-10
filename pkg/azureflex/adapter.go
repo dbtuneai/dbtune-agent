@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
@@ -30,6 +29,7 @@ type AzureFlexAdapter struct {
 	GuardrailConfig guardrails.Config
 	pgConfig        pg.Config
 	PGVersion       string
+	PGMajorVersion  int
 }
 
 func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
@@ -67,6 +67,7 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 		GuardrailConfig: guardrailConfig,
 		pgConfig:        pgConfig,
 		PGVersion:       pgVersion,
+		PGMajorVersion:  pg.ParsePgMajorVersion(pgVersion),
 	}
 
 	adpt.InitCollectors(adpt.Collectors())
@@ -196,7 +197,7 @@ func (adapter *AzureFlexAdapter) GetActiveConfig() (agent.ConfigArraySchema, err
 }
 
 func (adapter *AzureFlexAdapter) pgMajorVersion() int {
-	return pg.ParsePgMajorVersion(adapter.PGVersion)
+	return adapter.PGMajorVersion
 }
 
 func (adapter *AzureFlexAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
@@ -478,13 +479,7 @@ func (adapter *AzureFlexAdapter) Collectors() []agent.MetricCollector {
 			Collector: AsCollector(MemoryPercent(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName), metrics.NodeMemoryUsedPercentage),
 		},
 	}
-	majorVersion := strings.Split(adapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
+	if adapter.PGMajorVersion >= 17 {
 		collectors = append(collectors, agent.MetricCollector{
 			Key:       "pg_checkpointer",
 			Collector: pg.PGStatCheckpointer(pool),

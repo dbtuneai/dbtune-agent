@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"strconv"
-	"strings"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
@@ -25,6 +23,7 @@ type DefaultPostgreSQLAdapter struct {
 	pgConfig        pg.Config
 	GuardrailConfig guardrails.Config
 	PGVersion       string
+	PGMajorVersion  int
 }
 
 func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
@@ -55,6 +54,7 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 		pgConfig:        pgConfig,
 		GuardrailConfig: guardrailSettings,
 		PGVersion:       PGVersion,
+		PGMajorVersion:  pg.ParsePgMajorVersion(PGVersion),
 	}
 	collectors := DefaultCollectors(c)
 	c.InitCollectors(collectors)
@@ -114,13 +114,7 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 			Collector: HardwareInfoOnPremise(),
 		},
 	}
-	majorVersion := strings.Split(pgAdapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		pgAdapter.Logger().Warnf("Could not parse major version from version string %s: %v", pgAdapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
+	if pgAdapter.PGMajorVersion >= 17 {
 		collectors = append(collectors, agent.MetricCollector{
 			Key:       "pg_checkpointer",
 			Collector: pg.PGStatCheckpointer(pgDriver),
@@ -195,7 +189,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySch
 }
 
 func (adapter *DefaultPostgreSQLAdapter) pgMajorVersion() int {
-	return pg.ParsePgMajorVersion(adapter.PGVersion)
+	return adapter.PGMajorVersion
 }
 
 func (adapter *DefaultPostgreSQLAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {

@@ -149,6 +149,40 @@ func CreateCommonAgentForTests(rt http.RoundTripper) CommonAgent {
 	}
 }
 
+func TestIsNilPayload(t *testing.T) {
+	t.Run("interface nil", func(t *testing.T) {
+		assert.True(t, isNilPayload(nil))
+	})
+
+	t.Run("typed nil pointer", func(t *testing.T) {
+		var p *PgStatCheckpointerPayload
+		assert.True(t, isNilPayload(p))
+	})
+
+	t.Run("typed nil pointer - activity", func(t *testing.T) {
+		var p *PgStatActivityPayload
+		assert.True(t, isNilPayload(p))
+	})
+
+	t.Run("non-nil pointer with nil rows", func(t *testing.T) {
+		p := &PgStatCheckpointerPayload{Rows: nil}
+		assert.False(t, isNilPayload(p))
+	})
+
+	t.Run("non-nil pointer with rows", func(t *testing.T) {
+		p := &PgStatCheckpointerPayload{Rows: []PgStatCheckpointerRow{}}
+		assert.False(t, isNilPayload(p))
+	})
+
+	t.Run("non-pointer value", func(t *testing.T) {
+		assert.False(t, isNilPayload("hello"))
+	})
+
+	t.Run("non-pointer struct", func(t *testing.T) {
+		assert.False(t, isNilPayload(PgStatCheckpointerPayload{}))
+	})
+}
+
 func TestCommonAgent_SendHeartbeat_Succeeds(t *testing.T) {
 	transport := dbtunetest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)

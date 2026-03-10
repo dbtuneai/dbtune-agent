@@ -3,8 +3,6 @@ package rds
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -23,6 +21,7 @@ type RDSAdapter struct {
 	AWSClients        AWSClients
 	PGDriver          *pgxpool.Pool
 	PGVersion         string
+	PGMajorVersion    int
 }
 
 func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
@@ -92,6 +91,7 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 		GuardrailSettings: guardrailSettings,
 		PGDriver:          dbpool,
 		PGVersion:         PGVersion,
+		PGMajorVersion:    pg.ParsePgMajorVersion(PGVersion),
 	}
 	return adapter, nil
 }
@@ -193,7 +193,7 @@ func (adapter *RDSAdapter) GetPgClass() (*agent.PgClassPayload, error) {
 }
 
 func (adapter *RDSAdapter) pgMajorVersion() int {
-	return pg.ParsePgMajorVersion(adapter.PGVersion)
+	return adapter.PGMajorVersion
 }
 
 func (adapter *RDSAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
@@ -363,13 +363,7 @@ func (adapter *RDSAdapter) Collectors(aurora bool) []agent.MetricCollector {
 			),
 		},
 	}
-	majorVersion := strings.Split(adapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
+	if adapter.PGMajorVersion >= 17 {
 		collectors = append(collectors, agent.MetricCollector{
 			Key:       "pg_checkpointer",
 			Collector: pg.PGStatCheckpointer(pool),

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"reflect"
 	"runtime"
 	"strconv"
 	"sync"
@@ -670,7 +671,7 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 
 func (a *CommonAgent) SendPgStatistic(payload *PgStatisticPayload) error {
 	a.Logger().Println("Sending pg_statistic to server")
-	if payload == nil {
+	if isNilPayload(payload) {
 		return fmt.Errorf("pg_statistic payload is nil")
 	}
 
@@ -705,7 +706,7 @@ func (a *CommonAgent) SendPgStatistic(payload *PgStatisticPayload) error {
 
 func (a *CommonAgent) SendPgStatUserTables(payload *PgStatUserTablePayload) error {
 	a.Logger().Println("Sending pg_stat_user_tables to server")
-	if payload == nil {
+	if isNilPayload(payload) {
 		return fmt.Errorf("pg_stat_user_tables payload is nil")
 	}
 
@@ -740,7 +741,7 @@ func (a *CommonAgent) SendPgStatUserTables(payload *PgStatUserTablePayload) erro
 
 func (a *CommonAgent) SendPgClass(payload *PgClassPayload) error {
 	a.Logger().Println("Sending pg_class to server")
-	if payload == nil {
+	if isNilPayload(payload) {
 		return fmt.Errorf("pg_class payload is nil")
 	}
 
@@ -775,7 +776,7 @@ func (a *CommonAgent) SendPgClass(payload *PgClassPayload) error {
 
 func (a *CommonAgent) SendDDL(payload *DDLPayload) error {
 	a.Logger().Println("Sending DDL to server")
-	if payload == nil {
+	if isNilPayload(payload) {
 		return fmt.Errorf("DDL payload is nil")
 	}
 
@@ -808,9 +809,20 @@ func (a *CommonAgent) SendDDL(payload *DDLPayload) error {
 	return nil
 }
 
+// isNilPayload checks if a payload is nil, handling both interface-nil and typed-pointer-nil.
+// This is necessary because Go interfaces are nil only when both type and value are nil.
+// A typed nil pointer (e.g., (*PgStatCheckpointerPayload)(nil)) passed as interface{} is NOT == nil.
+func isNilPayload(payload interface{}) bool {
+	if payload == nil {
+		return true
+	}
+	v := reflect.ValueOf(payload)
+	return v.Kind() == reflect.Ptr && v.IsNil()
+}
+
 func (a *CommonAgent) sendCatalogPayload(name string, url string, payload interface{}) error {
 	a.Logger().Printf("Sending %s to server", name)
-	if payload == nil {
+	if isNilPayload(payload) {
 		return fmt.Errorf("%s payload is nil", name)
 	}
 	jsonData, err := json.Marshal(payload)

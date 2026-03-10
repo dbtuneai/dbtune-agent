@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"strings"
 	"time"
 
 	aivenclient "github.com/aiven/go-client-codegen"
@@ -34,6 +33,7 @@ type AivenPostgreSQLAdapter struct {
 	pgConfig          pg.Config
 	PGDriver          *pgPool.Pool
 	PGVersion         string
+	PGMajorVersion    int
 }
 
 // CreateAivenPostgreSQLAdapter creates a new Aiven PostgreSQL adapter
@@ -100,6 +100,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		pgConfig:          pgConfig,
 		PGDriver:          pgPool,
 		PGVersion:         PGVersion,
+		PGMajorVersion:    pg.ParsePgMajorVersion(PGVersion),
 	}
 
 	// Initialize collectors
@@ -439,13 +440,7 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 			),
 		},
 	}
-	majorVersion := strings.Split(adapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
+	if adapter.PGMajorVersion >= 17 {
 		collectors = append(collectors, agent.MetricCollector{
 			Key:       "pg_checkpointer",
 			Collector: pg.PGStatCheckpointer(pgDriver),
@@ -627,7 +622,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 }
 
 func (adapter *AivenPostgreSQLAdapter) pgMajorVersion() int {
-	return pg.ParsePgMajorVersion(adapter.PGVersion)
+	return adapter.PGMajorVersion
 }
 
 func (adapter *AivenPostgreSQLAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
