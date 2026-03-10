@@ -104,164 +104,14 @@ func (m *MockAgentLooper) SendGuardrailSignal(ctx context.Context, signal guardr
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) GetPgStatistic(ctx context.Context) (*agent.PgStatisticPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*agent.PgStatisticPayload), args.Error(1)
+func (m *MockAgentLooper) CatalogCollectors() []agent.CatalogCollector {
+	args := m.Called()
+	return args.Get(0).([]agent.CatalogCollector)
 }
 
-func (m *MockAgentLooper) SendPgStatistic(ctx context.Context, payload *agent.PgStatisticPayload) error {
-	args := m.Called(ctx, payload)
+func (m *MockAgentLooper) SendCatalogPayload(ctx context.Context, name string, payload any) error {
+	args := m.Called(ctx, name, payload)
 	return args.Error(0)
-}
-
-func (m *MockAgentLooper) GetPgStatUserTables(ctx context.Context) (*agent.PgStatUserTablePayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*agent.PgStatUserTablePayload), args.Error(1)
-}
-
-func (m *MockAgentLooper) SendPgStatUserTables(ctx context.Context, payload *agent.PgStatUserTablePayload) error {
-	args := m.Called(ctx, payload)
-	return args.Error(0)
-}
-
-func (m *MockAgentLooper) GetPgClass(ctx context.Context) (*agent.PgClassPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*agent.PgClassPayload), args.Error(1)
-}
-
-func (m *MockAgentLooper) SendPgClass(ctx context.Context, payload *agent.PgClassPayload) error {
-	args := m.Called(ctx, payload)
-	return args.Error(0)
-}
-
-func (m *MockAgentLooper) GetPgStatActivity(ctx context.Context) (*agent.PgStatActivityPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil { return nil, args.Error(1) }
-	return args.Get(0).(*agent.PgStatActivityPayload), args.Error(1)
-}
-func (m *MockAgentLooper) SendPgStatActivity(ctx context.Context, payload *agent.PgStatActivityPayload) error {
-	return m.Called(ctx, payload).Error(0)
-}
-func (m *MockAgentLooper) GetPgStatDatabaseAll(ctx context.Context) (*agent.PgStatDatabasePayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil { return nil, args.Error(1) }
-	return args.Get(0).(*agent.PgStatDatabasePayload), args.Error(1)
-}
-func (m *MockAgentLooper) SendPgStatDatabaseAll(ctx context.Context, payload *agent.PgStatDatabasePayload) error {
-	return m.Called(ctx, payload).Error(0)
-}
-func (m *MockAgentLooper) GetPgStatDatabaseConflicts(ctx context.Context) (*agent.PgStatDatabaseConflictsPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil { return nil, args.Error(1) }
-	return args.Get(0).(*agent.PgStatDatabaseConflictsPayload), args.Error(1)
-}
-func (m *MockAgentLooper) SendPgStatDatabaseConflicts(ctx context.Context, payload *agent.PgStatDatabaseConflictsPayload) error {
-	return m.Called(ctx, payload).Error(0)
-}
-func (m *MockAgentLooper) GetPgStatArchiver(ctx context.Context) (*agent.PgStatArchiverPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil { return nil, args.Error(1) }
-	return args.Get(0).(*agent.PgStatArchiverPayload), args.Error(1)
-}
-func (m *MockAgentLooper) SendPgStatArchiver(ctx context.Context, payload *agent.PgStatArchiverPayload) error {
-	return m.Called(ctx, payload).Error(0)
-}
-func (m *MockAgentLooper) GetPgStatBgwriterAll(ctx context.Context) (*agent.PgStatBgwriterPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil { return nil, args.Error(1) }
-	return args.Get(0).(*agent.PgStatBgwriterPayload), args.Error(1)
-}
-func (m *MockAgentLooper) SendPgStatBgwriterAll(ctx context.Context, payload *agent.PgStatBgwriterPayload) error {
-	return m.Called(ctx, payload).Error(0)
-}
-func (m *MockAgentLooper) GetPgStatCheckpointerAll(ctx context.Context) (*agent.PgStatCheckpointerPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil { return nil, args.Error(1) }
-	return args.Get(0).(*agent.PgStatCheckpointerPayload), args.Error(1)
-}
-func (m *MockAgentLooper) SendPgStatCheckpointerAll(ctx context.Context, payload *agent.PgStatCheckpointerPayload) error {
-	return m.Called(ctx, payload).Error(0)
-}
-func (m *MockAgentLooper) GetPgStatWalAll(ctx context.Context) (*agent.PgStatWalPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil { return nil, args.Error(1) }
-	return args.Get(0).(*agent.PgStatWalPayload), args.Error(1)
-}
-func (m *MockAgentLooper) SendPgStatWalAll(ctx context.Context, payload *agent.PgStatWalPayload) error {
-	return m.Called(ctx, payload).Error(0)
-}
-func (m *MockAgentLooper) GetPgStatIO(ctx context.Context) (*agent.PgStatIOPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil { return nil, args.Error(1) }
-	return args.Get(0).(*agent.PgStatIOPayload), args.Error(1)
-}
-func (m *MockAgentLooper) SendPgStatIO(ctx context.Context, payload *agent.PgStatIOPayload) error {
-	return m.Called(ctx, payload).Error(0)
-}
-func (m *MockAgentLooper) GetPgStatReplication(ctx context.Context) (*agent.PgStatReplicationPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil { return nil, args.Error(1) }
-	return args.Get(0).(*agent.PgStatReplicationPayload), args.Error(1)
-}
-func (m *MockAgentLooper) SendPgStatReplication(ctx context.Context, payload *agent.PgStatReplicationPayload) error {
-	return m.Called(ctx, payload).Error(0)
-}
-func (m *MockAgentLooper) GetPgStatReplicationSlots(ctx context.Context) (*agent.PgStatReplicationSlotsPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil { return nil, args.Error(1) }
-	return args.Get(0).(*agent.PgStatReplicationSlotsPayload), args.Error(1)
-}
-func (m *MockAgentLooper) SendPgStatReplicationSlots(ctx context.Context, payload *agent.PgStatReplicationSlotsPayload) error {
-	return m.Called(ctx, payload).Error(0)
-}
-func (m *MockAgentLooper) GetPgStatSlru(ctx context.Context) (*agent.PgStatSlruPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil { return nil, args.Error(1) }
-	return args.Get(0).(*agent.PgStatSlruPayload), args.Error(1)
-}
-func (m *MockAgentLooper) SendPgStatSlru(ctx context.Context, payload *agent.PgStatSlruPayload) error {
-	return m.Called(ctx, payload).Error(0)
-}
-func (m *MockAgentLooper) GetPgStatUserIndexes(ctx context.Context) (*agent.PgStatUserIndexesPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil { return nil, args.Error(1) }
-	return args.Get(0).(*agent.PgStatUserIndexesPayload), args.Error(1)
-}
-func (m *MockAgentLooper) SendPgStatUserIndexes(ctx context.Context, payload *agent.PgStatUserIndexesPayload) error {
-	return m.Called(ctx, payload).Error(0)
-}
-func (m *MockAgentLooper) GetPgStatioUserTables(ctx context.Context) (*agent.PgStatioUserTablesPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil { return nil, args.Error(1) }
-	return args.Get(0).(*agent.PgStatioUserTablesPayload), args.Error(1)
-}
-func (m *MockAgentLooper) SendPgStatioUserTables(ctx context.Context, payload *agent.PgStatioUserTablesPayload) error {
-	return m.Called(ctx, payload).Error(0)
-}
-func (m *MockAgentLooper) GetPgStatioUserIndexes(ctx context.Context) (*agent.PgStatioUserIndexesPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil { return nil, args.Error(1) }
-	return args.Get(0).(*agent.PgStatioUserIndexesPayload), args.Error(1)
-}
-func (m *MockAgentLooper) SendPgStatioUserIndexes(ctx context.Context, payload *agent.PgStatioUserIndexesPayload) error {
-	return m.Called(ctx, payload).Error(0)
-}
-func (m *MockAgentLooper) GetPgStatUserFunctions(ctx context.Context) (*agent.PgStatUserFunctionsPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil { return nil, args.Error(1) }
-	return args.Get(0).(*agent.PgStatUserFunctionsPayload), args.Error(1)
-}
-func (m *MockAgentLooper) SendPgStatUserFunctions(ctx context.Context, payload *agent.PgStatUserFunctionsPayload) error {
-	return m.Called(ctx, payload).Error(0)
 }
 
 func (m *MockAgentLooper) SendError(ctx context.Context, payload agent.ErrorPayload) error {
@@ -269,57 +119,25 @@ func (m *MockAgentLooper) SendError(ctx context.Context, payload agent.ErrorPayl
 	return args.Error(0)
 }
 
-// setupCatalogMocksSuccess sets up mock expectations for all 15 new catalog views (success case)
+// setupCatalogMocksSuccess sets up catalog collectors that return test data successfully.
 func setupCatalogMocksSuccess(m *MockAgentLooper) {
-	m.On("GetPgStatActivity", mock.Anything).Return(&agent.PgStatActivityPayload{}, nil)
-	m.On("SendPgStatActivity", mock.Anything, mock.Anything).Return(nil)
-	m.On("GetPgStatDatabaseAll", mock.Anything).Return(&agent.PgStatDatabasePayload{}, nil)
-	m.On("SendPgStatDatabaseAll", mock.Anything, mock.Anything).Return(nil)
-	m.On("GetPgStatDatabaseConflicts", mock.Anything).Return(&agent.PgStatDatabaseConflictsPayload{}, nil)
-	m.On("SendPgStatDatabaseConflicts", mock.Anything, mock.Anything).Return(nil)
-	m.On("GetPgStatArchiver", mock.Anything).Return(&agent.PgStatArchiverPayload{}, nil)
-	m.On("SendPgStatArchiver", mock.Anything, mock.Anything).Return(nil)
-	m.On("GetPgStatBgwriterAll", mock.Anything).Return(&agent.PgStatBgwriterPayload{}, nil)
-	m.On("SendPgStatBgwriterAll", mock.Anything, mock.Anything).Return(nil)
-	m.On("GetPgStatCheckpointerAll", mock.Anything).Return(&agent.PgStatCheckpointerPayload{}, nil)
-	m.On("SendPgStatCheckpointerAll", mock.Anything, mock.Anything).Return(nil).Maybe()
-	m.On("GetPgStatWalAll", mock.Anything).Return(&agent.PgStatWalPayload{}, nil)
-	m.On("SendPgStatWalAll", mock.Anything, mock.Anything).Return(nil).Maybe()
-	m.On("GetPgStatIO", mock.Anything).Return(&agent.PgStatIOPayload{}, nil)
-	m.On("SendPgStatIO", mock.Anything, mock.Anything).Return(nil).Maybe()
-	m.On("GetPgStatReplication", mock.Anything).Return(&agent.PgStatReplicationPayload{}, nil)
-	m.On("SendPgStatReplication", mock.Anything, mock.Anything).Return(nil)
-	m.On("GetPgStatReplicationSlots", mock.Anything).Return(&agent.PgStatReplicationSlotsPayload{}, nil)
-	m.On("SendPgStatReplicationSlots", mock.Anything, mock.Anything).Return(nil).Maybe()
-	m.On("GetPgStatSlru", mock.Anything).Return(&agent.PgStatSlruPayload{}, nil)
-	m.On("SendPgStatSlru", mock.Anything, mock.Anything).Return(nil)
-	m.On("GetPgStatUserIndexes", mock.Anything).Return(&agent.PgStatUserIndexesPayload{}, nil)
-	m.On("SendPgStatUserIndexes", mock.Anything, mock.Anything).Return(nil)
-	m.On("GetPgStatioUserTables", mock.Anything).Return(&agent.PgStatioUserTablesPayload{}, nil)
-	m.On("SendPgStatioUserTables", mock.Anything, mock.Anything).Return(nil)
-	m.On("GetPgStatioUserIndexes", mock.Anything).Return(&agent.PgStatioUserIndexesPayload{}, nil)
-	m.On("SendPgStatioUserIndexes", mock.Anything, mock.Anything).Return(nil)
-	m.On("GetPgStatUserFunctions", mock.Anything).Return(&agent.PgStatUserFunctionsPayload{}, nil)
-	m.On("SendPgStatUserFunctions", mock.Anything, mock.Anything).Return(nil)
+	testData := map[string]bool{}
+	m.On("CatalogCollectors").Return([]agent.CatalogCollector{
+		{Name: "test_catalog", Interval: 1 * time.Minute, Collect: func(ctx context.Context) (any, error) {
+			testData["collected"] = true
+			return map[string]string{"test": "data"}, nil
+		}},
+	})
+	m.On("SendCatalogPayload", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 }
 
-// setupCatalogMocksError sets up mock expectations for all 15 new catalog views (error case)
+// setupCatalogMocksError sets up catalog collectors that return errors.
 func setupCatalogMocksError(m *MockAgentLooper) {
-	m.On("GetPgStatActivity", mock.Anything).Return(nil, errors.New("error"))
-	m.On("GetPgStatDatabaseAll", mock.Anything).Return(nil, errors.New("error"))
-	m.On("GetPgStatDatabaseConflicts", mock.Anything).Return(nil, errors.New("error"))
-	m.On("GetPgStatArchiver", mock.Anything).Return(nil, errors.New("error"))
-	m.On("GetPgStatBgwriterAll", mock.Anything).Return(nil, errors.New("error"))
-	m.On("GetPgStatCheckpointerAll", mock.Anything).Return(nil, errors.New("error"))
-	m.On("GetPgStatWalAll", mock.Anything).Return(nil, errors.New("error"))
-	m.On("GetPgStatIO", mock.Anything).Return(nil, errors.New("error"))
-	m.On("GetPgStatReplication", mock.Anything).Return(nil, errors.New("error"))
-	m.On("GetPgStatReplicationSlots", mock.Anything).Return(nil, errors.New("error"))
-	m.On("GetPgStatSlru", mock.Anything).Return(nil, errors.New("error"))
-	m.On("GetPgStatUserIndexes", mock.Anything).Return(nil, errors.New("error"))
-	m.On("GetPgStatioUserTables", mock.Anything).Return(nil, errors.New("error"))
-	m.On("GetPgStatioUserIndexes", mock.Anything).Return(nil, errors.New("error"))
-	m.On("GetPgStatUserFunctions", mock.Anything).Return(nil, errors.New("error"))
+	m.On("CatalogCollectors").Return([]agent.CatalogCollector{
+		{Name: "test_catalog", Interval: 1 * time.Minute, Collect: func(ctx context.Context) (any, error) {
+			return nil, errors.New("error")
+		}},
+	})
 }
 
 // Test runWithTicker function
@@ -386,8 +204,6 @@ func TestRunner(t *testing.T) {
 	logger.SetOutput(io.Discard)
 
 	// Setup mock expectations
-	// Note: SendHeartbeat is not expected to be called during the short test window
-	// because the heartbeat ticker has skipFirst: true
 	mockAgent.On("Logger").Return(logger)
 	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
@@ -400,12 +216,6 @@ func TestRunner(t *testing.T) {
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
-	mockAgent.On("GetPgStatistic", mock.Anything).Return(&agent.PgStatisticPayload{}, nil)
-	mockAgent.On("SendPgStatistic", mock.Anything, mock.Anything).Return(nil)
-	mockAgent.On("GetPgStatUserTables", mock.Anything).Return(&agent.PgStatUserTablePayload{}, nil)
-	mockAgent.On("SendPgStatUserTables", mock.Anything, mock.Anything).Return(nil)
-	mockAgent.On("GetPgClass", mock.Anything).Return(&agent.PgClassPayload{}, nil)
-	mockAgent.On("SendPgClass", mock.Anything, mock.Anything).Return(nil)
 	setupCatalogMocksSuccess(mockAgent)
 
 	// Run the Runner in a goroutine with a timeout
@@ -431,8 +241,6 @@ func TestRunnerWithErrors(t *testing.T) {
 	logger.SetOutput(io.Discard)
 
 	// Setup mock expectations with errors
-	// Note: SendHeartbeat is not expected to be called during the short test window
-	// because the heartbeat ticker has skipFirst: true
 	mockAgent.On("Logger").Return(logger)
 	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, errors.New("metrics error"))
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, errors.New("system info error"))
@@ -441,9 +249,6 @@ func TestRunnerWithErrors(t *testing.T) {
 	mockAgent.On("SendError", mock.Anything, mock.AnythingOfType("agent.ErrorPayload")).Return(nil)
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, errors.New("config error"))
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
-	mockAgent.On("GetPgStatistic", mock.Anything).Return(nil, errors.New("pg_statistic error"))
-	mockAgent.On("GetPgStatUserTables", mock.Anything).Return(nil, errors.New("pg_stat_user_tables error"))
-	mockAgent.On("GetPgClass", mock.Anything).Return(nil, errors.New("pg_class error"))
 	setupCatalogMocksError(mockAgent)
 
 	// Run the Runner in a goroutine with a timeout
@@ -470,8 +275,6 @@ func TestRunnerWhenGetProposedConfigReturnsAConfigThenApplyConfigShouldBeCalled(
 
 	mockRecommendation := &agent.ProposedConfigResponse{}
 
-	// Note: SendHeartbeat is not expected to be called during the short test window
-	// because the heartbeat ticker has skipFirst: true
 	mockAgent.On("Logger").Return(logger)
 	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
@@ -485,12 +288,6 @@ func TestRunnerWhenGetProposedConfigReturnsAConfigThenApplyConfigShouldBeCalled(
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(mockRecommendation, nil)
 	mockAgent.On("ApplyConfig", mock.Anything, mockRecommendation).Return(nil)
-	mockAgent.On("GetPgStatistic", mock.Anything).Return(&agent.PgStatisticPayload{}, nil)
-	mockAgent.On("SendPgStatistic", mock.Anything, mock.Anything).Return(nil)
-	mockAgent.On("GetPgStatUserTables", mock.Anything).Return(&agent.PgStatUserTablePayload{}, nil)
-	mockAgent.On("SendPgStatUserTables", mock.Anything, mock.Anything).Return(nil)
-	mockAgent.On("GetPgClass", mock.Anything).Return(&agent.PgClassPayload{}, nil)
-	mockAgent.On("SendPgClass", mock.Anything, mock.Anything).Return(nil)
 	setupCatalogMocksSuccess(mockAgent)
 
 	// Run the Runner in a goroutine with a timeout
@@ -515,8 +312,6 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 	logger := logrus.New()
 	logger.SetOutput(io.Discard)
 
-	// Note: SendHeartbeat is not expected to be called during the short test window
-	// because the heartbeat ticker has skipFirst: true
 	mockAgent.On("Logger").Return(logger)
 	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
@@ -529,12 +324,6 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
-	mockAgent.On("GetPgStatistic", mock.Anything).Return(&agent.PgStatisticPayload{}, nil)
-	mockAgent.On("SendPgStatistic", mock.Anything, mock.Anything).Return(nil)
-	mockAgent.On("GetPgStatUserTables", mock.Anything).Return(&agent.PgStatUserTablePayload{}, nil)
-	mockAgent.On("SendPgStatUserTables", mock.Anything, mock.Anything).Return(nil)
-	mockAgent.On("GetPgClass", mock.Anything).Return(&agent.PgClassPayload{}, nil)
-	mockAgent.On("SendPgClass", mock.Anything, mock.Anything).Return(nil)
 	setupCatalogMocksSuccess(mockAgent)
 
 	// Run the Runner in a goroutine with a timeout

@@ -115,34 +115,22 @@ type ProposedConfigResponse struct {
 	KnobApplication string        `json:"knob_application"`
 }
 
+// CatalogCollector defines a periodic catalog collection task.
+type CatalogCollector struct {
+	Name     string
+	Interval time.Duration
+	Collect  func(ctx context.Context) (any, error)
+}
+
 type AgentLooper interface {
 	// SendHeartbeat sends a heartbeat to the DBtune server
 	SendHeartbeat(ctx context.Context) error
 
 	// GetMetrics returns the metrics for the agent
-	// The metrics should have a format of:
-	// {
-	//   "no_cpu": { "type": "int", "value": 4 },
-	//   "available_memory": { "type": "bytes", "value": 1024 },
-	// }
-	// The current implementation of GetMetrics is following a concurrent collection
-	// approach, where the collectors are executed in parallel and the errors are
-	// collected in a channel. The channel is then closed and the results are
-	// returned. Uses the errgroup package to delegate the concurrent execution.
 	GetMetrics(ctx context.Context) ([]metrics.FlatValue, error)
 	SendMetrics(ctx context.Context, ms []metrics.FlatValue) error
 
 	// GetSystemInfo returns the system info of the PostgresSQL server
-	// Example of system info:
-	// {
-	//   "no_cpu": { "type": "int", "value": 4 },
-	//   "total_memory": { "type": "bytes", "value": 1024 },
-	// }
-	// Importantly, you should never return a partial view of the SystemInfo, that is
-	// if one step fails, you should abort and not return any metrics, just an error.
-	// This is because if only a partial amount of the SystemInfo can be observed, then
-	// it means that DBtune will detect this as the system information having been changed
-	// and potentially abort an inprogress tuning session.
 	GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error)
 	SendSystemInfo(ctx context.Context, systemInfo []metrics.FlatValue) error
 
@@ -150,66 +138,28 @@ type AgentLooper interface {
 	SendActiveConfig(ctx context.Context, config ConfigArraySchema) error
 	GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error)
 
+	// DDL has unique hash-based dedup logic in the runner, so it stays separate.
 	GetDDL(ctx context.Context) (*DDLPayload, error)
 	SendDDL(ctx context.Context, payload *DDLPayload) error
-	GetPgStatistic(ctx context.Context) (*PgStatisticPayload, error)
-	SendPgStatistic(ctx context.Context, payload *PgStatisticPayload) error
-	GetPgStatUserTables(ctx context.Context) (*PgStatUserTablePayload, error)
-	SendPgStatUserTables(ctx context.Context, payload *PgStatUserTablePayload) error
-	GetPgClass(ctx context.Context) (*PgClassPayload, error)
-	SendPgClass(ctx context.Context, payload *PgClassPayload) error
 
-	GetPgStatActivity(ctx context.Context) (*PgStatActivityPayload, error)
-	SendPgStatActivity(ctx context.Context, payload *PgStatActivityPayload) error
-	GetPgStatDatabaseAll(ctx context.Context) (*PgStatDatabasePayload, error)
-	SendPgStatDatabaseAll(ctx context.Context, payload *PgStatDatabasePayload) error
-	GetPgStatDatabaseConflicts(ctx context.Context) (*PgStatDatabaseConflictsPayload, error)
-	SendPgStatDatabaseConflicts(ctx context.Context, payload *PgStatDatabaseConflictsPayload) error
-	GetPgStatArchiver(ctx context.Context) (*PgStatArchiverPayload, error)
-	SendPgStatArchiver(ctx context.Context, payload *PgStatArchiverPayload) error
-	GetPgStatBgwriterAll(ctx context.Context) (*PgStatBgwriterPayload, error)
-	SendPgStatBgwriterAll(ctx context.Context, payload *PgStatBgwriterPayload) error
-	GetPgStatCheckpointerAll(ctx context.Context) (*PgStatCheckpointerPayload, error)
-	SendPgStatCheckpointerAll(ctx context.Context, payload *PgStatCheckpointerPayload) error
-	GetPgStatWalAll(ctx context.Context) (*PgStatWalPayload, error)
-	SendPgStatWalAll(ctx context.Context, payload *PgStatWalPayload) error
-	GetPgStatIO(ctx context.Context) (*PgStatIOPayload, error)
-	SendPgStatIO(ctx context.Context, payload *PgStatIOPayload) error
-	GetPgStatReplication(ctx context.Context) (*PgStatReplicationPayload, error)
-	SendPgStatReplication(ctx context.Context, payload *PgStatReplicationPayload) error
-	GetPgStatReplicationSlots(ctx context.Context) (*PgStatReplicationSlotsPayload, error)
-	SendPgStatReplicationSlots(ctx context.Context, payload *PgStatReplicationSlotsPayload) error
-	GetPgStatSlru(ctx context.Context) (*PgStatSlruPayload, error)
-	SendPgStatSlru(ctx context.Context, payload *PgStatSlruPayload) error
-	GetPgStatUserIndexes(ctx context.Context) (*PgStatUserIndexesPayload, error)
-	SendPgStatUserIndexes(ctx context.Context, payload *PgStatUserIndexesPayload) error
-	GetPgStatioUserTables(ctx context.Context) (*PgStatioUserTablesPayload, error)
-	SendPgStatioUserTables(ctx context.Context, payload *PgStatioUserTablesPayload) error
-	GetPgStatioUserIndexes(ctx context.Context) (*PgStatioUserIndexesPayload, error)
-	SendPgStatioUserIndexes(ctx context.Context, payload *PgStatioUserIndexesPayload) error
-	GetPgStatUserFunctions(ctx context.Context) (*PgStatUserFunctionsPayload, error)
-	SendPgStatUserFunctions(ctx context.Context, payload *PgStatUserFunctionsPayload) error
+	// CatalogCollectors returns the list of catalog collection tasks.
+	CatalogCollectors() []CatalogCollector
+	// SendCatalogPayload sends an arbitrary catalog payload to the server.
+	SendCatalogPayload(ctx context.Context, name string, payload any) error
 
 	// ApplyConfig applies the configuration to the PostgresSQL server
-	// The configuration is applied with the appropriate method, either with a
-	// restart or a reload operation
 	ApplyConfig(ctx context.Context, knobs *ProposedConfigResponse) error
 
 	// Guardrails is responsible for triggering a signal to the DBtune server
 	// that something is heading towards a failure.
-	// An example failure could be memory above a certain threshold (90%)
-	// or a rate of disk growth that is more than usual and not acceptable.
-	// Returns nil if no guardrail is triggered, otherwise returns the type of guardrail
-	// and the metric that is monitored.
 	Guardrails(ctx context.Context) *guardrails.Signal
 	// SendGuardrailSignal sends a signal to the DBtune server that something is heading towards a failure.
-	// The signal will be send maximum once every 15 seconds.
 	SendGuardrailSignal(ctx context.Context, signal guardrails.Signal) error
 
 	// SendError sends an error report to the DBtune server
 	SendError(ctx context.Context, payload ErrorPayload) error
 
-	// GetLogger returns the logger for the agent
+	// Logger returns the logger for the agent
 	Logger() *log.Logger
 }
 
@@ -670,26 +620,14 @@ func (a *CommonAgent) SendActiveConfig(ctx context.Context, config ConfigArraySc
 	return nil
 }
 
-func (a *CommonAgent) SendPgStatistic(ctx context.Context, payload *PgStatisticPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_statistic", payload)
-}
-
-func (a *CommonAgent) SendPgStatUserTables(ctx context.Context, payload *PgStatUserTablePayload) error {
-	return a.sendCatalogPayload(ctx, "pg_stat_user_tables", payload)
-}
-
-func (a *CommonAgent) SendPgClass(ctx context.Context, payload *PgClassPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_class", payload)
-}
-
 func (a *CommonAgent) SendDDL(ctx context.Context, payload *DDLPayload) error {
-	return a.sendCatalogPayload(ctx, "ddl", payload)
+	return a.SendCatalogPayload(ctx, "ddl", payload)
 }
 
 // isNilPayload checks if a payload is nil, handling both interface-nil and typed-pointer-nil.
 // This is necessary because Go interfaces are nil only when both type and value are nil.
 // A typed nil pointer (e.g., (*PgStatCheckpointerPayload)(nil)) passed as interface{} is NOT == nil.
-func isNilPayload(payload interface{}) bool {
+func isNilPayload(payload any) bool {
 	if payload == nil {
 		return true
 	}
@@ -697,7 +635,7 @@ func isNilPayload(payload interface{}) bool {
 	return v.Kind() == reflect.Ptr && v.IsNil()
 }
 
-func (a *CommonAgent) sendCatalogPayload(ctx context.Context, name string, payload interface{}) error {
+func (a *CommonAgent) SendCatalogPayload(ctx context.Context, name string, payload any) error {
 	a.Logger().Printf("Sending %s to server", name)
 	if isNilPayload(payload) {
 		return fmt.Errorf("%s payload is nil", name)
@@ -725,66 +663,6 @@ func (a *CommonAgent) sendCatalogPayload(ctx context.Context, name string, paylo
 		return fmt.Errorf("failed to send %s, code: %d", name, resp.StatusCode)
 	}
 	return nil
-}
-
-func (a *CommonAgent) SendPgStatActivity(ctx context.Context, payload *PgStatActivityPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_stat_activity", payload)
-}
-
-func (a *CommonAgent) SendPgStatDatabaseAll(ctx context.Context, payload *PgStatDatabasePayload) error {
-	return a.sendCatalogPayload(ctx, "pg_stat_database", payload)
-}
-
-func (a *CommonAgent) SendPgStatDatabaseConflicts(ctx context.Context, payload *PgStatDatabaseConflictsPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_stat_database_conflicts", payload)
-}
-
-func (a *CommonAgent) SendPgStatArchiver(ctx context.Context, payload *PgStatArchiverPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_stat_archiver", payload)
-}
-
-func (a *CommonAgent) SendPgStatBgwriterAll(ctx context.Context, payload *PgStatBgwriterPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_stat_bgwriter", payload)
-}
-
-func (a *CommonAgent) SendPgStatCheckpointerAll(ctx context.Context, payload *PgStatCheckpointerPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_stat_checkpointer", payload)
-}
-
-func (a *CommonAgent) SendPgStatWalAll(ctx context.Context, payload *PgStatWalPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_stat_wal", payload)
-}
-
-func (a *CommonAgent) SendPgStatIO(ctx context.Context, payload *PgStatIOPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_stat_io", payload)
-}
-
-func (a *CommonAgent) SendPgStatReplication(ctx context.Context, payload *PgStatReplicationPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_stat_replication", payload)
-}
-
-func (a *CommonAgent) SendPgStatReplicationSlots(ctx context.Context, payload *PgStatReplicationSlotsPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_stat_replication_slots", payload)
-}
-
-func (a *CommonAgent) SendPgStatSlru(ctx context.Context, payload *PgStatSlruPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_stat_slru", payload)
-}
-
-func (a *CommonAgent) SendPgStatUserIndexes(ctx context.Context, payload *PgStatUserIndexesPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_stat_user_indexes", payload)
-}
-
-func (a *CommonAgent) SendPgStatioUserTables(ctx context.Context, payload *PgStatioUserTablesPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_statio_user_tables", payload)
-}
-
-func (a *CommonAgent) SendPgStatioUserIndexes(ctx context.Context, payload *PgStatioUserIndexesPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_statio_user_indexes", payload)
-}
-
-func (a *CommonAgent) SendPgStatUserFunctions(ctx context.Context, payload *PgStatUserFunctionsPayload) error {
-	return a.sendCatalogPayload(ctx, "pg_stat_user_functions", payload)
 }
 
 func (a *CommonAgent) GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error) {
