@@ -409,6 +409,10 @@ func (a *CommonAgent) Logger() *log.Logger {
 	return a.logger
 }
 
+func (a *CommonAgent) WithLogger(logger *log.Logger) {
+	a.logger = logger
+}
+
 // SendHeartbeat sends a heartbeat to the DBtune server
 // to indicate that the agent is running.
 // This method does not need to be overridden by any adapter

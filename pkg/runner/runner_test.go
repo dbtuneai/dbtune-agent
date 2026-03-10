@@ -3,13 +3,17 @@ package runner
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/dbtune"
+	"github.com/dbtuneai/agent/pkg/dbtune/dbtunetest"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
+	"github.com/hashicorp/go-retryablehttp"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -280,4 +284,77 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 
 	// Verify that the mock expectations were met
 	mockAgent.AssertExpectations(t)
+}
+
+// stubAgentLooper  is required because the existing MockAgent stubs way too much for
+// what we are testing here. It embeds CommonAgent (for real HTTP implementations) and provides
+// minimal stubs for the adapter-specific methods not implemented by CommonAgent.
+type stubAgentLooper struct {
+	agent.CommonAgent
+}
+
+// Stub out the database interactions here (but note: not the DBtune API)
+func (s *stubAgentLooper) GetSystemInfo() ([]metrics.FlatValue, error) {
+	return []metrics.FlatValue{}, nil
+}
+
+func (s *stubAgentLooper) GetActiveConfig() (agent.ConfigArraySchema, error) {
+	return agent.ConfigArraySchema{}, nil
+}
+
+func (s *stubAgentLooper) ApplyConfig(_ *agent.ProposedConfigResponse) error {
+	return nil
+}
+
+func (s *stubAgentLooper) Guardrails() *guardrails.Signal {
+	return &guardrails.Signal{Level: guardrails.Critical, Type: guardrails.Memory}
+}
+
+func createStubAgentLooper(rt http.RoundTripper) *stubAgentLooper {
+	underlying := &http.Client{Transport: rt}
+	client := retryablehttp.NewClient()
+	client.HTTPClient = underlying
+
+	ca := agent.CommonAgent{
+		AgentID:   "test-agent",
+		APIClient: client,
+		ServerURLs: dbtune.ServerURLs{
+			ServerUrl: "http://localhost:8080",
+			ApiKey:    "super-secret-key",
+			DbID:      "test-database-id",
+		},
+		StartTime: time.Now().UTC().Format(time.RFC3339),
+		Version:   "test-version",
+	}
+	ca.WithLogger(logrus.New())
+
+	return &stubAgentLooper{CommonAgent: ca}
+}
+
+// TestRunnerCallsAllAPIActions verifies that Runner makes all expected HTTP API
+// calls using a real CommonAgent wired to a SuccessfulTrip transport.
+// Heartbeat (skipFirst: true, 15 s ticker) and log-entries (error-path only)
+// are excluded because they do not fire in a short test window.
+func TestRunnerCallsAllAPIActions(t *testing.T) {
+	transport := dbtunetest.CreateSuccessfulTripWithRoutes([]dbtunetest.Route{
+		{"/api/v1/agent/configurations", http.MethodGet},
+		{"/api/v1/agent/configurations", http.MethodPost},
+		{"/api/v1/agent/metrics", http.MethodPost},
+		{"/api/v1/agent/system-info", http.MethodPut},
+		{"/api/v1/agent/guardrails", http.MethodPost},
+	})
+
+	stub := createStubAgentLooper(transport)
+
+	// Runner blocks forever, so we start it in a goroutine so
+	// that we can later check that it has done something.
+	// It might be a good idea if Runner takes a context
+	// because the cancelable context in Runner doesn't seem
+	// to be able to be accessed outside of it? So how do we
+	// cancel?
+	go Runner(stub)
+
+	time.Sleep(200 * time.Millisecond)
+
+	transport.AllActionsCalled(t)
 }
