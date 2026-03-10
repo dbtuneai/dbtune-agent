@@ -290,6 +290,162 @@ func (d *DockerContainerAdapter) GetActiveConfig() (agent.ConfigArraySchema, err
 	return pg.GetActiveConfig(d.PGDriver, context.Background(), d.Logger())
 }
 
+func (d *DockerContainerAdapter) GetDDL() (*agent.DDLPayload, error) {
+	ddl, err := pg.CollectDDL(d.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.DDLPayload{DDL: ddl, Hash: pg.HashDDL(ddl)}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatistic() (*agent.PgStatisticPayload, error) {
+	rows, err := pg.CollectPgStatistic(d.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatisticPayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatUserTables() (*agent.PgStatUserTablePayload, error) {
+	rows, err := pg.CollectPgStatUserTables(d.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatUserTablePayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgClass() (*agent.PgClassPayload, error) {
+	rows, err := pg.CollectPgClass(d.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgClassPayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) pgMajorVersion() int {
+	return pg.ParsePgMajorVersion(d.PGVersion)
+}
+
+func (d *DockerContainerAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
+	rows, err := pg.CollectPgStatActivity(d.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatActivityPayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatDatabaseAll() (*agent.PgStatDatabasePayload, error) {
+	rows, err := pg.CollectPgStatDatabase(d.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatDatabasePayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatDatabaseConflicts() (*agent.PgStatDatabaseConflictsPayload, error) {
+	rows, err := pg.CollectPgStatDatabaseConflicts(d.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatDatabaseConflictsPayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatArchiver() (*agent.PgStatArchiverPayload, error) {
+	rows, err := pg.CollectPgStatArchiver(d.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatArchiverPayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatBgwriterAll() (*agent.PgStatBgwriterPayload, error) {
+	rows, err := pg.CollectPgStatBgwriter(d.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatBgwriterPayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatCheckpointerAll() (*agent.PgStatCheckpointerPayload, error) {
+	rows, err := pg.CollectPgStatCheckpointer(d.PGDriver, context.Background(), d.pgMajorVersion())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatCheckpointerPayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatWalAll() (*agent.PgStatWalPayload, error) {
+	rows, err := pg.CollectPgStatWal(d.PGDriver, context.Background(), d.pgMajorVersion())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatWalPayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatIO() (*agent.PgStatIOPayload, error) {
+	rows, err := pg.CollectPgStatIO(d.PGDriver, context.Background(), d.pgMajorVersion())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatIOPayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatReplication() (*agent.PgStatReplicationPayload, error) {
+	rows, err := pg.CollectPgStatReplication(d.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatReplicationPayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatReplicationSlots() (*agent.PgStatReplicationSlotsPayload, error) {
+	rows, err := pg.CollectPgStatReplicationSlots(d.PGDriver, context.Background(), d.pgMajorVersion())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatReplicationSlotsPayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatSlru() (*agent.PgStatSlruPayload, error) {
+	rows, err := pg.CollectPgStatSlru(d.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatSlruPayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatUserIndexes() (*agent.PgStatUserIndexesPayload, error) {
+	rows, err := pg.CollectPgStatUserIndexes(d.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatUserIndexesPayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatioUserTables() (*agent.PgStatioUserTablesPayload, error) {
+	rows, err := pg.CollectPgStatioUserTables(d.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatioUserTablesPayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatioUserIndexes() (*agent.PgStatioUserIndexesPayload, error) {
+	rows, err := pg.CollectPgStatioUserIndexes(d.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatioUserIndexesPayload{Rows: rows}, nil
+}
+
+func (d *DockerContainerAdapter) GetPgStatUserFunctions() (*agent.PgStatUserFunctionsPayload, error) {
+	rows, err := pg.CollectPgStatUserFunctions(d.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatUserFunctionsPayload{Rows: rows}, nil
+}
+
 func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
 	d.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 

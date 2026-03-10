@@ -723,6 +723,164 @@ func (adapter *PatroniAdapter) GetActiveConfig() (agent.ConfigArraySchema, error
 	return filteredConfig, nil
 }
 
+func (adapter *PatroniAdapter) GetDDL() (*agent.DDLPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetDDL"); err != nil {
+		return nil, err
+	}
+	ddl, err := pg.CollectDDL(adapter.PGDriver, ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &agent.DDLPayload{DDL: ddl, Hash: pg.HashDDL(ddl)}, nil
+}
+
+func (adapter *PatroniAdapter) GetPgStatistic() (*agent.PgStatisticPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatistic"); err != nil {
+		return nil, err
+	}
+	rows, err := pg.CollectPgStatistic(adapter.PGDriver, ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatisticPayload{Rows: rows}, nil
+}
+
+func (adapter *PatroniAdapter) GetPgStatUserTables() (*agent.PgStatUserTablePayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatUserTables"); err != nil {
+		return nil, err
+	}
+	rows, err := pg.CollectPgStatUserTables(adapter.PGDriver, ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatUserTablePayload{Rows: rows}, nil
+}
+
+func (adapter *PatroniAdapter) pgMajorVersion() int {
+	return pg.ParsePgMajorVersion(adapter.PGVersion)
+}
+
+func (adapter *PatroniAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatActivity"); err != nil { return nil, err }
+	rows, err := pg.CollectPgStatActivity(adapter.PGDriver, ctx)
+	if err != nil { return nil, err }
+	return &agent.PgStatActivityPayload{Rows: rows}, nil
+}
+func (adapter *PatroniAdapter) GetPgStatDatabaseAll() (*agent.PgStatDatabasePayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatDatabaseAll"); err != nil { return nil, err }
+	rows, err := pg.CollectPgStatDatabase(adapter.PGDriver, ctx)
+	if err != nil { return nil, err }
+	return &agent.PgStatDatabasePayload{Rows: rows}, nil
+}
+func (adapter *PatroniAdapter) GetPgStatDatabaseConflicts() (*agent.PgStatDatabaseConflictsPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatDatabaseConflicts"); err != nil { return nil, err }
+	rows, err := pg.CollectPgStatDatabaseConflicts(adapter.PGDriver, ctx)
+	if err != nil { return nil, err }
+	return &agent.PgStatDatabaseConflictsPayload{Rows: rows}, nil
+}
+func (adapter *PatroniAdapter) GetPgStatArchiver() (*agent.PgStatArchiverPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatArchiver"); err != nil { return nil, err }
+	rows, err := pg.CollectPgStatArchiver(adapter.PGDriver, ctx)
+	if err != nil { return nil, err }
+	return &agent.PgStatArchiverPayload{Rows: rows}, nil
+}
+func (adapter *PatroniAdapter) GetPgStatBgwriterAll() (*agent.PgStatBgwriterPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatBgwriterAll"); err != nil { return nil, err }
+	rows, err := pg.CollectPgStatBgwriter(adapter.PGDriver, ctx)
+	if err != nil { return nil, err }
+	return &agent.PgStatBgwriterPayload{Rows: rows}, nil
+}
+func (adapter *PatroniAdapter) GetPgStatCheckpointerAll() (*agent.PgStatCheckpointerPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatCheckpointerAll"); err != nil { return nil, err }
+	rows, err := pg.CollectPgStatCheckpointer(adapter.PGDriver, ctx, adapter.pgMajorVersion())
+	if err != nil { return nil, err }
+	return &agent.PgStatCheckpointerPayload{Rows: rows}, nil
+}
+func (adapter *PatroniAdapter) GetPgStatWalAll() (*agent.PgStatWalPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatWalAll"); err != nil { return nil, err }
+	rows, err := pg.CollectPgStatWal(adapter.PGDriver, ctx, adapter.pgMajorVersion())
+	if err != nil { return nil, err }
+	return &agent.PgStatWalPayload{Rows: rows}, nil
+}
+func (adapter *PatroniAdapter) GetPgStatIO() (*agent.PgStatIOPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatIO"); err != nil { return nil, err }
+	rows, err := pg.CollectPgStatIO(adapter.PGDriver, ctx, adapter.pgMajorVersion())
+	if err != nil { return nil, err }
+	return &agent.PgStatIOPayload{Rows: rows}, nil
+}
+func (adapter *PatroniAdapter) GetPgStatReplication() (*agent.PgStatReplicationPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatReplication"); err != nil { return nil, err }
+	rows, err := pg.CollectPgStatReplication(adapter.PGDriver, ctx)
+	if err != nil { return nil, err }
+	return &agent.PgStatReplicationPayload{Rows: rows}, nil
+}
+func (adapter *PatroniAdapter) GetPgStatReplicationSlots() (*agent.PgStatReplicationSlotsPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatReplicationSlots"); err != nil { return nil, err }
+	rows, err := pg.CollectPgStatReplicationSlots(adapter.PGDriver, ctx, adapter.pgMajorVersion())
+	if err != nil { return nil, err }
+	return &agent.PgStatReplicationSlotsPayload{Rows: rows}, nil
+}
+func (adapter *PatroniAdapter) GetPgStatSlru() (*agent.PgStatSlruPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatSlru"); err != nil { return nil, err }
+	rows, err := pg.CollectPgStatSlru(adapter.PGDriver, ctx)
+	if err != nil { return nil, err }
+	return &agent.PgStatSlruPayload{Rows: rows}, nil
+}
+func (adapter *PatroniAdapter) GetPgStatUserIndexes() (*agent.PgStatUserIndexesPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatUserIndexes"); err != nil { return nil, err }
+	rows, err := pg.CollectPgStatUserIndexes(adapter.PGDriver, ctx)
+	if err != nil { return nil, err }
+	return &agent.PgStatUserIndexesPayload{Rows: rows}, nil
+}
+func (adapter *PatroniAdapter) GetPgStatioUserTables() (*agent.PgStatioUserTablesPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatioUserTables"); err != nil { return nil, err }
+	rows, err := pg.CollectPgStatioUserTables(adapter.PGDriver, ctx)
+	if err != nil { return nil, err }
+	return &agent.PgStatioUserTablesPayload{Rows: rows}, nil
+}
+func (adapter *PatroniAdapter) GetPgStatioUserIndexes() (*agent.PgStatioUserIndexesPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatioUserIndexes"); err != nil { return nil, err }
+	rows, err := pg.CollectPgStatioUserIndexes(adapter.PGDriver, ctx)
+	if err != nil { return nil, err }
+	return &agent.PgStatioUserIndexesPayload{Rows: rows}, nil
+}
+func (adapter *PatroniAdapter) GetPgStatUserFunctions() (*agent.PgStatUserFunctionsPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgStatUserFunctions"); err != nil { return nil, err }
+	rows, err := pg.CollectPgStatUserFunctions(adapter.PGDriver, ctx)
+	if err != nil { return nil, err }
+	return &agent.PgStatUserFunctionsPayload{Rows: rows}, nil
+}
+
+func (adapter *PatroniAdapter) GetPgClass() (*agent.PgClassPayload, error) {
+	ctx := adapter.State.GetOperationsContext()
+	if err := adapter.checkFailoverBeforeOperation(ctx, "GetPgClass"); err != nil {
+		return nil, err
+	}
+	rows, err := pg.CollectPgClass(adapter.PGDriver, ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgClassPayload{Rows: rows}, nil
+}
+
 func (adapter *PatroniAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	logger := adapter.Logger()
 	ctx := adapter.State.GetOperationsContext()

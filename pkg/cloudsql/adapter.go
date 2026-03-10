@@ -153,6 +153,118 @@ func (adapter *CloudSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, erro
 	return filteredConfig, nil
 }
 
+func (adapter *CloudSQLAdapter) pgMajorVersion() int {
+	return pg.ParsePgMajorVersion(adapter.PGVersion)
+}
+
+func (adapter *CloudSQLAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
+	rows, err := pg.CollectPgStatActivity(adapter.PGDriver, context.Background())
+	if err != nil { return nil, err }
+	return &agent.PgStatActivityPayload{Rows: rows}, nil
+}
+func (adapter *CloudSQLAdapter) GetPgStatDatabaseAll() (*agent.PgStatDatabasePayload, error) {
+	rows, err := pg.CollectPgStatDatabase(adapter.PGDriver, context.Background())
+	if err != nil { return nil, err }
+	return &agent.PgStatDatabasePayload{Rows: rows}, nil
+}
+func (adapter *CloudSQLAdapter) GetPgStatDatabaseConflicts() (*agent.PgStatDatabaseConflictsPayload, error) {
+	rows, err := pg.CollectPgStatDatabaseConflicts(adapter.PGDriver, context.Background())
+	if err != nil { return nil, err }
+	return &agent.PgStatDatabaseConflictsPayload{Rows: rows}, nil
+}
+func (adapter *CloudSQLAdapter) GetPgStatArchiver() (*agent.PgStatArchiverPayload, error) {
+	rows, err := pg.CollectPgStatArchiver(adapter.PGDriver, context.Background())
+	if err != nil { return nil, err }
+	return &agent.PgStatArchiverPayload{Rows: rows}, nil
+}
+func (adapter *CloudSQLAdapter) GetPgStatBgwriterAll() (*agent.PgStatBgwriterPayload, error) {
+	rows, err := pg.CollectPgStatBgwriter(adapter.PGDriver, context.Background())
+	if err != nil { return nil, err }
+	return &agent.PgStatBgwriterPayload{Rows: rows}, nil
+}
+func (adapter *CloudSQLAdapter) GetPgStatCheckpointerAll() (*agent.PgStatCheckpointerPayload, error) {
+	rows, err := pg.CollectPgStatCheckpointer(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
+	if err != nil { return nil, err }
+	return &agent.PgStatCheckpointerPayload{Rows: rows}, nil
+}
+func (adapter *CloudSQLAdapter) GetPgStatWalAll() (*agent.PgStatWalPayload, error) {
+	rows, err := pg.CollectPgStatWal(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
+	if err != nil { return nil, err }
+	return &agent.PgStatWalPayload{Rows: rows}, nil
+}
+func (adapter *CloudSQLAdapter) GetPgStatIO() (*agent.PgStatIOPayload, error) {
+	rows, err := pg.CollectPgStatIO(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
+	if err != nil { return nil, err }
+	return &agent.PgStatIOPayload{Rows: rows}, nil
+}
+func (adapter *CloudSQLAdapter) GetPgStatReplication() (*agent.PgStatReplicationPayload, error) {
+	rows, err := pg.CollectPgStatReplication(adapter.PGDriver, context.Background())
+	if err != nil { return nil, err }
+	return &agent.PgStatReplicationPayload{Rows: rows}, nil
+}
+func (adapter *CloudSQLAdapter) GetPgStatReplicationSlots() (*agent.PgStatReplicationSlotsPayload, error) {
+	rows, err := pg.CollectPgStatReplicationSlots(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
+	if err != nil { return nil, err }
+	return &agent.PgStatReplicationSlotsPayload{Rows: rows}, nil
+}
+func (adapter *CloudSQLAdapter) GetPgStatSlru() (*agent.PgStatSlruPayload, error) {
+	rows, err := pg.CollectPgStatSlru(adapter.PGDriver, context.Background())
+	if err != nil { return nil, err }
+	return &agent.PgStatSlruPayload{Rows: rows}, nil
+}
+func (adapter *CloudSQLAdapter) GetPgStatUserIndexes() (*agent.PgStatUserIndexesPayload, error) {
+	rows, err := pg.CollectPgStatUserIndexes(adapter.PGDriver, context.Background())
+	if err != nil { return nil, err }
+	return &agent.PgStatUserIndexesPayload{Rows: rows}, nil
+}
+func (adapter *CloudSQLAdapter) GetPgStatioUserTables() (*agent.PgStatioUserTablesPayload, error) {
+	rows, err := pg.CollectPgStatioUserTables(adapter.PGDriver, context.Background())
+	if err != nil { return nil, err }
+	return &agent.PgStatioUserTablesPayload{Rows: rows}, nil
+}
+func (adapter *CloudSQLAdapter) GetPgStatioUserIndexes() (*agent.PgStatioUserIndexesPayload, error) {
+	rows, err := pg.CollectPgStatioUserIndexes(adapter.PGDriver, context.Background())
+	if err != nil { return nil, err }
+	return &agent.PgStatioUserIndexesPayload{Rows: rows}, nil
+}
+func (adapter *CloudSQLAdapter) GetPgStatUserFunctions() (*agent.PgStatUserFunctionsPayload, error) {
+	rows, err := pg.CollectPgStatUserFunctions(adapter.PGDriver, context.Background())
+	if err != nil { return nil, err }
+	return &agent.PgStatUserFunctionsPayload{Rows: rows}, nil
+}
+
+func (adapter *CloudSQLAdapter) GetDDL() (*agent.DDLPayload, error) {
+	ddl, err := pg.CollectDDL(adapter.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.DDLPayload{DDL: ddl, Hash: pg.HashDDL(ddl)}, nil
+}
+
+func (adapter *CloudSQLAdapter) GetPgStatistic() (*agent.PgStatisticPayload, error) {
+	rows, err := pg.CollectPgStatistic(adapter.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatisticPayload{Rows: rows}, nil
+}
+
+func (adapter *CloudSQLAdapter) GetPgStatUserTables() (*agent.PgStatUserTablePayload, error) {
+	rows, err := pg.CollectPgStatUserTables(adapter.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgStatUserTablePayload{Rows: rows}, nil
+}
+
+func (adapter *CloudSQLAdapter) GetPgClass() (*agent.PgClassPayload, error) {
+	rows, err := pg.CollectPgClass(adapter.PGDriver, context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &agent.PgClassPayload{Rows: rows}, nil
+}
+
 func (adapter *CloudSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	adapter.Logger().Debugf("Getting System Info")
 
