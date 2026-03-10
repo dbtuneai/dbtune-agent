@@ -61,13 +61,6 @@ func handleGetError(ctx context.Context, adapter agent.AgentLooper, logger *logr
 	return err
 }
 
-// catalogTask defines a periodic get-then-send task for a catalog view.
-type catalogTask struct {
-	name     string
-	interval time.Duration
-	fn       func(ctx context.Context) error
-}
-
 // Runner is the main entry point for the agent
 // that executes the different tasks
 func Runner(ctx context.Context, adapter agent.AgentLooper) {
@@ -180,105 +173,18 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	})
 
 	// Catalog view collection goroutines — all follow the same get→send pattern.
-	catalogTasks := []catalogTask{
-		{"pg_statistic", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatistic(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_statistic", err) }
-			return adapter.SendPgStatistic(ctx, data)
-		}},
-		{"pg_stat_user_tables", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatUserTables(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_stat_user_tables", err) }
-			return adapter.SendPgStatUserTables(ctx, data)
-		}},
-		{"pg_class", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgClass(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_class", err) }
-			return adapter.SendPgClass(ctx, data)
-		}},
-		{"pg_stat_activity", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatActivity(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_stat_activity", err) }
-			return adapter.SendPgStatActivity(ctx, data)
-		}},
-		{"pg_stat_database", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatDatabaseAll(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_stat_database", err) }
-			return adapter.SendPgStatDatabaseAll(ctx, data)
-		}},
-		{"pg_stat_database_conflicts", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatDatabaseConflicts(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_stat_database_conflicts", err) }
-			return adapter.SendPgStatDatabaseConflicts(ctx, data)
-		}},
-		{"pg_stat_archiver", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatArchiver(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_stat_archiver", err) }
-			return adapter.SendPgStatArchiver(ctx, data)
-		}},
-		{"pg_stat_bgwriter", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatBgwriterAll(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_stat_bgwriter", err) }
-			return adapter.SendPgStatBgwriterAll(ctx, data)
-		}},
-		{"pg_stat_checkpointer", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatCheckpointerAll(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_stat_checkpointer", err) }
-			if data == nil || data.Rows == nil { return nil }
-			return adapter.SendPgStatCheckpointerAll(ctx, data)
-		}},
-		{"pg_stat_wal", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatWalAll(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_stat_wal", err) }
-			if data == nil || data.Rows == nil { return nil }
-			return adapter.SendPgStatWalAll(ctx, data)
-		}},
-		{"pg_stat_io", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatIO(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_stat_io", err) }
-			if data == nil || data.Rows == nil { return nil }
-			return adapter.SendPgStatIO(ctx, data)
-		}},
-		{"pg_stat_replication", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatReplication(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_stat_replication", err) }
-			return adapter.SendPgStatReplication(ctx, data)
-		}},
-		{"pg_stat_replication_slots", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatReplicationSlots(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_stat_replication_slots", err) }
-			if data == nil || data.Rows == nil { return nil }
-			return adapter.SendPgStatReplicationSlots(ctx, data)
-		}},
-		{"pg_stat_slru", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatSlru(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_stat_slru", err) }
-			return adapter.SendPgStatSlru(ctx, data)
-		}},
-		{"pg_stat_user_indexes", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatUserIndexes(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_stat_user_indexes", err) }
-			return adapter.SendPgStatUserIndexes(ctx, data)
-		}},
-		{"pg_statio_user_tables", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatioUserTables(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_statio_user_tables", err) }
-			return adapter.SendPgStatioUserTables(ctx, data)
-		}},
-		{"pg_statio_user_indexes", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatioUserIndexes(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_statio_user_indexes", err) }
-			return adapter.SendPgStatioUserIndexes(ctx, data)
-		}},
-		{"pg_stat_user_functions", 1 * time.Minute, func(ctx context.Context) error {
-			data, err := adapter.GetPgStatUserFunctions(ctx)
-			if err != nil { return handleGetError(ctx, adapter, logger, "pg_stat_user_functions", err) }
-			return adapter.SendPgStatUserFunctions(ctx, data)
-		}},
-	}
-
-	for _, task := range catalogTasks {
-		go runWithTicker(ctx, task.interval, task.name, logger, false, task.fn)
+	for _, c := range adapter.CatalogCollectors() {
+		c := c
+		go runWithTicker(ctx, c.Interval, c.Name, logger, false, func(ctx context.Context) error {
+			data, err := c.Collect(ctx)
+			if err != nil {
+				return handleGetError(ctx, adapter, logger, c.Name, err)
+			}
+			if data == nil {
+				return nil
+			}
+			return adapter.SendCatalogPayload(ctx, c.Name, data)
+		})
 	}
 
 	// Block forever
