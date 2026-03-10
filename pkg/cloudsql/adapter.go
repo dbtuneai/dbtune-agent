@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
-	"strings"
 	"time"
 
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
@@ -28,6 +26,7 @@ type CloudSQLAdapter struct {
 	GuardrailSettings     *guardrails.Config
 	pgConfig              pg.Config
 	PGVersion             string
+	PGMajorVersion        int
 }
 
 func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
@@ -84,6 +83,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		GuardrailSettings: &guardrailSettings,
 		pgConfig:          pgConfig,
 		PGVersion:         PGVersion,
+		PGMajorVersion:    pg.ParsePgMajorVersion(PGVersion),
 	}
 
 	c.InitCollectors(c.Collectors())
@@ -154,7 +154,7 @@ func (adapter *CloudSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, erro
 }
 
 func (adapter *CloudSQLAdapter) pgMajorVersion() int {
-	return pg.ParsePgMajorVersion(adapter.PGVersion)
+	return adapter.PGMajorVersion
 }
 
 func (adapter *CloudSQLAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
@@ -407,13 +407,7 @@ func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
 			Collector: CloudSQLHardwareInfo(adapter.Logger(), adapter.CloudSQLConfig, adapter.CloudMonitoringClient),
 		},
 	}
-	majorVersion := strings.Split(adapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
+	if adapter.PGMajorVersion >= 17 {
 		collectors = append(collectors, agent.MetricCollector{
 			Key:       "pg_checkpointer",
 			Collector: pg.PGStatCheckpointer(pool),

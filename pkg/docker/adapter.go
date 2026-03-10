@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
@@ -29,6 +27,7 @@ type DockerContainerAdapter struct {
 	pgConfig          pg.Config
 	PGDriver          *pgxpool.Pool
 	PGVersion         string
+	PGMajorVersion    int
 }
 
 func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
@@ -72,6 +71,7 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 		pgConfig:          pgConfig,
 		PGDriver:          dbpool,
 		PGVersion:         PGVersion,
+		PGMajorVersion:    pg.ParsePgMajorVersion(PGVersion),
 	}
 	collectors := DockerCollectors(dockerAdapter)
 	dockerAdapter.InitCollectors(collectors)
@@ -133,13 +133,7 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 			Collector: DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
 		},
 	}
-	majorVersion := strings.Split(adapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
+	if adapter.PGMajorVersion >= 17 {
 		collectors = append(collectors, agent.MetricCollector{
 			Key:       "pg_checkpointer",
 			Collector: pg.PGStatCheckpointer(pgDriver),
@@ -323,7 +317,7 @@ func (d *DockerContainerAdapter) GetPgClass() (*agent.PgClassPayload, error) {
 }
 
 func (d *DockerContainerAdapter) pgMajorVersion() int {
-	return pg.ParsePgMajorVersion(d.PGVersion)
+	return d.PGMajorVersion
 }
 
 func (d *DockerContainerAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
