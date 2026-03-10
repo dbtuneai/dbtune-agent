@@ -149,6 +149,46 @@ type AgentLooper interface {
 	SendActiveConfig(ConfigArraySchema) error
 	GetProposedConfig() (*ProposedConfigResponse, error)
 
+	GetDDL() (*DDLPayload, error)
+	SendDDL(*DDLPayload) error
+	GetPgStatistic() (*PgStatisticPayload, error)
+	SendPgStatistic(*PgStatisticPayload) error
+	GetPgStatUserTables() (*PgStatUserTablePayload, error)
+	SendPgStatUserTables(*PgStatUserTablePayload) error
+	GetPgClass() (*PgClassPayload, error)
+	SendPgClass(*PgClassPayload) error
+
+	GetPgStatActivity() (*PgStatActivityPayload, error)
+	SendPgStatActivity(*PgStatActivityPayload) error
+	GetPgStatDatabaseAll() (*PgStatDatabasePayload, error)
+	SendPgStatDatabaseAll(*PgStatDatabasePayload) error
+	GetPgStatDatabaseConflicts() (*PgStatDatabaseConflictsPayload, error)
+	SendPgStatDatabaseConflicts(*PgStatDatabaseConflictsPayload) error
+	GetPgStatArchiver() (*PgStatArchiverPayload, error)
+	SendPgStatArchiver(*PgStatArchiverPayload) error
+	GetPgStatBgwriterAll() (*PgStatBgwriterPayload, error)
+	SendPgStatBgwriterAll(*PgStatBgwriterPayload) error
+	GetPgStatCheckpointerAll() (*PgStatCheckpointerPayload, error)
+	SendPgStatCheckpointerAll(*PgStatCheckpointerPayload) error
+	GetPgStatWalAll() (*PgStatWalPayload, error)
+	SendPgStatWalAll(*PgStatWalPayload) error
+	GetPgStatIO() (*PgStatIOPayload, error)
+	SendPgStatIO(*PgStatIOPayload) error
+	GetPgStatReplication() (*PgStatReplicationPayload, error)
+	SendPgStatReplication(*PgStatReplicationPayload) error
+	GetPgStatReplicationSlots() (*PgStatReplicationSlotsPayload, error)
+	SendPgStatReplicationSlots(*PgStatReplicationSlotsPayload) error
+	GetPgStatSlru() (*PgStatSlruPayload, error)
+	SendPgStatSlru(*PgStatSlruPayload) error
+	GetPgStatUserIndexes() (*PgStatUserIndexesPayload, error)
+	SendPgStatUserIndexes(*PgStatUserIndexesPayload) error
+	GetPgStatioUserTables() (*PgStatioUserTablesPayload, error)
+	SendPgStatioUserTables(*PgStatioUserTablesPayload) error
+	GetPgStatioUserIndexes() (*PgStatioUserIndexesPayload, error)
+	SendPgStatioUserIndexes(*PgStatioUserIndexesPayload) error
+	GetPgStatUserFunctions() (*PgStatUserFunctionsPayload, error)
+	SendPgStatUserFunctions(*PgStatUserFunctionsPayload) error
+
 	// ApplyConfig applies the configuration to the PostgresSQL server
 	// The configuration is applied with the appropriate method, either with a
 	// restart or a reload operation
@@ -626,6 +666,235 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 	}
 
 	return nil
+}
+
+func (a *CommonAgent) SendPgStatistic(payload *PgStatisticPayload) error {
+	a.Logger().Println("Sending pg_statistic to server")
+	if payload == nil {
+		return fmt.Errorf("pg_statistic payload is nil")
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, a.ServerURLs.PostPgStatistic(), bytes.NewReader(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.APIClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		a.Logger().Errorf("Failed to send pg_statistic. Response body: %s", string(body))
+		return fmt.Errorf("failed to send pg_statistic, code: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (a *CommonAgent) SendPgStatUserTables(payload *PgStatUserTablePayload) error {
+	a.Logger().Println("Sending pg_stat_user_tables to server")
+	if payload == nil {
+		return fmt.Errorf("pg_stat_user_tables payload is nil")
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, a.ServerURLs.PostPgStatUserTables(), bytes.NewReader(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.APIClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		a.Logger().Errorf("Failed to send pg_stat_user_tables. Response body: %s", string(body))
+		return fmt.Errorf("failed to send pg_stat_user_tables, code: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (a *CommonAgent) SendPgClass(payload *PgClassPayload) error {
+	a.Logger().Println("Sending pg_class to server")
+	if payload == nil {
+		return fmt.Errorf("pg_class payload is nil")
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, a.ServerURLs.PostPgClass(), bytes.NewReader(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.APIClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		a.Logger().Errorf("Failed to send pg_class. Response body: %s", string(body))
+		return fmt.Errorf("failed to send pg_class, code: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (a *CommonAgent) SendDDL(payload *DDLPayload) error {
+	a.Logger().Println("Sending DDL to server")
+	if payload == nil {
+		return fmt.Errorf("DDL payload is nil")
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, a.ServerURLs.PostDDL(), bytes.NewReader(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.APIClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		a.Logger().Errorf("Failed to send DDL. Response body: %s", string(body))
+		return fmt.Errorf("failed to send DDL, code: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (a *CommonAgent) sendCatalogPayload(name string, url string, payload interface{}) error {
+	a.Logger().Printf("Sending %s to server", name)
+	if payload == nil {
+		return fmt.Errorf("%s payload is nil", name)
+	}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := a.APIClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		a.Logger().Errorf("Failed to send %s. Response body: %s", name, string(body))
+		return fmt.Errorf("failed to send %s, code: %d", name, resp.StatusCode)
+	}
+	return nil
+}
+
+func (a *CommonAgent) SendPgStatActivity(payload *PgStatActivityPayload) error {
+	return a.sendCatalogPayload("pg_stat_activity", a.ServerURLs.PostPgStatActivity(), payload)
+}
+
+func (a *CommonAgent) SendPgStatDatabaseAll(payload *PgStatDatabasePayload) error {
+	return a.sendCatalogPayload("pg_stat_database", a.ServerURLs.PostPgStatDatabaseAll(), payload)
+}
+
+func (a *CommonAgent) SendPgStatDatabaseConflicts(payload *PgStatDatabaseConflictsPayload) error {
+	return a.sendCatalogPayload("pg_stat_database_conflicts", a.ServerURLs.PostPgStatDatabaseConflicts(), payload)
+}
+
+func (a *CommonAgent) SendPgStatArchiver(payload *PgStatArchiverPayload) error {
+	return a.sendCatalogPayload("pg_stat_archiver", a.ServerURLs.PostPgStatArchiver(), payload)
+}
+
+func (a *CommonAgent) SendPgStatBgwriterAll(payload *PgStatBgwriterPayload) error {
+	return a.sendCatalogPayload("pg_stat_bgwriter", a.ServerURLs.PostPgStatBgwriterAll(), payload)
+}
+
+func (a *CommonAgent) SendPgStatCheckpointerAll(payload *PgStatCheckpointerPayload) error {
+	return a.sendCatalogPayload("pg_stat_checkpointer", a.ServerURLs.PostPgStatCheckpointerAll(), payload)
+}
+
+func (a *CommonAgent) SendPgStatWalAll(payload *PgStatWalPayload) error {
+	return a.sendCatalogPayload("pg_stat_wal", a.ServerURLs.PostPgStatWalAll(), payload)
+}
+
+func (a *CommonAgent) SendPgStatIO(payload *PgStatIOPayload) error {
+	return a.sendCatalogPayload("pg_stat_io", a.ServerURLs.PostPgStatIO(), payload)
+}
+
+func (a *CommonAgent) SendPgStatReplication(payload *PgStatReplicationPayload) error {
+	return a.sendCatalogPayload("pg_stat_replication", a.ServerURLs.PostPgStatReplication(), payload)
+}
+
+func (a *CommonAgent) SendPgStatReplicationSlots(payload *PgStatReplicationSlotsPayload) error {
+	return a.sendCatalogPayload("pg_stat_replication_slots", a.ServerURLs.PostPgStatReplicationSlots(), payload)
+}
+
+func (a *CommonAgent) SendPgStatSlru(payload *PgStatSlruPayload) error {
+	return a.sendCatalogPayload("pg_stat_slru", a.ServerURLs.PostPgStatSlru(), payload)
+}
+
+func (a *CommonAgent) SendPgStatUserIndexes(payload *PgStatUserIndexesPayload) error {
+	return a.sendCatalogPayload("pg_stat_user_indexes", a.ServerURLs.PostPgStatUserIndexes(), payload)
+}
+
+func (a *CommonAgent) SendPgStatioUserTables(payload *PgStatioUserTablesPayload) error {
+	return a.sendCatalogPayload("pg_statio_user_tables", a.ServerURLs.PostPgStatioUserTables(), payload)
+}
+
+func (a *CommonAgent) SendPgStatioUserIndexes(payload *PgStatioUserIndexesPayload) error {
+	return a.sendCatalogPayload("pg_statio_user_indexes", a.ServerURLs.PostPgStatioUserIndexes(), payload)
+}
+
+func (a *CommonAgent) SendPgStatUserFunctions(payload *PgStatUserFunctionsPayload) error {
+	return a.sendCatalogPayload("pg_stat_user_functions", a.ServerURLs.PostPgStatUserFunctions(), payload)
 }
 
 func (a *CommonAgent) GetProposedConfig() (*ProposedConfigResponse, error) {

@@ -71,6 +71,86 @@ func (s ServerURLs) PostActiveConfig() string {
 	return fmt.Sprintf("%s/api/v1/agent/configurations?uuid=%s", s.ServerUrl, s.DbID)
 }
 
+// PostDDL generates the URL for posting DDL schema data.
+func (s ServerURLs) PostDDL() string {
+	return fmt.Sprintf("%s/api/v1/agent/ddl?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+// PostPgStatistic generates the URL for posting pg_statistic data.
+func (s ServerURLs) PostPgStatistic() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_statistic?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+// PostPgStatUserTables generates the URL for posting pg_stat_user_tables data.
+func (s ServerURLs) PostPgStatUserTables() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_stat_user_tables?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+// PostPgClass generates the URL for posting pg_class data.
+func (s ServerURLs) PostPgClass() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_class?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+func (s ServerURLs) PostPgStatActivity() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_stat_activity?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+func (s ServerURLs) PostPgStatDatabaseAll() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_stat_database?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+func (s ServerURLs) PostPgStatDatabaseConflicts() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_stat_database_conflicts?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+func (s ServerURLs) PostPgStatArchiver() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_stat_archiver?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+func (s ServerURLs) PostPgStatBgwriterAll() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_stat_bgwriter?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+func (s ServerURLs) PostPgStatCheckpointerAll() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_stat_checkpointer?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+func (s ServerURLs) PostPgStatWalAll() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_stat_wal?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+func (s ServerURLs) PostPgStatIO() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_stat_io?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+func (s ServerURLs) PostPgStatReplication() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_stat_replication?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+func (s ServerURLs) PostPgStatReplicationSlots() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_stat_replication_slots?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+func (s ServerURLs) PostPgStatSlru() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_stat_slru?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+func (s ServerURLs) PostPgStatUserIndexes() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_stat_user_indexes?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+func (s ServerURLs) PostPgStatioUserTables() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_statio_user_tables?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+func (s ServerURLs) PostPgStatioUserIndexes() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_statio_user_indexes?uuid=%s", s.ServerUrl, s.DbID)
+}
+
+func (s ServerURLs) PostPgStatUserFunctions() string {
+	return fmt.Sprintf("%s/api/v1/agent/pg_stat_user_functions?uuid=%s", s.ServerUrl, s.DbID)
+}
+
 // GetKnobRecommendations generates the URL for getting knob recommendations.
 func (s ServerURLs) GetKnobRecommendations() string {
 	return fmt.Sprintf("%s/api/v1/agent/configurations?uuid=%s&status=recommended", s.ServerUrl, s.DbID)
