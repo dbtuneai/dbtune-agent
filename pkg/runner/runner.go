@@ -22,7 +22,10 @@ func isRecoveryError(err error) bool {
 		strings.Contains(errMsg, "recovery in progress")
 }
 
-func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger *logrus.Logger, skipFirst bool, fn func(ctx context.Context) error) {
+func runWithTicker(ctx context.Context, interval time.Duration, name string, logger *logrus.Logger, skipFirst bool, fn func(ctx context.Context) error) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
 	// Run immediately
 	if !skipFirst {
 		if err := fn(ctx); err != nil {
@@ -71,12 +74,12 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	logger := adapter.Logger()
 
 	// Heartbeat goroutine
-	go runWithTicker(ctx, time.NewTicker(15*time.Second), "heartbeat", logger, true, func(ctx context.Context) error {
+	go runWithTicker(ctx, 15*time.Second, "heartbeat", logger, true, func(ctx context.Context) error {
 		return adapter.SendHeartbeat(ctx)
 	})
 
 	// Metrics collection goroutine
-	go runWithTicker(ctx, time.NewTicker(5*time.Second), "metrics", logger, false, func(ctx context.Context) error {
+	go runWithTicker(ctx, 5*time.Second, "metrics", logger, false, func(ctx context.Context) error {
 		data, err := adapter.GetMetrics(ctx)
 		if err != nil {
 			return handleGetError(ctx, adapter, logger, "metrics", err)
@@ -85,7 +88,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	})
 
 	// System metrics collection goroutine
-	go runWithTicker(ctx, time.NewTicker(1*time.Minute), "system info", logger, false, func(ctx context.Context) error {
+	go runWithTicker(ctx, 1*time.Minute, "system info", logger, false, func(ctx context.Context) error {
 		data, err := adapter.GetSystemInfo(ctx)
 		if err != nil {
 			return handleGetError(ctx, adapter, logger, "system_info", err)
@@ -94,7 +97,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	})
 
 	// Config management goroutine
-	go runWithTicker(ctx, time.NewTicker(5*time.Second), "config", logger, false, func(ctx context.Context) error {
+	go runWithTicker(ctx, 5*time.Second, "config", logger, false, func(ctx context.Context) error {
 		config, err := adapter.GetActiveConfig(ctx)
 		if err != nil {
 			return handleGetError(ctx, adapter, logger, "config", err)
@@ -142,7 +145,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 
 	// Guardrail check goroutine
 	var lastCheck *time.Time
-	go runWithTicker(ctx, time.NewTicker(1*time.Second), "guardrail", logger, false, func(ctx context.Context) error {
+	go runWithTicker(ctx, 1*time.Second, "guardrail", logger, false, func(ctx context.Context) error {
 		if lastCheck != nil && time.Since(*lastCheck) < 15*time.Second {
 			return nil
 		}
@@ -161,7 +164,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 
 	// DDL collection goroutine
 	var lastDDLHash string
-	go runWithTicker(ctx, time.NewTicker(1*time.Minute), "ddl", logger, false, func(ctx context.Context) error {
+	go runWithTicker(ctx, 1*time.Minute, "ddl", logger, false, func(ctx context.Context) error {
 		data, err := adapter.GetDDL(ctx)
 		if err != nil {
 			return handleGetError(ctx, adapter, logger, "ddl", err)
@@ -275,7 +278,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	}
 
 	for _, task := range catalogTasks {
-		go runWithTicker(ctx, time.NewTicker(task.interval), task.name, logger, false, task.fn)
+		go runWithTicker(ctx, task.interval, task.name, logger, false, task.fn)
 	}
 
 	// Block forever
