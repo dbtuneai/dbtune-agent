@@ -117,7 +117,7 @@ type ProposedConfigResponse struct {
 
 type AgentLooper interface {
 	// SendHeartbeat sends a heartbeat to the DBtune server
-	SendHeartbeat() error
+	SendHeartbeat(ctx context.Context) error
 
 	// GetMetrics returns the metrics for the agent
 	// The metrics should have a format of:
@@ -129,8 +129,8 @@ type AgentLooper interface {
 	// approach, where the collectors are executed in parallel and the errors are
 	// collected in a channel. The channel is then closed and the results are
 	// returned. Uses the errgroup package to delegate the concurrent execution.
-	GetMetrics() ([]metrics.FlatValue, error)
-	SendMetrics([]metrics.FlatValue) error
+	GetMetrics(ctx context.Context) ([]metrics.FlatValue, error)
+	SendMetrics(ctx context.Context, ms []metrics.FlatValue) error
 
 	// GetSystemInfo returns the system info of the PostgresSQL server
 	// Example of system info:
@@ -143,57 +143,57 @@ type AgentLooper interface {
 	// This is because if only a partial amount of the SystemInfo can be observed, then
 	// it means that DBtune will detect this as the system information having been changed
 	// and potentially abort an inprogress tuning session.
-	GetSystemInfo() ([]metrics.FlatValue, error)
-	SendSystemInfo([]metrics.FlatValue) error
+	GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error)
+	SendSystemInfo(ctx context.Context, systemInfo []metrics.FlatValue) error
 
-	GetActiveConfig() (ConfigArraySchema, error)
-	SendActiveConfig(ConfigArraySchema) error
-	GetProposedConfig() (*ProposedConfigResponse, error)
+	GetActiveConfig(ctx context.Context) (ConfigArraySchema, error)
+	SendActiveConfig(ctx context.Context, config ConfigArraySchema) error
+	GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error)
 
-	GetDDL() (*DDLPayload, error)
-	SendDDL(*DDLPayload) error
-	GetPgStatistic() (*PgStatisticPayload, error)
-	SendPgStatistic(*PgStatisticPayload) error
-	GetPgStatUserTables() (*PgStatUserTablePayload, error)
-	SendPgStatUserTables(*PgStatUserTablePayload) error
-	GetPgClass() (*PgClassPayload, error)
-	SendPgClass(*PgClassPayload) error
+	GetDDL(ctx context.Context) (*DDLPayload, error)
+	SendDDL(ctx context.Context, payload *DDLPayload) error
+	GetPgStatistic(ctx context.Context) (*PgStatisticPayload, error)
+	SendPgStatistic(ctx context.Context, payload *PgStatisticPayload) error
+	GetPgStatUserTables(ctx context.Context) (*PgStatUserTablePayload, error)
+	SendPgStatUserTables(ctx context.Context, payload *PgStatUserTablePayload) error
+	GetPgClass(ctx context.Context) (*PgClassPayload, error)
+	SendPgClass(ctx context.Context, payload *PgClassPayload) error
 
-	GetPgStatActivity() (*PgStatActivityPayload, error)
-	SendPgStatActivity(*PgStatActivityPayload) error
-	GetPgStatDatabaseAll() (*PgStatDatabasePayload, error)
-	SendPgStatDatabaseAll(*PgStatDatabasePayload) error
-	GetPgStatDatabaseConflicts() (*PgStatDatabaseConflictsPayload, error)
-	SendPgStatDatabaseConflicts(*PgStatDatabaseConflictsPayload) error
-	GetPgStatArchiver() (*PgStatArchiverPayload, error)
-	SendPgStatArchiver(*PgStatArchiverPayload) error
-	GetPgStatBgwriterAll() (*PgStatBgwriterPayload, error)
-	SendPgStatBgwriterAll(*PgStatBgwriterPayload) error
-	GetPgStatCheckpointerAll() (*PgStatCheckpointerPayload, error)
-	SendPgStatCheckpointerAll(*PgStatCheckpointerPayload) error
-	GetPgStatWalAll() (*PgStatWalPayload, error)
-	SendPgStatWalAll(*PgStatWalPayload) error
-	GetPgStatIO() (*PgStatIOPayload, error)
-	SendPgStatIO(*PgStatIOPayload) error
-	GetPgStatReplication() (*PgStatReplicationPayload, error)
-	SendPgStatReplication(*PgStatReplicationPayload) error
-	GetPgStatReplicationSlots() (*PgStatReplicationSlotsPayload, error)
-	SendPgStatReplicationSlots(*PgStatReplicationSlotsPayload) error
-	GetPgStatSlru() (*PgStatSlruPayload, error)
-	SendPgStatSlru(*PgStatSlruPayload) error
-	GetPgStatUserIndexes() (*PgStatUserIndexesPayload, error)
-	SendPgStatUserIndexes(*PgStatUserIndexesPayload) error
-	GetPgStatioUserTables() (*PgStatioUserTablesPayload, error)
-	SendPgStatioUserTables(*PgStatioUserTablesPayload) error
-	GetPgStatioUserIndexes() (*PgStatioUserIndexesPayload, error)
-	SendPgStatioUserIndexes(*PgStatioUserIndexesPayload) error
-	GetPgStatUserFunctions() (*PgStatUserFunctionsPayload, error)
-	SendPgStatUserFunctions(*PgStatUserFunctionsPayload) error
+	GetPgStatActivity(ctx context.Context) (*PgStatActivityPayload, error)
+	SendPgStatActivity(ctx context.Context, payload *PgStatActivityPayload) error
+	GetPgStatDatabaseAll(ctx context.Context) (*PgStatDatabasePayload, error)
+	SendPgStatDatabaseAll(ctx context.Context, payload *PgStatDatabasePayload) error
+	GetPgStatDatabaseConflicts(ctx context.Context) (*PgStatDatabaseConflictsPayload, error)
+	SendPgStatDatabaseConflicts(ctx context.Context, payload *PgStatDatabaseConflictsPayload) error
+	GetPgStatArchiver(ctx context.Context) (*PgStatArchiverPayload, error)
+	SendPgStatArchiver(ctx context.Context, payload *PgStatArchiverPayload) error
+	GetPgStatBgwriterAll(ctx context.Context) (*PgStatBgwriterPayload, error)
+	SendPgStatBgwriterAll(ctx context.Context, payload *PgStatBgwriterPayload) error
+	GetPgStatCheckpointerAll(ctx context.Context) (*PgStatCheckpointerPayload, error)
+	SendPgStatCheckpointerAll(ctx context.Context, payload *PgStatCheckpointerPayload) error
+	GetPgStatWalAll(ctx context.Context) (*PgStatWalPayload, error)
+	SendPgStatWalAll(ctx context.Context, payload *PgStatWalPayload) error
+	GetPgStatIO(ctx context.Context) (*PgStatIOPayload, error)
+	SendPgStatIO(ctx context.Context, payload *PgStatIOPayload) error
+	GetPgStatReplication(ctx context.Context) (*PgStatReplicationPayload, error)
+	SendPgStatReplication(ctx context.Context, payload *PgStatReplicationPayload) error
+	GetPgStatReplicationSlots(ctx context.Context) (*PgStatReplicationSlotsPayload, error)
+	SendPgStatReplicationSlots(ctx context.Context, payload *PgStatReplicationSlotsPayload) error
+	GetPgStatSlru(ctx context.Context) (*PgStatSlruPayload, error)
+	SendPgStatSlru(ctx context.Context, payload *PgStatSlruPayload) error
+	GetPgStatUserIndexes(ctx context.Context) (*PgStatUserIndexesPayload, error)
+	SendPgStatUserIndexes(ctx context.Context, payload *PgStatUserIndexesPayload) error
+	GetPgStatioUserTables(ctx context.Context) (*PgStatioUserTablesPayload, error)
+	SendPgStatioUserTables(ctx context.Context, payload *PgStatioUserTablesPayload) error
+	GetPgStatioUserIndexes(ctx context.Context) (*PgStatioUserIndexesPayload, error)
+	SendPgStatioUserIndexes(ctx context.Context, payload *PgStatioUserIndexesPayload) error
+	GetPgStatUserFunctions(ctx context.Context) (*PgStatUserFunctionsPayload, error)
+	SendPgStatUserFunctions(ctx context.Context, payload *PgStatUserFunctionsPayload) error
 
 	// ApplyConfig applies the configuration to the PostgresSQL server
 	// The configuration is applied with the appropriate method, either with a
 	// restart or a reload operation
-	ApplyConfig(knobs *ProposedConfigResponse) error
+	ApplyConfig(ctx context.Context, knobs *ProposedConfigResponse) error
 
 	// Guardrails is responsible for triggering a signal to the DBtune server
 	// that something is heading towards a failure.
@@ -201,13 +201,13 @@ type AgentLooper interface {
 	// or a rate of disk growth that is more than usual and not acceptable.
 	// Returns nil if no guardrail is triggered, otherwise returns the type of guardrail
 	// and the metric that is monitored.
-	Guardrails() *guardrails.Signal
+	Guardrails(ctx context.Context) *guardrails.Signal
 	// SendGuardrailSignal sends a signal to the DBtune server that something is heading towards a failure.
 	// The signal will be send maximum once every 15 seconds.
-	SendGuardrailSignal(signal guardrails.Signal) error
+	SendGuardrailSignal(ctx context.Context, signal guardrails.Signal) error
 
 	// SendError sends an error report to the DBtune server
-	SendError(payload ErrorPayload) error
+	SendError(ctx context.Context, payload ErrorPayload) error
 
 	// GetLogger returns the logger for the agent
 	Logger() *log.Logger
@@ -457,8 +457,9 @@ func (a *CommonAgent) WithLogger(logger *log.Logger) {
 // SendHeartbeat sends a heartbeat to the DBtune server
 // to indicate that the agent is running.
 // This method does not need to be overridden by any adapter
-func (a *CommonAgent) SendHeartbeat() error {
-	a.Logger().Infof("Sending heartbeat to %s", a.ServerURLs.PostHeartbeat())
+func (a *CommonAgent) SendHeartbeat(ctx context.Context) error {
+	url := a.ServerURLs.AgentURL("heartbeat")
+	a.Logger().Infof("Sending heartbeat to %s", url)
 
 	payload := AgentPayload{
 		AgentVersion:   a.Version,
@@ -474,10 +475,10 @@ func (a *CommonAgent) SendHeartbeat() error {
 	}
 
 	// Add a timeout context to avoid hanging
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", a.ServerURLs.PostHeartbeat(), bytes.NewBuffer(jsonData))
+	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		a.Logger().Errorf("Failed to create heartbeat request: %v", err)
 		return err
@@ -493,7 +494,7 @@ func (a *CommonAgent) SendHeartbeat() error {
 
 	if resp.StatusCode != 204 {
 		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Errorf("Failed to send heartbeat to %s, status: %d, body: %s", a.ServerURLs.PostHeartbeat(), resp.StatusCode, string(body))
+		a.Logger().Errorf("Failed to send heartbeat to %s, status: %d, body: %s", url, resp.StatusCode, string(body))
 		return fmt.Errorf("heartbeat failed with status code %d", resp.StatusCode)
 	}
 
@@ -509,14 +510,14 @@ func (a *CommonAgent) InitCollectors(collectors []MetricCollector) {
 // GetMetrics will have a default implementation to handle gracefully
 // error and send partial metrics rather than failing.
 // It is discouraged for every adapter overriding this one.
-func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
+func (a *CommonAgent) GetMetrics(ctx context.Context) ([]metrics.FlatValue, error) {
 	a.Logger().Println("Staring metric collection")
 
 	// Cleanup metrics from the previous heartbeat
 	a.MetricsState.Metrics = []metrics.FlatValue{}
 
 	// Create context with configured timeout
-	ctx, cancel := context.WithTimeout(context.Background(), a.CollectionTimeout)
+	ctx, cancel := context.WithTimeout(ctx, a.CollectionTimeout)
 	defer cancel()
 
 	// Use WaitGroup to wait for all collectors
@@ -584,7 +585,7 @@ func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
 	return a.MetricsState.Metrics, nil
 }
 
-func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
+func (a *CommonAgent) SendMetrics(ctx context.Context, ms []metrics.FlatValue) error {
 	a.Logger().Println("Sending metrics to server")
 
 	formattedMetrics := metrics.FormatMetrics(ms)
@@ -594,7 +595,7 @@ func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.PostMetrics(), "application/json", jsonData)
+	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL("metrics"), "application/json", jsonData)
 	if err != nil {
 		return err
 	}
@@ -609,7 +610,7 @@ func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
 	return nil
 }
 
-func (a *CommonAgent) SendSystemInfo(systemInfo []metrics.FlatValue) error {
+func (a *CommonAgent) SendSystemInfo(ctx context.Context, systemInfo []metrics.FlatValue) error {
 	a.Logger().Println("Sending system info to server")
 
 	formattedMetrics := metrics.FormatSystemInfo(systemInfo)
@@ -619,7 +620,7 @@ func (a *CommonAgent) SendSystemInfo(systemInfo []metrics.FlatValue) error {
 		return err
 	}
 
-	req, _ := retryablehttp.NewRequest("PUT", a.ServerURLs.PostSystemInfo(), bytes.NewBuffer(jsonData))
+	req, _ := retryablehttp.NewRequest("PUT", a.ServerURLs.AgentURL("system-info"), bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := a.APIClient.Do(req)
@@ -637,7 +638,7 @@ func (a *CommonAgent) SendSystemInfo(systemInfo []metrics.FlatValue) error {
 	return nil
 }
 
-func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
+func (a *CommonAgent) SendActiveConfig(ctx context.Context, config ConfigArraySchema) error {
 	a.Logger().Println("Sending active configuration to server")
 
 	type Payload struct {
@@ -654,7 +655,7 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 
 	a.Logger().Debugf("Active config payload: %s", string(jsonData))
 
-	resp, err := a.APIClient.Post(a.ServerURLs.PostActiveConfig(), "application/json", jsonData)
+	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL("configurations"), "application/json", jsonData)
 	if err != nil {
 		return err
 	}
@@ -669,144 +670,20 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 	return nil
 }
 
-func (a *CommonAgent) SendPgStatistic(payload *PgStatisticPayload) error {
-	a.Logger().Println("Sending pg_statistic to server")
-	if isNilPayload(payload) {
-		return fmt.Errorf("pg_statistic payload is nil")
-	}
-
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, a.ServerURLs.PostPgStatistic(), bytes.NewReader(jsonData))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := a.APIClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Errorf("Failed to send pg_statistic. Response body: %s", string(body))
-		return fmt.Errorf("failed to send pg_statistic, code: %d", resp.StatusCode)
-	}
-
-	return nil
+func (a *CommonAgent) SendPgStatistic(ctx context.Context, payload *PgStatisticPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_statistic", payload)
 }
 
-func (a *CommonAgent) SendPgStatUserTables(payload *PgStatUserTablePayload) error {
-	a.Logger().Println("Sending pg_stat_user_tables to server")
-	if isNilPayload(payload) {
-		return fmt.Errorf("pg_stat_user_tables payload is nil")
-	}
-
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, a.ServerURLs.PostPgStatUserTables(), bytes.NewReader(jsonData))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := a.APIClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Errorf("Failed to send pg_stat_user_tables. Response body: %s", string(body))
-		return fmt.Errorf("failed to send pg_stat_user_tables, code: %d", resp.StatusCode)
-	}
-
-	return nil
+func (a *CommonAgent) SendPgStatUserTables(ctx context.Context, payload *PgStatUserTablePayload) error {
+	return a.sendCatalogPayload(ctx, "pg_stat_user_tables", payload)
 }
 
-func (a *CommonAgent) SendPgClass(payload *PgClassPayload) error {
-	a.Logger().Println("Sending pg_class to server")
-	if isNilPayload(payload) {
-		return fmt.Errorf("pg_class payload is nil")
-	}
-
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, a.ServerURLs.PostPgClass(), bytes.NewReader(jsonData))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := a.APIClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Errorf("Failed to send pg_class. Response body: %s", string(body))
-		return fmt.Errorf("failed to send pg_class, code: %d", resp.StatusCode)
-	}
-
-	return nil
+func (a *CommonAgent) SendPgClass(ctx context.Context, payload *PgClassPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_class", payload)
 }
 
-func (a *CommonAgent) SendDDL(payload *DDLPayload) error {
-	a.Logger().Println("Sending DDL to server")
-	if isNilPayload(payload) {
-		return fmt.Errorf("DDL payload is nil")
-	}
-
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, a.ServerURLs.PostDDL(), bytes.NewReader(jsonData))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := a.APIClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Errorf("Failed to send DDL. Response body: %s", string(body))
-		return fmt.Errorf("failed to send DDL, code: %d", resp.StatusCode)
-	}
-
-	return nil
+func (a *CommonAgent) SendDDL(ctx context.Context, payload *DDLPayload) error {
+	return a.sendCatalogPayload(ctx, "ddl", payload)
 }
 
 // isNilPayload checks if a payload is nil, handling both interface-nil and typed-pointer-nil.
@@ -820,7 +697,7 @@ func isNilPayload(payload interface{}) bool {
 	return v.Kind() == reflect.Ptr && v.IsNil()
 }
 
-func (a *CommonAgent) sendCatalogPayload(name string, url string, payload interface{}) error {
+func (a *CommonAgent) sendCatalogPayload(ctx context.Context, name string, payload interface{}) error {
 	a.Logger().Printf("Sending %s to server", name)
 	if isNilPayload(payload) {
 		return fmt.Errorf("%s payload is nil", name)
@@ -829,8 +706,9 @@ func (a *CommonAgent) sendCatalogPayload(name string, url string, payload interf
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	url := a.ServerURLs.AgentURL(name)
 	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonData))
 	if err != nil {
 		return err
@@ -849,67 +727,67 @@ func (a *CommonAgent) sendCatalogPayload(name string, url string, payload interf
 	return nil
 }
 
-func (a *CommonAgent) SendPgStatActivity(payload *PgStatActivityPayload) error {
-	return a.sendCatalogPayload("pg_stat_activity", a.ServerURLs.PostPgStatActivity(), payload)
+func (a *CommonAgent) SendPgStatActivity(ctx context.Context, payload *PgStatActivityPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_stat_activity", payload)
 }
 
-func (a *CommonAgent) SendPgStatDatabaseAll(payload *PgStatDatabasePayload) error {
-	return a.sendCatalogPayload("pg_stat_database", a.ServerURLs.PostPgStatDatabaseAll(), payload)
+func (a *CommonAgent) SendPgStatDatabaseAll(ctx context.Context, payload *PgStatDatabasePayload) error {
+	return a.sendCatalogPayload(ctx, "pg_stat_database", payload)
 }
 
-func (a *CommonAgent) SendPgStatDatabaseConflicts(payload *PgStatDatabaseConflictsPayload) error {
-	return a.sendCatalogPayload("pg_stat_database_conflicts", a.ServerURLs.PostPgStatDatabaseConflicts(), payload)
+func (a *CommonAgent) SendPgStatDatabaseConflicts(ctx context.Context, payload *PgStatDatabaseConflictsPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_stat_database_conflicts", payload)
 }
 
-func (a *CommonAgent) SendPgStatArchiver(payload *PgStatArchiverPayload) error {
-	return a.sendCatalogPayload("pg_stat_archiver", a.ServerURLs.PostPgStatArchiver(), payload)
+func (a *CommonAgent) SendPgStatArchiver(ctx context.Context, payload *PgStatArchiverPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_stat_archiver", payload)
 }
 
-func (a *CommonAgent) SendPgStatBgwriterAll(payload *PgStatBgwriterPayload) error {
-	return a.sendCatalogPayload("pg_stat_bgwriter", a.ServerURLs.PostPgStatBgwriterAll(), payload)
+func (a *CommonAgent) SendPgStatBgwriterAll(ctx context.Context, payload *PgStatBgwriterPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_stat_bgwriter", payload)
 }
 
-func (a *CommonAgent) SendPgStatCheckpointerAll(payload *PgStatCheckpointerPayload) error {
-	return a.sendCatalogPayload("pg_stat_checkpointer", a.ServerURLs.PostPgStatCheckpointerAll(), payload)
+func (a *CommonAgent) SendPgStatCheckpointerAll(ctx context.Context, payload *PgStatCheckpointerPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_stat_checkpointer", payload)
 }
 
-func (a *CommonAgent) SendPgStatWalAll(payload *PgStatWalPayload) error {
-	return a.sendCatalogPayload("pg_stat_wal", a.ServerURLs.PostPgStatWalAll(), payload)
+func (a *CommonAgent) SendPgStatWalAll(ctx context.Context, payload *PgStatWalPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_stat_wal", payload)
 }
 
-func (a *CommonAgent) SendPgStatIO(payload *PgStatIOPayload) error {
-	return a.sendCatalogPayload("pg_stat_io", a.ServerURLs.PostPgStatIO(), payload)
+func (a *CommonAgent) SendPgStatIO(ctx context.Context, payload *PgStatIOPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_stat_io", payload)
 }
 
-func (a *CommonAgent) SendPgStatReplication(payload *PgStatReplicationPayload) error {
-	return a.sendCatalogPayload("pg_stat_replication", a.ServerURLs.PostPgStatReplication(), payload)
+func (a *CommonAgent) SendPgStatReplication(ctx context.Context, payload *PgStatReplicationPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_stat_replication", payload)
 }
 
-func (a *CommonAgent) SendPgStatReplicationSlots(payload *PgStatReplicationSlotsPayload) error {
-	return a.sendCatalogPayload("pg_stat_replication_slots", a.ServerURLs.PostPgStatReplicationSlots(), payload)
+func (a *CommonAgent) SendPgStatReplicationSlots(ctx context.Context, payload *PgStatReplicationSlotsPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_stat_replication_slots", payload)
 }
 
-func (a *CommonAgent) SendPgStatSlru(payload *PgStatSlruPayload) error {
-	return a.sendCatalogPayload("pg_stat_slru", a.ServerURLs.PostPgStatSlru(), payload)
+func (a *CommonAgent) SendPgStatSlru(ctx context.Context, payload *PgStatSlruPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_stat_slru", payload)
 }
 
-func (a *CommonAgent) SendPgStatUserIndexes(payload *PgStatUserIndexesPayload) error {
-	return a.sendCatalogPayload("pg_stat_user_indexes", a.ServerURLs.PostPgStatUserIndexes(), payload)
+func (a *CommonAgent) SendPgStatUserIndexes(ctx context.Context, payload *PgStatUserIndexesPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_stat_user_indexes", payload)
 }
 
-func (a *CommonAgent) SendPgStatioUserTables(payload *PgStatioUserTablesPayload) error {
-	return a.sendCatalogPayload("pg_statio_user_tables", a.ServerURLs.PostPgStatioUserTables(), payload)
+func (a *CommonAgent) SendPgStatioUserTables(ctx context.Context, payload *PgStatioUserTablesPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_statio_user_tables", payload)
 }
 
-func (a *CommonAgent) SendPgStatioUserIndexes(payload *PgStatioUserIndexesPayload) error {
-	return a.sendCatalogPayload("pg_statio_user_indexes", a.ServerURLs.PostPgStatioUserIndexes(), payload)
+func (a *CommonAgent) SendPgStatioUserIndexes(ctx context.Context, payload *PgStatioUserIndexesPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_statio_user_indexes", payload)
 }
 
-func (a *CommonAgent) SendPgStatUserFunctions(payload *PgStatUserFunctionsPayload) error {
-	return a.sendCatalogPayload("pg_stat_user_functions", a.ServerURLs.PostPgStatUserFunctions(), payload)
+func (a *CommonAgent) SendPgStatUserFunctions(ctx context.Context, payload *PgStatUserFunctionsPayload) error {
+	return a.sendCatalogPayload(ctx, "pg_stat_user_functions", payload)
 }
 
-func (a *CommonAgent) GetProposedConfig() (*ProposedConfigResponse, error) {
+func (a *CommonAgent) GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error) {
 	a.Logger().Println("Fetching proposed configurations")
 
 	resp, err := a.APIClient.Get(a.ServerURLs.GetKnobRecommendations())
@@ -938,7 +816,7 @@ func (a *CommonAgent) GetProposedConfig() (*ProposedConfigResponse, error) {
 
 // SendGuardrailSignal sends a guardrail signal to the DBtune server
 // that something is heading towards a failure.
-func (a *CommonAgent) SendGuardrailSignal(signal guardrails.Signal) error {
+func (a *CommonAgent) SendGuardrailSignal(ctx context.Context, signal guardrails.Signal) error {
 	a.Logger().Warnf("🚨 Sending Guardrail, level: %s, type: %s", signal.Level, signal.Type)
 
 	jsonData, err := json.Marshal(signal)
@@ -946,7 +824,7 @@ func (a *CommonAgent) SendGuardrailSignal(signal guardrails.Signal) error {
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.PostGuardrailSignal(), "application/json", jsonData)
+	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL("guardrails"), "application/json", jsonData)
 	if err != nil {
 		return err
 	}
@@ -961,7 +839,7 @@ func (a *CommonAgent) SendGuardrailSignal(signal guardrails.Signal) error {
 	return nil
 }
 
-func (a *CommonAgent) SendError(payload ErrorPayload) error {
+func (a *CommonAgent) SendError(ctx context.Context, payload ErrorPayload) error {
 	a.Logger().Errorf("🚨 Sending Error Report, type: %s, message: %s", payload.ErrorType, payload.ErrorMessage)
 
 	jsonData, err := json.Marshal(payload)
@@ -969,7 +847,7 @@ func (a *CommonAgent) SendError(payload ErrorPayload) error {
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.PostError(), "application/json", jsonData)
+	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL("log-entries"), "application/json", jsonData)
 	if err != nil {
 		return err
 	}

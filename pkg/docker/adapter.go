@@ -21,13 +21,12 @@ import (
 // number of CPUs available and memory limit
 type DockerContainerAdapter struct {
 	agent.CommonAgent
+	pg.CatalogGetter
 	Config            Config
 	dockerClient      *client.Client
 	GuardrailSettings guardrails.Config
 	pgConfig          pg.Config
-	PGDriver          *pgxpool.Pool
 	PGVersion         string
-	PGMajorVersion    int
 }
 
 func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
@@ -64,14 +63,16 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
 	dockerAdapter := &DockerContainerAdapter{
-		CommonAgent:       *commonAgent,
+		CommonAgent: *commonAgent,
+		CatalogGetter: pg.CatalogGetter{
+			PGPool:         dbpool,
+			PGMajorVersion: pg.ParsePgMajorVersion(PGVersion),
+		},
 		Config:            dockerConfig,
 		dockerClient:      cli,
 		GuardrailSettings: guardrailSettings,
 		pgConfig:          pgConfig,
-		PGDriver:          dbpool,
 		PGVersion:         PGVersion,
-		PGMajorVersion:    pg.ParsePgMajorVersion(PGVersion),
 	}
 	collectors := DockerCollectors(dockerAdapter)
 	dockerAdapter.InitCollectors(collectors)
@@ -82,7 +83,7 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 // DockerCollectors returns the list of collectors for Docker, replacing system metrics
 // with Docker-specific ones while keeping database-specific collectors
 func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
-	pgDriver := adapter.PGDriver
+	pgDriver := adapter.PGPool
 	collectors := []agent.MetricCollector{
 		{
 			Key:       "database_average_query_runtime",
@@ -142,13 +143,13 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 	return collectors
 }
 
-func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (d *DockerContainerAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	d.Logger().Println("Collecting system info for Docker container")
 
 	var systemInfo []metrics.FlatValue
 
 	// Get PostgreSQL version using the existing collector
-	pgDriver := d.PGDriver
+	pgDriver := d.PGPool
 	pgVersion, err := pg.PGVersion(pgDriver)
 	if err != nil {
 		return nil, err
@@ -161,7 +162,7 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	}
 
 	// Get container stats
-	stats, err := d.dockerClient.ContainerStats(context.Background(), d.Config.ContainerName, false)
+	stats, err := d.dockerClient.ContainerStats(ctx, d.Config.ContainerName, false)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +176,7 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	}
 
 	// Get container info for additional details
-	containerInfo, err := d.dockerClient.ContainerInspect(context.Background(), d.Config.ContainerName)
+	containerInfo, err := d.dockerClient.ContainerInspect(ctx, d.Config.ContainerName)
 	if err != nil {
 		return nil, err
 	}
@@ -244,9 +245,9 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return systemInfo, nil
 }
 
-func (d *DockerContainerAdapter) Guardrails() *guardrails.Signal {
+func (d *DockerContainerAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	// Get container stats
-	stats, err := d.dockerClient.ContainerStats(context.Background(), d.Config.ContainerName, false)
+	stats, err := d.dockerClient.ContainerStats(ctx, d.Config.ContainerName, false)
 	if err != nil {
 		d.Logger().Warnf("guardrail: could not fetch docker stats: %v", err)
 		return nil
@@ -280,170 +281,12 @@ func (d *DockerContainerAdapter) Guardrails() *guardrails.Signal {
 	return nil
 }
 
-func (d *DockerContainerAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(d.PGDriver, context.Background(), d.Logger())
+func (d *DockerContainerAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
+	return pg.GetActiveConfig(d.PGPool, ctx, d.Logger())
 }
 
-func (d *DockerContainerAdapter) GetDDL() (*agent.DDLPayload, error) {
-	ddl, err := pg.CollectDDL(d.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.DDLPayload{DDL: ddl, Hash: pg.HashDDL(ddl)}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatistic() (*agent.PgStatisticPayload, error) {
-	rows, err := pg.CollectPgStatistic(d.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatisticPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatUserTables() (*agent.PgStatUserTablePayload, error) {
-	rows, err := pg.CollectPgStatUserTables(d.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatUserTablePayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgClass() (*agent.PgClassPayload, error) {
-	rows, err := pg.CollectPgClass(d.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgClassPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) pgMajorVersion() int {
-	return d.PGMajorVersion
-}
-
-func (d *DockerContainerAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
-	rows, err := pg.CollectPgStatActivity(d.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatActivityPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatDatabaseAll() (*agent.PgStatDatabasePayload, error) {
-	rows, err := pg.CollectPgStatDatabase(d.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatDatabasePayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatDatabaseConflicts() (*agent.PgStatDatabaseConflictsPayload, error) {
-	rows, err := pg.CollectPgStatDatabaseConflicts(d.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatDatabaseConflictsPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatArchiver() (*agent.PgStatArchiverPayload, error) {
-	rows, err := pg.CollectPgStatArchiver(d.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatArchiverPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatBgwriterAll() (*agent.PgStatBgwriterPayload, error) {
-	rows, err := pg.CollectPgStatBgwriter(d.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatBgwriterPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatCheckpointerAll() (*agent.PgStatCheckpointerPayload, error) {
-	rows, err := pg.CollectPgStatCheckpointer(d.PGDriver, context.Background(), d.pgMajorVersion())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatCheckpointerPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatWalAll() (*agent.PgStatWalPayload, error) {
-	rows, err := pg.CollectPgStatWal(d.PGDriver, context.Background(), d.pgMajorVersion())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatWalPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatIO() (*agent.PgStatIOPayload, error) {
-	rows, err := pg.CollectPgStatIO(d.PGDriver, context.Background(), d.pgMajorVersion())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatIOPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatReplication() (*agent.PgStatReplicationPayload, error) {
-	rows, err := pg.CollectPgStatReplication(d.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatReplicationPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatReplicationSlots() (*agent.PgStatReplicationSlotsPayload, error) {
-	rows, err := pg.CollectPgStatReplicationSlots(d.PGDriver, context.Background(), d.pgMajorVersion())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatReplicationSlotsPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatSlru() (*agent.PgStatSlruPayload, error) {
-	rows, err := pg.CollectPgStatSlru(d.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatSlruPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatUserIndexes() (*agent.PgStatUserIndexesPayload, error) {
-	rows, err := pg.CollectPgStatUserIndexes(d.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatUserIndexesPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatioUserTables() (*agent.PgStatioUserTablesPayload, error) {
-	rows, err := pg.CollectPgStatioUserTables(d.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatioUserTablesPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatioUserIndexes() (*agent.PgStatioUserIndexesPayload, error) {
-	rows, err := pg.CollectPgStatioUserIndexes(d.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatioUserIndexesPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) GetPgStatUserFunctions() (*agent.PgStatUserFunctionsPayload, error) {
-	rows, err := pg.CollectPgStatUserFunctions(d.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatUserFunctionsPayload{Rows: rows}, nil
-}
-
-func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	d.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
-
-	ctx := context.Background()
 
 	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
 	if err != nil {
@@ -451,7 +294,7 @@ func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfi
 	}
 
 	for _, knob := range parsedKnobs {
-		err := pg.AlterSystem(d.PGDriver, knob.Name, knob.SettingValue)
+		err := pg.AlterSystem(d.PGPool, knob.Name, knob.SettingValue)
 		if err != nil {
 			return fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)
 		}
@@ -472,13 +315,13 @@ func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfi
 			return fmt.Errorf("failed to restart PostgreSQL service: %w", err)
 		}
 
-		err = pg.WaitPostgresReady(d.PGDriver)
+		err = pg.WaitPostgresReady(d.PGPool)
 		if err != nil {
 			return fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)
 		}
 	} else {
 		// Reload database when everything is applied
-		err := pg.ReloadConfig(d.PGDriver)
+		err := pg.ReloadConfig(d.PGPool)
 		if err != nil {
 			return err
 		}

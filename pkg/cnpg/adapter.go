@@ -43,11 +43,11 @@ const (
 
 type CNPGAdapter struct {
 	agent.CommonAgent
+	pg.CatalogGetter
 	GuardrailSettings guardrails.Config
 	Config            Config
 	PGDriver          *pgxpool.Pool
 	PGVersion         string
-	PGMajorVersion    int
 	K8sClient         kubernetes.Client
 	State             *State
 }
@@ -108,17 +108,27 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 
 	adapter := &CNPGAdapter{
 		CommonAgent:       *agent.CreateCommonAgent(),
-		Config:            config,
 		GuardrailSettings: guardrailSettings,
+		Config:            config,
 		PGDriver:          dbpool,
 		PGVersion:         pgVersion,
-		PGMajorVersion:    pg.ParsePgMajorVersion(pgVersion),
 		K8sClient:         client,
 		State:             &State{LastGuardrailCheck: time.Now()},
 	}
 
 	// Initialize operations context for cancellation support
 	adapter.State.CreateOperationsContext()
+
+	adapter.CatalogGetter = pg.CatalogGetter{
+		PGPool:         dbpool,
+		PGMajorVersion: pg.ParsePgMajorVersion(pgVersion),
+		PrepareContext: func(ctx context.Context) (context.Context, error) {
+			if err := adapter.CheckForFailover(ctx); err != nil {
+				return nil, err
+			}
+			return adapter.State.GetOperationsContext(), nil
+		},
+	}
 
 	// Initialize collectors
 	// Use cluster name (not pod name) so metrics always come from current primary
@@ -127,16 +137,15 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 		client,
 		config.ClusterName,
 		config.ContainerName,
-		adapter.PGMajorVersion,
+		adapter.CatalogGetter.PGMajorVersion,
 		adapter.Logger(),
 	))
 
 	return adapter, nil
 }
 
-func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	// https://cloudnative-pg.io/documentation/1.27/postgresql_conf/#changing-configuration
-	ctx := context.Background()
 	logger := adapter.Logger()
 
 	logger.Infof("[FAILOVER_RECOVERY] ApplyConfig called: knob_application=%s, num_params=%d",
@@ -357,12 +366,12 @@ func (adapter *CNPGAdapter) getClusterName(_ context.Context) (string, error) {
 	return adapter.Config.ClusterName, nil
 }
 
-func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
+func (adapter *CNPGAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	logger := adapter.Logger()
 
 	// Check for failover before querying PostgreSQL
 	// During recovery, PostgreSQL may be unavailable or unreliable
-	if err := adapter.CheckForFailover(context.Background()); err != nil {
+	if err := adapter.CheckForFailover(ctx); err != nil {
 		// Block operation for ANY error from CheckForFailover
 		var failoverErr *FailoverDetectedError
 		if errors.As(err, &failoverErr) {
@@ -376,12 +385,12 @@ func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 
 	// Get operations context AFTER CheckForFailover passes
 	// This ensures we get the fresh context created by recovery completion, not the pre-cancelled one
-	ctx := adapter.State.GetOperationsContext()
+	opsCtx := adapter.State.GetOperationsContext()
 
-	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx, logger)
+	config, err := pg.GetActiveConfig(adapter.PGDriver, opsCtx, logger)
 	if err != nil {
 		// If context was cancelled (failover detected mid-query), return FailoverDetectedError
-		if ctx.Err() == context.Canceled {
+		if opsCtx.Err() == context.Canceled {
 			logger.Infof("[FAILOVER_RECOVERY] GetActiveConfig aborted due to context cancellation")
 			return agent.ConfigArraySchema{}, &FailoverDetectedError{
 				OldPrimary: adapter.State.GetLastKnownPrimary(),
@@ -412,7 +421,7 @@ func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 					ErrorType:    "failover_detected",
 					Timestamp:    time.Now().UTC().Format(time.RFC3339),
 				}
-				if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+				if sendErr := adapter.SendError(ctx, errorPayload); sendErr != nil {
 					logger.Errorf("failed to send error report: %v", sendErr)
 				}
 			}
@@ -433,171 +442,13 @@ func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 	return config, nil
 }
 
-func (adapter *CNPGAdapter) GetDDL() (*agent.DDLPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil {
-		return nil, err
-	}
-	ctx := adapter.State.GetOperationsContext()
-	ddl, err := pg.CollectDDL(adapter.PGDriver, ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &agent.DDLPayload{DDL: ddl, Hash: pg.HashDDL(ddl)}, nil
-}
-
-func (adapter *CNPGAdapter) GetPgStatistic() (*agent.PgStatisticPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil {
-		return nil, err
-	}
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatistic(adapter.PGDriver, ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatisticPayload{Rows: rows}, nil
-}
-
-func (adapter *CNPGAdapter) GetPgStatUserTables() (*agent.PgStatUserTablePayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil {
-		return nil, err
-	}
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatUserTables(adapter.PGDriver, ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatUserTablePayload{Rows: rows}, nil
-}
-
-func (adapter *CNPGAdapter) pgMajorVersion() int {
-	return adapter.PGMajorVersion
-}
-
-func (adapter *CNPGAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil { return nil, err }
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatActivity(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatActivityPayload{Rows: rows}, nil
-}
-func (adapter *CNPGAdapter) GetPgStatDatabaseAll() (*agent.PgStatDatabasePayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil { return nil, err }
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatDatabase(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatDatabasePayload{Rows: rows}, nil
-}
-func (adapter *CNPGAdapter) GetPgStatDatabaseConflicts() (*agent.PgStatDatabaseConflictsPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil { return nil, err }
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatDatabaseConflicts(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatDatabaseConflictsPayload{Rows: rows}, nil
-}
-func (adapter *CNPGAdapter) GetPgStatArchiver() (*agent.PgStatArchiverPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil { return nil, err }
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatArchiver(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatArchiverPayload{Rows: rows}, nil
-}
-func (adapter *CNPGAdapter) GetPgStatBgwriterAll() (*agent.PgStatBgwriterPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil { return nil, err }
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatBgwriter(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatBgwriterPayload{Rows: rows}, nil
-}
-func (adapter *CNPGAdapter) GetPgStatCheckpointerAll() (*agent.PgStatCheckpointerPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil { return nil, err }
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatCheckpointer(adapter.PGDriver, ctx, adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatCheckpointerPayload{Rows: rows}, nil
-}
-func (adapter *CNPGAdapter) GetPgStatWalAll() (*agent.PgStatWalPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil { return nil, err }
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatWal(adapter.PGDriver, ctx, adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatWalPayload{Rows: rows}, nil
-}
-func (adapter *CNPGAdapter) GetPgStatIO() (*agent.PgStatIOPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil { return nil, err }
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatIO(adapter.PGDriver, ctx, adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatIOPayload{Rows: rows}, nil
-}
-func (adapter *CNPGAdapter) GetPgStatReplication() (*agent.PgStatReplicationPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil { return nil, err }
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatReplication(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatReplicationPayload{Rows: rows}, nil
-}
-func (adapter *CNPGAdapter) GetPgStatReplicationSlots() (*agent.PgStatReplicationSlotsPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil { return nil, err }
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatReplicationSlots(adapter.PGDriver, ctx, adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatReplicationSlotsPayload{Rows: rows}, nil
-}
-func (adapter *CNPGAdapter) GetPgStatSlru() (*agent.PgStatSlruPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil { return nil, err }
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatSlru(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatSlruPayload{Rows: rows}, nil
-}
-func (adapter *CNPGAdapter) GetPgStatUserIndexes() (*agent.PgStatUserIndexesPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil { return nil, err }
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatUserIndexes(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatUserIndexesPayload{Rows: rows}, nil
-}
-func (adapter *CNPGAdapter) GetPgStatioUserTables() (*agent.PgStatioUserTablesPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil { return nil, err }
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatioUserTables(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatioUserTablesPayload{Rows: rows}, nil
-}
-func (adapter *CNPGAdapter) GetPgStatioUserIndexes() (*agent.PgStatioUserIndexesPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil { return nil, err }
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatioUserIndexes(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatioUserIndexesPayload{Rows: rows}, nil
-}
-func (adapter *CNPGAdapter) GetPgStatUserFunctions() (*agent.PgStatUserFunctionsPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil { return nil, err }
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgStatUserFunctions(adapter.PGDriver, ctx)
-	if err != nil { return nil, err }
-	return &agent.PgStatUserFunctionsPayload{Rows: rows}, nil
-}
-
-func (adapter *CNPGAdapter) GetPgClass() (*agent.PgClassPayload, error) {
-	if err := adapter.CheckForFailover(context.Background()); err != nil {
-		return nil, err
-	}
-	ctx := adapter.State.GetOperationsContext()
-	rows, err := pg.CollectPgClass(adapter.PGDriver, ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgClassPayload{Rows: rows}, nil
-}
-
 // GetMetrics overrides CommonAgent.GetMetrics to check for failover before collecting metrics
-func (adapter *CNPGAdapter) GetMetrics() ([]metrics.FlatValue, error) {
+func (adapter *CNPGAdapter) GetMetrics(ctx context.Context) ([]metrics.FlatValue, error) {
 	logger := adapter.Logger()
 
 	// Check for failover before collecting metrics
 	// During recovery, PostgreSQL and primary pod may be unavailable
-	if err := adapter.CheckForFailover(context.Background()); err != nil {
+	if err := adapter.CheckForFailover(ctx); err != nil {
 		// Block operation for ANY error from CheckForFailover
 		var failoverErr *FailoverDetectedError
 		if errors.As(err, &failoverErr) {
@@ -611,16 +462,16 @@ func (adapter *CNPGAdapter) GetMetrics() ([]metrics.FlatValue, error) {
 
 	// Cluster is healthy - proceed with normal metrics collection
 	// Note: collectors internally use their own context, but this is the entry point check
-	return adapter.CommonAgent.GetMetrics()
+	return adapter.CommonAgent.GetMetrics(ctx)
 }
 
-func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *CNPGAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	logger := adapter.Logger()
 	var flatValues []metrics.FlatValue
 
 	// Check for failover before collecting system info
 	// During recovery, PostgreSQL and primary pod may be unavailable
-	if err := adapter.CheckForFailover(context.Background()); err != nil {
+	if err := adapter.CheckForFailover(ctx); err != nil {
 		// Block operation for ANY error from CheckForFailover
 		var failoverErr *FailoverDetectedError
 		if errors.As(err, &failoverErr) {
@@ -636,7 +487,7 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 
 	// Get operations context AFTER CheckForFailover passes
 	// This ensures we get the fresh context created by recovery completion, not the pre-cancelled one
-	ctx := adapter.State.GetOperationsContext()
+	opsCtx := adapter.State.GetOperationsContext()
 
 	// Get PostgreSQL version
 	pgVersionMetric, err := metrics.PGVersion.AsFlatValue(adapter.PGVersion)
@@ -649,7 +500,7 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
 	if err != nil {
 		// Check if context was cancelled (failover during operation)
-		if ctx.Err() == context.Canceled {
+		if opsCtx.Err() == context.Canceled {
 			logger.Infof("[FAILOVER_RECOVERY] GetSystemInfo aborted due to context cancellation")
 			return []metrics.FlatValue{}, &FailoverDetectedError{
 				OldPrimary: adapter.State.GetLastKnownPrimary(),
@@ -680,10 +531,10 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	flatValues = append(flatValues, maxConnectionsMetric)
 
 	// Dynamically discover current primary pod for system info
-	primaryPod, err := adapter.K8sClient.FindCNPGPrimaryPod(ctx, adapter.Config.ClusterName)
+	primaryPod, err := adapter.K8sClient.FindCNPGPrimaryPod(opsCtx, adapter.Config.ClusterName)
 	if err != nil {
 		// Check if context was cancelled (failover during operation)
-		if ctx.Err() == context.Canceled {
+		if opsCtx.Err() == context.Canceled {
 			logger.Infof("[FAILOVER_RECOVERY] GetSystemInfo aborted due to context cancellation")
 			return []metrics.FlatValue{}, nil
 		}
@@ -700,10 +551,10 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	}
 
 	containerClient := adapter.K8sClient.ContainerClient(primaryPod, adapter.Config.ContainerName)
-	systemInfo, err := containerClient.GetContainerSystemInfo(ctx)
+	systemInfo, err := containerClient.GetContainerSystemInfo(opsCtx)
 	if err != nil {
 		// Check if context was cancelled (failover during operation)
-		if ctx.Err() == context.Canceled {
+		if opsCtx.Err() == context.Canceled {
 			logger.Infof("[FAILOVER_RECOVERY] GetSystemInfo aborted due to context cancellation")
 			return []metrics.FlatValue{}, nil
 		}
@@ -714,16 +565,13 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return flatValues, nil
 }
 
-func (adapter *CNPGAdapter) Guardrails() *guardrails.Signal {
+func (adapter *CNPGAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	// Check if enough time has passed since the last guardrail check
 	if adapter.State.TimeSinceLastGuardrailCheck() < 5*time.Second {
 		return nil
 	}
 	adapter.Logger().Debugf("Checking Guardrails")
 	adapter.State.UpdateLastGuardrailCheck()
-
-	// Get pod resources to determine memory limit
-	ctx := context.Background()
 
 	// This provides continuous failover detection even when ApplyConfig isn't running
 	if err := adapter.CheckForFailover(ctx); err != nil {

@@ -18,7 +18,7 @@ import (
 
 type CloudSQLAdapter struct {
 	agent.CommonAgent
-	PGDriver              *pgPool.Pool
+	pg.CatalogGetter
 	State                 *State
 	CloudSQLConfig        Config
 	CloudMonitoringClient *CloudMonitoringClient
@@ -26,7 +26,6 @@ type CloudSQLAdapter struct {
 	GuardrailSettings     *guardrails.Config
 	pgConfig              pg.Config
 	PGVersion             string
-	PGMajorVersion        int
 }
 
 func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
@@ -68,10 +67,14 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
 
+	pgMajorVersion := pg.ParsePgMajorVersion(PGVersion)
 	c := &CloudSQLAdapter{
-		CommonAgent:    *commonAgent,
+		CommonAgent: *commonAgent,
+		CatalogGetter: pg.CatalogGetter{
+			PGPool:         pgPool,
+			PGMajorVersion: pgMajorVersion,
+		},
 		State:          &State{LastGuardrailCheck: time.Now()},
-		PGDriver:       pgPool,
 		CloudSQLConfig: config,
 		CloudMonitoringClient: &CloudMonitoringClient{
 			client: client,
@@ -82,8 +85,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		},
 		GuardrailSettings: &guardrailSettings,
 		pgConfig:          pgConfig,
-		PGVersion:         PGVersion,
-		PGMajorVersion:    pg.ParsePgMajorVersion(PGVersion),
+		PGVersion: PGVersion,
 	}
 
 	c.InitCollectors(c.Collectors())
@@ -91,7 +93,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 	return c, nil
 }
 
-func (adapter *CloudSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *CloudSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	adapter.Logger().Infof("Applying config")
 
 	flags := []*sqladmin.DatabaseFlags{}
@@ -119,17 +121,17 @@ func (adapter *CloudSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfig
 		return err
 	}
 
-	err = pg.WaitPostgresReady(adapter.PGDriver)
+	err = pg.WaitPostgresReady(adapter.PGPool)
 	if err != nil {
 		return fmt.Errorf("Error waiting for PostgreSQL to come back online: %w", err)
 	}
 	return nil
 }
 
-func (adapter *CloudSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
+func (adapter *CloudSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	adapter.Logger().Debugf("Getting Active Config")
 
-	config, err := pg.GetActiveConfig(adapter.PGDriver, context.Background(), adapter.Logger())
+	config, err := pg.GetActiveConfig(adapter.PGPool, ctx, adapter.Logger())
 	if err != nil {
 		return nil, err
 	}
@@ -153,128 +155,16 @@ func (adapter *CloudSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, erro
 	return filteredConfig, nil
 }
 
-func (adapter *CloudSQLAdapter) pgMajorVersion() int {
-	return adapter.PGMajorVersion
-}
-
-func (adapter *CloudSQLAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
-	rows, err := pg.CollectPgStatActivity(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatActivityPayload{Rows: rows}, nil
-}
-func (adapter *CloudSQLAdapter) GetPgStatDatabaseAll() (*agent.PgStatDatabasePayload, error) {
-	rows, err := pg.CollectPgStatDatabase(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatDatabasePayload{Rows: rows}, nil
-}
-func (adapter *CloudSQLAdapter) GetPgStatDatabaseConflicts() (*agent.PgStatDatabaseConflictsPayload, error) {
-	rows, err := pg.CollectPgStatDatabaseConflicts(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatDatabaseConflictsPayload{Rows: rows}, nil
-}
-func (adapter *CloudSQLAdapter) GetPgStatArchiver() (*agent.PgStatArchiverPayload, error) {
-	rows, err := pg.CollectPgStatArchiver(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatArchiverPayload{Rows: rows}, nil
-}
-func (adapter *CloudSQLAdapter) GetPgStatBgwriterAll() (*agent.PgStatBgwriterPayload, error) {
-	rows, err := pg.CollectPgStatBgwriter(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatBgwriterPayload{Rows: rows}, nil
-}
-func (adapter *CloudSQLAdapter) GetPgStatCheckpointerAll() (*agent.PgStatCheckpointerPayload, error) {
-	rows, err := pg.CollectPgStatCheckpointer(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatCheckpointerPayload{Rows: rows}, nil
-}
-func (adapter *CloudSQLAdapter) GetPgStatWalAll() (*agent.PgStatWalPayload, error) {
-	rows, err := pg.CollectPgStatWal(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatWalPayload{Rows: rows}, nil
-}
-func (adapter *CloudSQLAdapter) GetPgStatIO() (*agent.PgStatIOPayload, error) {
-	rows, err := pg.CollectPgStatIO(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatIOPayload{Rows: rows}, nil
-}
-func (adapter *CloudSQLAdapter) GetPgStatReplication() (*agent.PgStatReplicationPayload, error) {
-	rows, err := pg.CollectPgStatReplication(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatReplicationPayload{Rows: rows}, nil
-}
-func (adapter *CloudSQLAdapter) GetPgStatReplicationSlots() (*agent.PgStatReplicationSlotsPayload, error) {
-	rows, err := pg.CollectPgStatReplicationSlots(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatReplicationSlotsPayload{Rows: rows}, nil
-}
-func (adapter *CloudSQLAdapter) GetPgStatSlru() (*agent.PgStatSlruPayload, error) {
-	rows, err := pg.CollectPgStatSlru(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatSlruPayload{Rows: rows}, nil
-}
-func (adapter *CloudSQLAdapter) GetPgStatUserIndexes() (*agent.PgStatUserIndexesPayload, error) {
-	rows, err := pg.CollectPgStatUserIndexes(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatUserIndexesPayload{Rows: rows}, nil
-}
-func (adapter *CloudSQLAdapter) GetPgStatioUserTables() (*agent.PgStatioUserTablesPayload, error) {
-	rows, err := pg.CollectPgStatioUserTables(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatioUserTablesPayload{Rows: rows}, nil
-}
-func (adapter *CloudSQLAdapter) GetPgStatioUserIndexes() (*agent.PgStatioUserIndexesPayload, error) {
-	rows, err := pg.CollectPgStatioUserIndexes(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatioUserIndexesPayload{Rows: rows}, nil
-}
-func (adapter *CloudSQLAdapter) GetPgStatUserFunctions() (*agent.PgStatUserFunctionsPayload, error) {
-	rows, err := pg.CollectPgStatUserFunctions(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatUserFunctionsPayload{Rows: rows}, nil
-}
-
-func (adapter *CloudSQLAdapter) GetDDL() (*agent.DDLPayload, error) {
-	ddl, err := pg.CollectDDL(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.DDLPayload{DDL: ddl, Hash: pg.HashDDL(ddl)}, nil
-}
-
-func (adapter *CloudSQLAdapter) GetPgStatistic() (*agent.PgStatisticPayload, error) {
-	rows, err := pg.CollectPgStatistic(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatisticPayload{Rows: rows}, nil
-}
-
-func (adapter *CloudSQLAdapter) GetPgStatUserTables() (*agent.PgStatUserTablePayload, error) {
-	rows, err := pg.CollectPgStatUserTables(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatUserTablePayload{Rows: rows}, nil
-}
-
-func (adapter *CloudSQLAdapter) GetPgClass() (*agent.PgClassPayload, error) {
-	rows, err := pg.CollectPgClass(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgClassPayload{Rows: rows}, nil
-}
-
-func (adapter *CloudSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *CloudSQLAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	adapter.Logger().Debugf("Getting System Info")
 
 	// Get PostgreSQL version and max connections from database
-	pgVersion, err := pg.PGVersion(adapter.PGDriver)
+	pgVersion, err := pg.PGVersion(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
 
-	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
+	maxConnections, err := pg.MaxConnections(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +217,7 @@ func (adapter *CloudSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return systemInfo, nil
 }
 
-func (adapter *CloudSQLAdapter) Guardrails() *guardrails.Signal {
+func (adapter *CloudSQLAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	if time.Since(adapter.State.LastGuardrailCheck) < 5*time.Second {
 		return nil
 	}
@@ -356,7 +246,7 @@ func (adapter *CloudSQLAdapter) Guardrails() *guardrails.Signal {
 }
 
 func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
-	pool := adapter.PGDriver
+	pool := adapter.PGPool
 	collectors := []agent.MetricCollector{
 		{
 			Key:       "database_average_query_runtime",

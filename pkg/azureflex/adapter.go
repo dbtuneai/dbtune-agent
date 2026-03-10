@@ -24,12 +24,11 @@ var parseSKURegex = regexp.MustCompile("([B,D,E])([0-9]+)(ds|ads|s|ms)(?:_v([0-9
 
 type AzureFlexAdapter struct {
 	agent.CommonAgent
+	pg.CatalogGetter
 	AzureFlexConfig Config
-	PGDriver        *pgxpool.Pool
 	GuardrailConfig guardrails.Config
 	pgConfig        pg.Config
 	PGVersion       string
-	PGMajorVersion  int
 }
 
 func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
@@ -60,22 +59,24 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 	}
 
 	common := agent.CreateCommonAgent()
+	pgMajorVersion := pg.ParsePgMajorVersion(pgVersion)
 	adpt := AzureFlexAdapter{
-		CommonAgent:     *common,
+		CommonAgent: *common,
+		CatalogGetter: pg.CatalogGetter{
+			PGPool:         pgPool,
+			PGMajorVersion: pgMajorVersion,
+		},
 		AzureFlexConfig: config,
-		PGDriver:        pgPool,
 		GuardrailConfig: guardrailConfig,
 		pgConfig:        pgConfig,
 		PGVersion:       pgVersion,
-		PGMajorVersion:  pg.ParsePgMajorVersion(pgVersion),
 	}
 
 	adpt.InitCollectors(adpt.Collectors())
 	return &adpt, nil
 }
 
-func (adapter *AzureFlexAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
-	ctx := context.Background()
+func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
 		return err
@@ -185,10 +186,8 @@ func ApplyParameter(ctx context.Context, logger *logrus.Logger, paramsClient *ar
 	return *res.Configuration.Properties.IsConfigPendingRestart, nil
 }
 
-func (adapter *AzureFlexAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
-	ctx := context.Background()
-
-	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx, adapter.Logger())
+func (adapter *AzureFlexAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
+	config, err := pg.GetActiveConfig(adapter.PGPool, ctx, adapter.Logger())
 	if err != nil {
 		return nil, err
 	}
@@ -196,119 +195,7 @@ func (adapter *AzureFlexAdapter) GetActiveConfig() (agent.ConfigArraySchema, err
 	return config, err
 }
 
-func (adapter *AzureFlexAdapter) pgMajorVersion() int {
-	return adapter.PGMajorVersion
-}
-
-func (adapter *AzureFlexAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
-	rows, err := pg.CollectPgStatActivity(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatActivityPayload{Rows: rows}, nil
-}
-func (adapter *AzureFlexAdapter) GetPgStatDatabaseAll() (*agent.PgStatDatabasePayload, error) {
-	rows, err := pg.CollectPgStatDatabase(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatDatabasePayload{Rows: rows}, nil
-}
-func (adapter *AzureFlexAdapter) GetPgStatDatabaseConflicts() (*agent.PgStatDatabaseConflictsPayload, error) {
-	rows, err := pg.CollectPgStatDatabaseConflicts(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatDatabaseConflictsPayload{Rows: rows}, nil
-}
-func (adapter *AzureFlexAdapter) GetPgStatArchiver() (*agent.PgStatArchiverPayload, error) {
-	rows, err := pg.CollectPgStatArchiver(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatArchiverPayload{Rows: rows}, nil
-}
-func (adapter *AzureFlexAdapter) GetPgStatBgwriterAll() (*agent.PgStatBgwriterPayload, error) {
-	rows, err := pg.CollectPgStatBgwriter(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatBgwriterPayload{Rows: rows}, nil
-}
-func (adapter *AzureFlexAdapter) GetPgStatCheckpointerAll() (*agent.PgStatCheckpointerPayload, error) {
-	rows, err := pg.CollectPgStatCheckpointer(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatCheckpointerPayload{Rows: rows}, nil
-}
-func (adapter *AzureFlexAdapter) GetPgStatWalAll() (*agent.PgStatWalPayload, error) {
-	rows, err := pg.CollectPgStatWal(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatWalPayload{Rows: rows}, nil
-}
-func (adapter *AzureFlexAdapter) GetPgStatIO() (*agent.PgStatIOPayload, error) {
-	rows, err := pg.CollectPgStatIO(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatIOPayload{Rows: rows}, nil
-}
-func (adapter *AzureFlexAdapter) GetPgStatReplication() (*agent.PgStatReplicationPayload, error) {
-	rows, err := pg.CollectPgStatReplication(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatReplicationPayload{Rows: rows}, nil
-}
-func (adapter *AzureFlexAdapter) GetPgStatReplicationSlots() (*agent.PgStatReplicationSlotsPayload, error) {
-	rows, err := pg.CollectPgStatReplicationSlots(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatReplicationSlotsPayload{Rows: rows}, nil
-}
-func (adapter *AzureFlexAdapter) GetPgStatSlru() (*agent.PgStatSlruPayload, error) {
-	rows, err := pg.CollectPgStatSlru(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatSlruPayload{Rows: rows}, nil
-}
-func (adapter *AzureFlexAdapter) GetPgStatUserIndexes() (*agent.PgStatUserIndexesPayload, error) {
-	rows, err := pg.CollectPgStatUserIndexes(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatUserIndexesPayload{Rows: rows}, nil
-}
-func (adapter *AzureFlexAdapter) GetPgStatioUserTables() (*agent.PgStatioUserTablesPayload, error) {
-	rows, err := pg.CollectPgStatioUserTables(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatioUserTablesPayload{Rows: rows}, nil
-}
-func (adapter *AzureFlexAdapter) GetPgStatioUserIndexes() (*agent.PgStatioUserIndexesPayload, error) {
-	rows, err := pg.CollectPgStatioUserIndexes(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatioUserIndexesPayload{Rows: rows}, nil
-}
-func (adapter *AzureFlexAdapter) GetPgStatUserFunctions() (*agent.PgStatUserFunctionsPayload, error) {
-	rows, err := pg.CollectPgStatUserFunctions(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatUserFunctionsPayload{Rows: rows}, nil
-}
-
-func (adapter *AzureFlexAdapter) GetDDL() (*agent.DDLPayload, error) {
-	ddl, err := pg.CollectDDL(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.DDLPayload{DDL: ddl, Hash: pg.HashDDL(ddl)}, nil
-}
-
-func (adapter *AzureFlexAdapter) GetPgStatistic() (*agent.PgStatisticPayload, error) {
-	rows, err := pg.CollectPgStatistic(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatisticPayload{Rows: rows}, nil
-}
-
-func (adapter *AzureFlexAdapter) GetPgStatUserTables() (*agent.PgStatUserTablePayload, error) {
-	rows, err := pg.CollectPgStatUserTables(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatUserTablePayload{Rows: rows}, nil
-}
-
-func (adapter *AzureFlexAdapter) GetPgClass() (*agent.PgClassPayload, error) {
-	rows, err := pg.CollectPgClass(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgClassPayload{Rows: rows}, nil
-}
-
-func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *AzureFlexAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
 		return nil, err
@@ -319,7 +206,7 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 		return nil, err
 	}
 
-	serverInfo, err := clientFactory.NewServersClient().Get(context.Background(), adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, nil)
+	serverInfo, err := clientFactory.NewServersClient().Get(ctx, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -366,12 +253,12 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 		}
 	}
 
-	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
+	maxConnections, err := pg.MaxConnections(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
 
-	pgVersion, err := pg.PGVersion(adapter.PGDriver)
+	pgVersion, err := pg.PGVersion(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +289,7 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return systemInfo, nil
 }
 
-func (adapter *AzureFlexAdapter) Guardrails() *guardrails.Signal {
+func (adapter *AzureFlexAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	memoryUsagePercent, err := MemoryPercent(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName)()
 	if err != nil {
 		adapter.Logger().Errorf("Failed to get memory metric for guardrail: %v", err)
@@ -423,7 +310,7 @@ func (adapter *AzureFlexAdapter) Guardrails() *guardrails.Signal {
 }
 
 func (adapter *AzureFlexAdapter) Collectors() []agent.MetricCollector {
-	pool := adapter.PGDriver
+	pool := adapter.PGPool
 	collectors := []agent.MetricCollector{
 		{
 			Key:       "database_average_query_runtime",

@@ -53,7 +53,7 @@ func CheckStartupRequirements() error {
 	// Override the ServerURLs to use our validated ones
 	commonAgent.ServerURLs = serverURLs
 
-	err = commonAgent.SendHeartbeat()
+	err = commonAgent.SendHeartbeat(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to connect to dbtune server: %w", err)
 	}

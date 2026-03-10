@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"sync"
 	"testing"
@@ -16,6 +17,12 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
+
+func quietLogger() *logrus.Logger {
+	l := logrus.New()
+	l.SetOutput(io.Discard)
+	return l
+}
 
 // mockCollector creates a collector that simulates different behaviors
 func mockCollector(delay time.Duration, shouldError bool, metrics []metrics.FlatValue) MetricCollector {
@@ -41,7 +48,7 @@ func mockCollector(delay time.Duration, shouldError bool, metrics []metrics.Flat
 func TestGetMetrics(t *testing.T) {
 	t.Run("happy path - all collectors succeed", func(t *testing.T) {
 		agent := &CommonAgent{
-			logger: logrus.New(),
+			logger: quietLogger(),
 			MetricsState: MetricsState{
 				Collectors: []MetricCollector{
 					mockCollector(100*time.Millisecond, false, []metrics.FlatValue{{
@@ -61,7 +68,7 @@ func TestGetMetrics(t *testing.T) {
 			IndividualTimeout: 500 * time.Millisecond,
 		}
 
-		flat_metrics, err := agent.GetMetrics()
+		flat_metrics, err := agent.GetMetrics(context.Background())
 		assert.NoError(t, err)
 		assert.Len(t, flat_metrics, 2)
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric1", Value: 1, Type: "int"})
@@ -70,7 +77,7 @@ func TestGetMetrics(t *testing.T) {
 
 	t.Run("partial failure - one collector errors", func(t *testing.T) {
 		agent := &CommonAgent{
-			logger: logrus.New(),
+			logger: quietLogger(),
 			MetricsState: MetricsState{
 				Collectors: []MetricCollector{
 					mockCollector(100*time.Millisecond, true, nil), // This one will error
@@ -86,7 +93,7 @@ func TestGetMetrics(t *testing.T) {
 			IndividualTimeout: 500 * time.Millisecond,
 		}
 
-		flat_metrics, err := agent.GetMetrics()
+		flat_metrics, err := agent.GetMetrics(context.Background())
 		assert.NoError(t, err) // The function should not return error even if collectors fail
 		assert.Len(t, flat_metrics, 1)
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric2", Value: 2, Type: "int"})
@@ -94,7 +101,7 @@ func TestGetMetrics(t *testing.T) {
 
 	t.Run("context timeout - slow collectors are cancelled", func(t *testing.T) {
 		agent := &CommonAgent{
-			logger: logrus.New(),
+			logger: quietLogger(),
 			MetricsState: MetricsState{
 				Collectors: []MetricCollector{
 					mockCollector(100*time.Millisecond, false, []metrics.FlatValue{{
@@ -114,7 +121,7 @@ func TestGetMetrics(t *testing.T) {
 			IndividualTimeout: 500 * time.Millisecond,
 		}
 
-		flat_metrics, err := agent.GetMetrics()
+		flat_metrics, err := agent.GetMetrics(context.Background())
 		assert.NoError(t, err)
 		assert.Len(t, flat_metrics, 1)
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric1", Value: 1, Type: "int"})
@@ -138,7 +145,7 @@ func CreateCommonAgentForTests(rt http.RoundTripper) CommonAgent {
 	return CommonAgent{
 		AgentID:   "test-agent",
 		APIClient: httpClient,
-		logger:    logrus.New(),
+		logger:    quietLogger(),
 		ServerURLs: dbtune.ServerURLs{
 			ServerUrl: "http://localhost:8080",
 			ApiKey:    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
@@ -187,7 +194,8 @@ func TestCommonAgent_SendHeartbeat_Succeeds(t *testing.T) {
 	transport := dbtunetest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
 
-	err := agent.SendHeartbeat()
+	ctx := context.Background()
+	err := agent.SendHeartbeat(ctx)
 	assert.NoError(t, err)
 
 	transport.ActionWasCalled(t, "/api/v1/agent/heartbeat", http.MethodPost)
@@ -197,8 +205,9 @@ func TestCommonAgent_SendActiveConfig_Succeeds(t *testing.T) {
 	transport := dbtunetest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
 	config := ConfigArraySchema{}
+	ctx := context.Background()
 
-	err := agent.SendActiveConfig(config)
+	err := agent.SendActiveConfig(ctx, config)
 	assert.NoError(t, err)
 
 	transport.ActionWasCalled(t, "/api/v1/agent/configurations", http.MethodPost)
@@ -207,8 +216,9 @@ func TestCommonAgent_SendActiveConfig_Succeeds(t *testing.T) {
 func TestCommonAgent_SendError_Succeeds(t *testing.T) {
 	transport := dbtunetest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
+	ctx := context.Background()
 
-	err := agent.SendError(ErrorPayload{
+	err := agent.SendError(ctx, ErrorPayload{
 		ErrorMessage: "something went wrong",
 		ErrorType:    "test_error",
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),
@@ -221,8 +231,9 @@ func TestCommonAgent_SendError_Succeeds(t *testing.T) {
 func TestCommonAgent_SendGuardrailSignal_Succeeds(t *testing.T) {
 	transport := dbtunetest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
+	ctx := context.Background()
 
-	err := agent.SendGuardrailSignal(guardrails.Signal{
+	err := agent.SendGuardrailSignal(ctx, guardrails.Signal{
 		Level: guardrails.Critical,
 		Type:  guardrails.Memory,
 	})
@@ -234,8 +245,9 @@ func TestCommonAgent_SendGuardrailSignal_Succeeds(t *testing.T) {
 func TestCommonAgent_SendMetrics_Succeeds(t *testing.T) {
 	transport := dbtunetest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
+	ctx := context.Background()
 
-	err := agent.SendMetrics([]metrics.FlatValue{
+	err := agent.SendMetrics(ctx, []metrics.FlatValue{
 		{Key: "metric1", Value: 1, Type: "int"},
 		{Key: "metric2", Value: 3.14, Type: "float"},
 	})
@@ -247,8 +259,9 @@ func TestCommonAgent_SendMetrics_Succeeds(t *testing.T) {
 func TestCommonAgent_SendSystemInfo_Succeeds(t *testing.T) {
 	transport := dbtunetest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
+	ctx := context.Background()
 
-	err := agent.SendSystemInfo([]metrics.FlatValue{
+	err := agent.SendSystemInfo(ctx, []metrics.FlatValue{
 		{Key: "os", Value: "linux", Type: "string"},
 		{Key: "cpu_count", Value: 4, Type: "int"},
 	})
@@ -260,8 +273,9 @@ func TestCommonAgent_SendSystemInfo_Succeeds(t *testing.T) {
 func TestCommonAgent_GetProposedConfig_Succeeds(t *testing.T) {
 	transport := dbtunetest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
+	ctx := context.Background()
 
-	config, err := agent.GetProposedConfig()
+	config, err := agent.GetProposedConfig(ctx)
 	if assert.NoError(t, err) && assert.NotNil(t, config) {
 		assert.Len(t, config.Config, 3)
 		assert.Equal(t, "shared_buffers", config.Config[0].Name)

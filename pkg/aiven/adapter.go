@@ -26,14 +26,13 @@ const (
 // AivenPostgreSQLAdapter represents an adapter for connecting to Aiven PostgreSQL services
 type AivenPostgreSQLAdapter struct {
 	agent.CommonAgent
+	pg.CatalogGetter
 	Config            Config
 	Client            aivenclient.Client
 	State             *State
 	GuardrailSettings guardrails.Config
 	pgConfig          pg.Config
-	PGDriver          *pgPool.Pool
 	PGVersion         string
-	PGMajorVersion    int
 }
 
 // CreateAivenPostgreSQLAdapter creates a new Aiven PostgreSQL adapter
@@ -90,17 +89,20 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
+	pgMajorVersion := pg.ParsePgMajorVersion(PGVersion)
 	// Create adapter
 	adapter := &AivenPostgreSQLAdapter{
-		CommonAgent:       *commonAgent,
+		CommonAgent: *commonAgent,
+		CatalogGetter: pg.CatalogGetter{
+			PGPool:         pgPool,
+			PGMajorVersion: pgMajorVersion,
+		},
 		Config:            aivenConfig,
 		Client:            aivenClient,
 		State:             state,
 		GuardrailSettings: guardrailSettings,
-		pgConfig:          pgConfig,
-		PGDriver:          pgPool,
-		PGVersion:         PGVersion,
-		PGMajorVersion:    pg.ParsePgMajorVersion(PGVersion),
+		pgConfig:  pgConfig,
+		PGVersion: PGVersion,
 	}
 
 	// Initialize collectors
@@ -110,12 +112,12 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 }
 
 // GetSystemInfo returns system information for the Aiven PostgreSQL service
-func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *AivenPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	adapter.Logger().Info("Collecting Aiven system info")
 
 	// Get service information from Aiven API
 	service, err := adapter.Client.ServiceGet(
-		context.Background(),
+		ctx,
 		adapter.Config.ProjectName,
 		adapter.Config.ServiceName,
 		[2]string{"include_secrets", "false"},
@@ -143,12 +145,12 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, err
 	}
 
 	// Get PostgreSQL version and max connections from database
-	pgVersion, err := pg.PGVersion(adapter.PGDriver)
+	pgVersion, err := pg.PGVersion(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
 
-	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
+	maxConnections, err := pg.MaxConnections(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +199,7 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, err
 }
 
 // ApplyConfig applies configuration changes to the Aiven PostgreSQL service
-func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	adapter.Logger().Infof("Applying config")
 
 	// List of knobs to be applied
@@ -240,7 +242,7 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 
 		// Apply the configuration update
 		_, err := adapter.Client.ServiceUpdate(
-			context.Background(),
+			ctx,
 			adapter.Config.ProjectName,
 			adapter.Config.ServiceName,
 			&service.ServiceUpdateIn{UserConfig: &userConfig, Powered: boolPtr(true)},
@@ -301,7 +303,7 @@ func (adapter *AivenPostgreSQLAdapter) waitForServiceState(state service.Service
 // Guardrails implements resource usage guardrails
 // Aiven only provides 30 second resolution data for hardware info, which we
 // need for guardrails.
-func (adapter *AivenPostgreSQLAdapter) Guardrails() *guardrails.Signal {
+func (adapter *AivenPostgreSQLAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	timeSinceLastGuardrailCheck := time.Since(adapter.State.LastGuardrailCheck)
 	if timeSinceLastGuardrailCheck < adapter.Config.MetricResolution {
 		adapter.Logger().Debugf(
@@ -331,7 +333,7 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *guardrails.Signal {
 			adapter.Config.MetricResolution,
 		)
 		metrics, err := GetFetchedMetrics(
-			context.Background(),
+			ctx,
 			FetchedMetricsIn{
 				Client:      &adapter.Client,
 				ProjectName: adapter.Config.ProjectName,
@@ -381,7 +383,7 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *guardrails.Signal {
 
 // AivenCollectors returns the metrics collectors for Aiven PostgreSQL
 func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
-	pgDriver := adapter.PGDriver
+	pgDriver := adapter.PGPool
 	collectors := []agent.MetricCollector{
 		{
 			Key:       "database_average_query_runtime",
@@ -502,7 +504,7 @@ func getInitialServiceLevelParameters(client *aivenclient.Client, projectName st
 
 // GetActiveConfig returns the active configuration for the Aiven API
 // as well as through PostgreSQL
-func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
+func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	// Main differences from the PostgreSQL version:
 	// * We need to query Aiven's service for the `shared_buffers_percentage` parameter.
 	// The problem here is that until we modify `shared_buffers_percentage`, we don't get
@@ -514,7 +516,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 	logger.Debug("Getting active config for Aiven PostgreSQL")
 	var configRows agent.ConfigArraySchema
 	service, err := adapter.Client.ServiceGet(
-		context.Background(),
+		ctx,
 		adapter.Config.ProjectName,
 		adapter.Config.ServiceName,
 		[2]string{"include_secrets", "false"},
@@ -556,7 +558,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 		Context: "service",
 	})
 
-	numericRows, err := utils.QueryWithPrefix(adapter.PGDriver, context.Background(), pg.SELECT_NUMERIC_SETTINGS)
+	numericRows, err := utils.QueryWithPrefix(adapter.PGPool, ctx, pg.SELECT_NUMERIC_SETTINGS)
 
 	if err != nil {
 		return nil, err
@@ -603,7 +605,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 	}
 
 	// Query for non-numeric types
-	nonNumericRows, err := utils.QueryWithPrefix(adapter.PGDriver, context.Background(), pg.SELECT_NON_NUMERIC_SETTINGS)
+	nonNumericRows, err := utils.QueryWithPrefix(adapter.PGPool, ctx, pg.SELECT_NON_NUMERIC_SETTINGS)
 	if err != nil {
 		return nil, err
 	}
@@ -621,114 +623,3 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 	return configRows, nil
 }
 
-func (adapter *AivenPostgreSQLAdapter) pgMajorVersion() int {
-	return adapter.PGMajorVersion
-}
-
-func (adapter *AivenPostgreSQLAdapter) GetPgStatActivity() (*agent.PgStatActivityPayload, error) {
-	rows, err := pg.CollectPgStatActivity(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatActivityPayload{Rows: rows}, nil
-}
-func (adapter *AivenPostgreSQLAdapter) GetPgStatDatabaseAll() (*agent.PgStatDatabasePayload, error) {
-	rows, err := pg.CollectPgStatDatabase(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatDatabasePayload{Rows: rows}, nil
-}
-func (adapter *AivenPostgreSQLAdapter) GetPgStatDatabaseConflicts() (*agent.PgStatDatabaseConflictsPayload, error) {
-	rows, err := pg.CollectPgStatDatabaseConflicts(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatDatabaseConflictsPayload{Rows: rows}, nil
-}
-func (adapter *AivenPostgreSQLAdapter) GetPgStatArchiver() (*agent.PgStatArchiverPayload, error) {
-	rows, err := pg.CollectPgStatArchiver(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatArchiverPayload{Rows: rows}, nil
-}
-func (adapter *AivenPostgreSQLAdapter) GetPgStatBgwriterAll() (*agent.PgStatBgwriterPayload, error) {
-	rows, err := pg.CollectPgStatBgwriter(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatBgwriterPayload{Rows: rows}, nil
-}
-func (adapter *AivenPostgreSQLAdapter) GetPgStatCheckpointerAll() (*agent.PgStatCheckpointerPayload, error) {
-	rows, err := pg.CollectPgStatCheckpointer(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatCheckpointerPayload{Rows: rows}, nil
-}
-func (adapter *AivenPostgreSQLAdapter) GetPgStatWalAll() (*agent.PgStatWalPayload, error) {
-	rows, err := pg.CollectPgStatWal(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatWalPayload{Rows: rows}, nil
-}
-func (adapter *AivenPostgreSQLAdapter) GetPgStatIO() (*agent.PgStatIOPayload, error) {
-	rows, err := pg.CollectPgStatIO(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatIOPayload{Rows: rows}, nil
-}
-func (adapter *AivenPostgreSQLAdapter) GetPgStatReplication() (*agent.PgStatReplicationPayload, error) {
-	rows, err := pg.CollectPgStatReplication(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatReplicationPayload{Rows: rows}, nil
-}
-func (adapter *AivenPostgreSQLAdapter) GetPgStatReplicationSlots() (*agent.PgStatReplicationSlotsPayload, error) {
-	rows, err := pg.CollectPgStatReplicationSlots(adapter.PGDriver, context.Background(), adapter.pgMajorVersion())
-	if err != nil { return nil, err }
-	return &agent.PgStatReplicationSlotsPayload{Rows: rows}, nil
-}
-func (adapter *AivenPostgreSQLAdapter) GetPgStatSlru() (*agent.PgStatSlruPayload, error) {
-	rows, err := pg.CollectPgStatSlru(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatSlruPayload{Rows: rows}, nil
-}
-func (adapter *AivenPostgreSQLAdapter) GetPgStatUserIndexes() (*agent.PgStatUserIndexesPayload, error) {
-	rows, err := pg.CollectPgStatUserIndexes(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatUserIndexesPayload{Rows: rows}, nil
-}
-func (adapter *AivenPostgreSQLAdapter) GetPgStatioUserTables() (*agent.PgStatioUserTablesPayload, error) {
-	rows, err := pg.CollectPgStatioUserTables(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatioUserTablesPayload{Rows: rows}, nil
-}
-func (adapter *AivenPostgreSQLAdapter) GetPgStatioUserIndexes() (*agent.PgStatioUserIndexesPayload, error) {
-	rows, err := pg.CollectPgStatioUserIndexes(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatioUserIndexesPayload{Rows: rows}, nil
-}
-func (adapter *AivenPostgreSQLAdapter) GetPgStatUserFunctions() (*agent.PgStatUserFunctionsPayload, error) {
-	rows, err := pg.CollectPgStatUserFunctions(adapter.PGDriver, context.Background())
-	if err != nil { return nil, err }
-	return &agent.PgStatUserFunctionsPayload{Rows: rows}, nil
-}
-
-func (adapter *AivenPostgreSQLAdapter) GetDDL() (*agent.DDLPayload, error) {
-	ddl, err := pg.CollectDDL(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.DDLPayload{DDL: ddl, Hash: pg.HashDDL(ddl)}, nil
-}
-
-func (adapter *AivenPostgreSQLAdapter) GetPgStatistic() (*agent.PgStatisticPayload, error) {
-	rows, err := pg.CollectPgStatistic(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatisticPayload{Rows: rows}, nil
-}
-
-func (adapter *AivenPostgreSQLAdapter) GetPgStatUserTables() (*agent.PgStatUserTablePayload, error) {
-	rows, err := pg.CollectPgStatUserTables(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgStatUserTablePayload{Rows: rows}, nil
-}
-
-func (adapter *AivenPostgreSQLAdapter) GetPgClass() (*agent.PgClassPayload, error) {
-	rows, err := pg.CollectPgClass(adapter.PGDriver, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &agent.PgClassPayload{Rows: rows}, nil
-}
