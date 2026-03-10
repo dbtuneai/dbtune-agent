@@ -331,9 +331,6 @@ func TestRunWithTicker(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 
-		ticker := time.NewTicker(10 * time.Millisecond)
-		defer ticker.Stop()
-
 		counter := 0
 		var mu sync.Mutex
 
@@ -344,7 +341,7 @@ func TestRunWithTicker(t *testing.T) {
 			return nil
 		}
 
-		go runWithTicker(ctx, ticker, "test", logger, false, fn)
+		go runWithTicker(ctx, 10*time.Millisecond, "test", logger, false, fn)
 
 		// Wait for context to be done
 		<-ctx.Done()
@@ -359,9 +356,6 @@ func TestRunWithTicker(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 
-		ticker := time.NewTicker(10 * time.Millisecond)
-		defer ticker.Stop()
-
 		counter := 0
 		var mu sync.Mutex
 
@@ -373,7 +367,7 @@ func TestRunWithTicker(t *testing.T) {
 			return expectedErr
 		}
 
-		go runWithTicker(ctx, ticker, "test", logger, false, fn)
+		go runWithTicker(ctx, 10*time.Millisecond, "test", logger, false, fn)
 
 		// Wait for context to be done
 		<-ctx.Done()
