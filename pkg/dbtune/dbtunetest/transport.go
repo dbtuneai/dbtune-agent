@@ -40,48 +40,68 @@ type SuccessfulTrip struct {
 	actions map[Route]*Action
 }
 
-func CreateSuccessfulTrip() SuccessfulTrip {
-	st := SuccessfulTrip{
-		actions: map[Route]*Action{
-			{"/api/v1/agent/configurations", http.MethodGet}: {
-				path:       "/api/v1/agent/configurations",
-				method:     http.MethodGet,
-				testMethod: getConfigurations,
-			},
-			{"/api/v1/agent/heartbeat", http.MethodPost}: {
-				path:       "/api/v1/agent/heartbeat",
-				method:     http.MethodPost,
-				testMethod: postHeartbeat,
-			},
-			{"/api/v1/agent/configurations", http.MethodPost}: {
-				path:       "/api/v1/agent/configurations",
-				method:     http.MethodPost,
-				testMethod: postActiveConfig,
-			},
-			{"/api/v1/agent/log-entries", http.MethodPost}: {
-				path:       "/api/v1/agent/log-entries",
-				method:     http.MethodPost,
-				testMethod: postLogEntries,
-			},
-			{"/api/v1/agent/guardrails", http.MethodPost}: {
-				path:       "/api/v1/agent/guardrails",
-				method:     http.MethodPost,
-				testMethod: postGuardrails,
-			},
-			{"/api/v1/agent/metrics", http.MethodPost}: {
-				path:       "/api/v1/agent/metrics",
-				method:     http.MethodPost,
-				testMethod: postMetrics,
-			},
-			{"/api/v1/agent/system-info", http.MethodPut}: {
-				path:       "/api/v1/agent/system-info",
-				method:     http.MethodPut,
-				testMethod: putSystemInfo,
-			},
+func allActions() map[Route]*Action {
+	return map[Route]*Action{
+		{"/api/v1/agent/configurations", http.MethodGet}: {
+			path:       "/api/v1/agent/configurations",
+			method:     http.MethodGet,
+			testMethod: getConfigurations,
+		},
+		{"/api/v1/agent/heartbeat", http.MethodPost}: {
+			path:       "/api/v1/agent/heartbeat",
+			method:     http.MethodPost,
+			testMethod: postHeartbeat,
+		},
+		{"/api/v1/agent/configurations", http.MethodPost}: {
+			path:       "/api/v1/agent/configurations",
+			method:     http.MethodPost,
+			testMethod: postActiveConfig,
+		},
+		{"/api/v1/agent/log-entries", http.MethodPost}: {
+			path:       "/api/v1/agent/log-entries",
+			method:     http.MethodPost,
+			testMethod: postLogEntries,
+		},
+		{"/api/v1/agent/guardrails", http.MethodPost}: {
+			path:       "/api/v1/agent/guardrails",
+			method:     http.MethodPost,
+			testMethod: postGuardrails,
+		},
+		{"/api/v1/agent/metrics", http.MethodPost}: {
+			path:       "/api/v1/agent/metrics",
+			method:     http.MethodPost,
+			testMethod: postMetrics,
+		},
+		{"/api/v1/agent/system-info", http.MethodPut}: {
+			path:       "/api/v1/agent/system-info",
+			method:     http.MethodPut,
+			testMethod: putSystemInfo,
 		},
 	}
+}
 
-	return st
+func CreateSuccessfulTrip() SuccessfulTrip {
+	all := allActions()
+	actions := make(map[Route]*Action, len(all))
+	for k, v := range all {
+		actions[k] = v
+	}
+	return SuccessfulTrip{actions: actions}
+}
+
+// CreateSuccessfulTripWithRoutes creates a SuccessfulTrip containing only the
+// specified routes. Use this when the code under test does not call all actions
+// (e.g. the runner omits heartbeat and log-entries in a short test window) and
+// you still want AllActionsCalled to pass.
+func CreateSuccessfulTripWithRoutes(routes []Route) SuccessfulTrip {
+	all := allActions()
+	actions := make(map[Route]*Action, len(routes))
+	for _, r := range routes {
+		if a, ok := all[r]; ok {
+			actions[r] = a
+		}
+	}
+	return SuccessfulTrip{actions: actions}
 }
 
 func (st SuccessfulTrip) RoundTrip(req *http.Request) (*http.Response, error) {
