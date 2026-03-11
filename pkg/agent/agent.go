@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -636,23 +637,44 @@ func isNilPayload(payload any) bool {
 	return v.Kind() == reflect.Ptr && v.IsNil()
 }
 
+// gzipJSON marshals the payload to JSON and gzip-compresses the result.
+// It returns the uncompressed JSON size (for logging) and a buffer containing
+// the gzipped data.
+func gzipJSON(payload any) (jsonSize int, buf *bytes.Buffer, err error) {
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return 0, nil, err
+	}
+	buf = &bytes.Buffer{}
+	gz := gzip.NewWriter(buf)
+	if _, err := gz.Write(jsonData); err != nil {
+		return 0, nil, fmt.Errorf("gzip write: %w", err)
+	}
+	if err := gz.Close(); err != nil {
+		return 0, nil, fmt.Errorf("gzip close: %w", err)
+	}
+	return len(jsonData), buf, nil
+}
+
 func (a *CommonAgent) SendCatalogPayload(ctx context.Context, name string, payload any) error {
 	a.Logger().Printf("Sending %s to server", name)
 	if isNilPayload(payload) {
 		return fmt.Errorf("%s payload is nil", name)
 	}
-	jsonData, err := json.Marshal(payload)
+	jsonSize, buf, err := gzipJSON(payload)
 	if err != nil {
 		return err
 	}
+	a.Logger().Printf("%s payload: %d bytes -> %d bytes gzipped", name, jsonSize, buf.Len())
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	url := a.ServerURLs.AgentURL(name)
-	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonData))
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, url, buf)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
 	resp, err := a.APIClient.Do(req)
 	if err != nil {
 		return err

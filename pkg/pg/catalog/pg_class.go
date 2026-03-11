@@ -156,11 +156,12 @@ func newPgClassCollectFunc(collectFn PgClassCollectFunc, batchSize int) func(ctx
 			if err != nil {
 				return nil, err
 			}
-			backfillOffset += batchSize
 			if len(classRows) == 0 {
 				backfillDone = true
 				now := time.Now().UTC()
 				lastPoll = &now
+			} else {
+				backfillOffset += batchSize
 			}
 		} else {
 			now := time.Now().UTC()

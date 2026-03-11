@@ -8,6 +8,8 @@ package dbtunetest
 
 import (
 	"bytes"
+	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,6 +42,11 @@ func (action *Action) Call(req *http.Request) (*http.Response, error) {
 // conditions are met.
 type SuccessfulTrip struct {
 	actions map[Route]*Action
+}
+
+// CatalogRoute returns a Route for a catalog endpoint (POST /api/v1/agent/<name>).
+func CatalogRoute(name string) Route {
+	return Route{"/api/v1/agent/" + name, http.MethodPost}
 }
 
 func allActions() map[Route]*Action {
@@ -290,6 +297,80 @@ func postMetrics(req *http.Request) (*http.Response, error) {
 		Status:     "204 No Content",
 		StatusCode: http.StatusNoContent,
 	}, nil
+}
+
+// PostCatalogGzip validates that the request has Content-Encoding: gzip,
+// decompresses the body, and verifies valid JSON. It stores the decoded body
+// in DecodedBody for test assertions.
+func PostCatalogGzip(req *http.Request) (*http.Response, error) {
+	if req.Header.Get("Content-Type") != "application/json" {
+		return &http.Response{
+			Status:     "415 Unsupported Media Type",
+			StatusCode: http.StatusUnsupportedMediaType,
+			Body:       io.NopCloser(bytes.NewBufferString(fmt.Sprintf("Expected Content-Type to be application/json, got %s", req.Header.Get("Content-Type")))),
+		}, nil
+	}
+	if req.Header.Get("Content-Encoding") != "gzip" {
+		return &http.Response{
+			Status:     "400 Bad Request",
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(bytes.NewBufferString(fmt.Sprintf("Expected Content-Encoding to be gzip, got %q", req.Header.Get("Content-Encoding")))),
+		}, nil
+	}
+	if !req.URL.Query().Has("uuid") {
+		return &http.Response{
+			Status:     "400 Bad Request",
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(bytes.NewBufferString(fmt.Sprintf("Expected request to have uuid query parameter, raw query was: %s", req.URL.RawQuery))),
+		}, nil
+	}
+
+	gz, err := gzip.NewReader(req.Body)
+	if err != nil {
+		return &http.Response{
+			Status:     "400 Bad Request",
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(bytes.NewBufferString(fmt.Sprintf("Failed to create gzip reader: %v", err))),
+		}, nil
+	}
+	defer gz.Close()
+
+	decompressed, err := io.ReadAll(gz)
+	if err != nil {
+		return &http.Response{
+			Status:     "400 Bad Request",
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(bytes.NewBufferString(fmt.Sprintf("Failed to decompress gzip body: %v", err))),
+		}, nil
+	}
+
+	if !json.Valid(decompressed) {
+		return &http.Response{
+			Status:     "400 Bad Request",
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(bytes.NewBufferString("Decompressed body is not valid JSON")),
+		}, nil
+	}
+
+	return &http.Response{
+		Status:     "204 No Content",
+		StatusCode: http.StatusNoContent,
+	}, nil
+}
+
+// CreateCatalogTrip creates a SuccessfulTrip with only the given catalog route,
+// using the gzip-validating handler.
+func CreateCatalogTrip(name string) SuccessfulTrip {
+	route := CatalogRoute(name)
+	return SuccessfulTrip{
+		actions: map[Route]*Action{
+			route: {
+				path:       route[0],
+				method:     route[1],
+				testMethod: PostCatalogGzip,
+			},
+		},
+	}
 }
 
 func putSystemInfo(req *http.Request) (*http.Response, error) {

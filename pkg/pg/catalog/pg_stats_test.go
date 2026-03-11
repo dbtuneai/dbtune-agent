@@ -116,6 +116,33 @@ func TestPgStatsCollector(t *testing.T) {
 			},
 		},
 		{
+			name:      "empty batch does not advance offset",
+			batchSize: 2,
+			calls: []call{
+				{
+					wantMode:      "backfill",
+					wantBatchSize: 2,
+					wantOffset:    0,
+					returnRows:    []PgStatsRow{fakeRow("public", "t1", "a")},
+					wantPayload:   true,
+				},
+				{
+					// Partial batch (1 < batchSize=2), offset still advances by batchSize.
+					wantMode:      "backfill",
+					wantBatchSize: 2,
+					wantOffset:    2,
+					returnRows:    nil, // empty — ends backfill
+					wantNilData:   true,
+				},
+				{
+					// Must be in delta mode now, not backfill at offset 4.
+					wantMode:    "delta",
+					returnRows:  nil,
+					wantNilData: true,
+				},
+			},
+		},
+		{
 			name:      "backfill error does not advance state",
 			batchSize: 500,
 			calls: []call{
