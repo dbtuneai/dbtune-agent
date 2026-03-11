@@ -137,7 +137,6 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 		client,
 		config.ClusterName,
 		config.ContainerName,
-		adapter.CatalogGetter.PGMajorVersion,
 		adapter.Logger(),
 	))
 
@@ -644,7 +643,7 @@ func (adapter *CNPGAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	return nil
 }
 
-func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName string, containerName string, pgMajorVersion int, logger *log.Logger) []agent.MetricCollector {
+func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName string, containerName string, logger *log.Logger) []agent.MetricCollector {
 	// Get PG config for query settings
 	pgConfig, _ := pg.ConfigFromViper(nil)
 
@@ -680,22 +679,6 @@ func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName st
 			Collector: pg.UptimeMinutes(pool),
 		},
 		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pool),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pool),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pool),
-		},
-		{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pool),
-		},
-		{
 			Key:       "database_wait_events",
 			Collector: pg.WaitEvents(pool),
 		},
@@ -703,14 +686,6 @@ func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName st
 			Key:       "hardware",
 			Collector: kubernetes.CNPGContainerMetricsCollector(kubeClient, clusterName, containerName),
 		},
-	}
-
-	// Add pg_checkpointer for PostgreSQL 17+
-	if pgMajorVersion >= 17 {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_checkpointer",
-			Collector: pg.PGStatCheckpointer(pool),
-		})
 	}
 
 	return collectors
