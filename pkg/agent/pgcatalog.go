@@ -2,9 +2,9 @@ package agent
 
 import "encoding/json"
 
-// PgStatisticRow represents a single row from the pg_stats view,
-// matching the backend's PgStatistic Django model.
-type PgStatisticRow struct {
+// PgStatsRow represents a single row from the pg_stats view,
+// matching the backend's PgStats Django model.
+type PgStatsRow struct {
 	SchemaName          string          `json:"schemaname"`
 	TableName           string          `json:"tablename"`
 	AttName             string          `json:"attname"`
@@ -21,9 +21,9 @@ type PgStatisticRow struct {
 	ElemCountHistogram  json.RawMessage `json:"elem_count_histogram"`
 }
 
-// PgStatisticPayload is the JSON body POSTed to /api/v1/agent/pg_statistic.
-type PgStatisticPayload struct {
-	Rows []PgStatisticRow `json:"rows"`
+// PgStatsPayload is the JSON body POSTed to /api/v1/agent/pg_stats.
+type PgStatsPayload struct {
+	Rows []PgStatsRow `json:"rows"`
 }
 
 // PgStatUserTableRow represents a single row from pg_stat_user_tables,
@@ -388,6 +388,230 @@ type PgStatUserFunctionsRow struct {
 
 type PgStatUserFunctionsPayload struct {
 	Rows []PgStatUserFunctionsRow `json:"rows"`
+}
+
+// PgLocksRow represents a filtered row from pg_locks (blocked + blockers only).
+type PgLocksRow struct {
+	LockType         *string `json:"locktype" db:"locktype"`
+	Database         *int64  `json:"database" db:"database"`
+	Relation         *int64  `json:"relation" db:"relation"`
+	Page             *int64  `json:"page" db:"page"`
+	Tuple            *int64  `json:"tuple" db:"tuple"`
+	VirtualXID       *string `json:"virtualxid" db:"virtualxid"`
+	TransactionID    *string `json:"transactionid" db:"transactionid"`
+	ClassID          *int64  `json:"classid" db:"classid"`
+	ObjID            *int64  `json:"objid" db:"objid"`
+	ObjSubID         *int64  `json:"objsubid" db:"objsubid"`
+	VirtualTransaction *string `json:"virtualtransaction" db:"virtualtransaction"`
+	PID              *int64  `json:"pid" db:"pid"`
+	Mode             *string `json:"mode" db:"mode"`
+	Granted          *bool   `json:"granted" db:"granted"`
+	FastPath         *bool   `json:"fastpath" db:"fastpath"`
+	WaitStart        *string `json:"waitstart" db:"waitstart"`
+}
+
+type PgLocksPayload struct {
+	Rows []PgLocksRow `json:"rows"`
+}
+
+// PgStatProgressVacuumRow represents a row from pg_stat_progress_vacuum.
+type PgStatProgressVacuumRow struct {
+	PID              *int64  `json:"pid" db:"pid"`
+	DatID            *int64  `json:"datid" db:"datid"`
+	DatName          *string `json:"datname" db:"datname"`
+	RelID            *int64  `json:"relid" db:"relid"`
+	Phase            *string `json:"phase" db:"phase"`
+	HeapBlksTotal    *int64  `json:"heap_blks_total" db:"heap_blks_total"`
+	HeapBlksScanned  *int64  `json:"heap_blks_scanned" db:"heap_blks_scanned"`
+	HeapBlksVacuumed *int64  `json:"heap_blks_vacuumed" db:"heap_blks_vacuumed"`
+	IndexVacuumCount *int64  `json:"index_vacuum_count" db:"index_vacuum_count"`
+	MaxDeadTuples    *int64  `json:"max_dead_tuples" db:"max_dead_tuples"`
+	NumDeadTuples    *int64  `json:"num_dead_tuples" db:"num_dead_tuples"`
+}
+
+type PgStatProgressVacuumPayload struct {
+	Rows []PgStatProgressVacuumRow `json:"rows"`
+}
+
+// PgStatProgressAnalyzeRow represents a row from pg_stat_progress_analyze (PG 13+).
+type PgStatProgressAnalyzeRow struct {
+	PID                   *int64  `json:"pid" db:"pid"`
+	DatID                 *int64  `json:"datid" db:"datid"`
+	DatName               *string `json:"datname" db:"datname"`
+	RelID                 *int64  `json:"relid" db:"relid"`
+	Phase                 *string `json:"phase" db:"phase"`
+	SampleBlksTotal       *int64  `json:"sample_blks_total" db:"sample_blks_total"`
+	SampleBlksScanned     *int64  `json:"sample_blks_scanned" db:"sample_blks_scanned"`
+	ExtStatsTotal         *int64  `json:"ext_stats_total" db:"ext_stats_total"`
+	ExtStatsComputed      *int64  `json:"ext_stats_computed" db:"ext_stats_computed"`
+	ChildTablesTotal      *int64  `json:"child_tables_total" db:"child_tables_total"`
+	ChildTablesDone       *int64  `json:"child_tables_done" db:"child_tables_done"`
+	CurrentChildTableRelID *int64 `json:"current_child_table_relid" db:"current_child_table_relid"`
+}
+
+type PgStatProgressAnalyzePayload struct {
+	Rows []PgStatProgressAnalyzeRow `json:"rows"`
+}
+
+// PgStatProgressCreateIndexRow represents a row from pg_stat_progress_create_index.
+type PgStatProgressCreateIndexRow struct {
+	PID              *int64  `json:"pid" db:"pid"`
+	DatID            *int64  `json:"datid" db:"datid"`
+	DatName          *string `json:"datname" db:"datname"`
+	RelID            *int64  `json:"relid" db:"relid"`
+	IndexRelID       *int64  `json:"index_relid" db:"index_relid"`
+	Command          *string `json:"command" db:"command"`
+	Phase            *string `json:"phase" db:"phase"`
+	LockersTotal     *int64  `json:"lockers_total" db:"lockers_total"`
+	LockersDone      *int64  `json:"lockers_done" db:"lockers_done"`
+	CurrentLockerPID *int64  `json:"current_locker_pid" db:"current_locker_pid"`
+	BlocksTotal      *int64  `json:"blocks_total" db:"blocks_total"`
+	BlocksDone       *int64  `json:"blocks_done" db:"blocks_done"`
+	TuplesTotal      *int64  `json:"tuples_total" db:"tuples_total"`
+	TuplesDone       *int64  `json:"tuples_done" db:"tuples_done"`
+	PartitionsTotal  *int64  `json:"partitions_total" db:"partitions_total"`
+	PartitionsDone   *int64  `json:"partitions_done" db:"partitions_done"`
+}
+
+type PgStatProgressCreateIndexPayload struct {
+	Rows []PgStatProgressCreateIndexRow `json:"rows"`
+}
+
+// PgPreparedXactsRow represents a row from pg_prepared_xacts.
+type PgPreparedXactsRow struct {
+	Transaction *string `json:"transaction" db:"transaction"`
+	GID         *string `json:"gid" db:"gid"`
+	Prepared    *string `json:"prepared" db:"prepared"`
+	Owner       *string `json:"owner" db:"owner"`
+	Database    *string `json:"database" db:"database"`
+}
+
+type PgPreparedXactsPayload struct {
+	Rows []PgPreparedXactsRow `json:"rows"`
+}
+
+// PgReplicationSlotsRow represents a row from pg_replication_slots.
+type PgReplicationSlotsRow struct {
+	SlotName           *string `json:"slot_name" db:"slot_name"`
+	Plugin             *string `json:"plugin" db:"plugin"`
+	SlotType           *string `json:"slot_type" db:"slot_type"`
+	DatOID             *int64  `json:"datoid" db:"datoid"`
+	Database           *string `json:"database" db:"database"`
+	Temporary          *bool   `json:"temporary" db:"temporary"`
+	Active             *bool   `json:"active" db:"active"`
+	ActivePID          *int64  `json:"active_pid" db:"active_pid"`
+	Xmin               *string `json:"xmin" db:"xmin"`
+	CatalogXmin        *string `json:"catalog_xmin" db:"catalog_xmin"`
+	RestartLsn         *string `json:"restart_lsn" db:"restart_lsn"`
+	ConfirmedFlushLsn  *string `json:"confirmed_flush_lsn" db:"confirmed_flush_lsn"`
+	WalStatus          *string `json:"wal_status" db:"wal_status"`
+	SafeWalSize        *int64  `json:"safe_wal_size" db:"safe_wal_size"`
+	TwoPhase           *string `json:"two_phase" db:"two_phase"`
+	Conflicting        *string `json:"conflicting" db:"conflicting"`
+	InvalidationReason *string `json:"invalidation_reason" db:"invalidation_reason"`
+}
+
+type PgReplicationSlotsPayload struct {
+	Rows []PgReplicationSlotsRow `json:"rows"`
+}
+
+// PgIndexRow represents a row from pg_index joined with pg_class/pg_namespace.
+type PgIndexRow struct {
+	SchemaName      *string  `json:"schemaname" db:"schemaname"`
+	TableName       *string  `json:"tablename" db:"tablename"`
+	IndexName       *string  `json:"indexname" db:"indexname"`
+	IndexRelID      *int64   `json:"indexrelid" db:"indexrelid"`
+	IndRelID        *int64   `json:"indrelid" db:"indrelid"`
+	IndNatts        *int64   `json:"indnatts" db:"indnatts"`
+	IndNKeyAtts     *int64   `json:"indnkeyatts" db:"indnkeyatts"`
+	IndIsUnique     *bool    `json:"indisunique" db:"indisunique"`
+	IndIsPrimary    *bool    `json:"indisprimary" db:"indisprimary"`
+	IndIsExclusion  *bool    `json:"indisexclusion" db:"indisexclusion"`
+	IndImmediate    *bool    `json:"indimmediate" db:"indimmediate"`
+	IndIsClustered  *bool    `json:"indisclustered" db:"indisclustered"`
+	IndIsValid      *bool    `json:"indisvalid" db:"indisvalid"`
+	IndCheckXmin    *bool    `json:"indcheckxmin" db:"indcheckxmin"`
+	IndIsReady      *bool    `json:"indisready" db:"indisready"`
+	IndIsLive       *bool    `json:"indislive" db:"indislive"`
+	IndIsReplIdent  *bool    `json:"indisreplident" db:"indisreplident"`
+	RelTuples       *float64 `json:"reltuples" db:"reltuples"`
+	IndexDef        *string  `json:"indexdef" db:"indexdef"`
+}
+
+type PgIndexPayload struct {
+	Rows []PgIndexRow `json:"rows"`
+}
+
+// PgStatWalReceiverRow represents a row from pg_stat_wal_receiver (no conninfo).
+type PgStatWalReceiverRow struct {
+	PID                *int64  `json:"pid" db:"pid"`
+	Status             *string `json:"status" db:"status"`
+	ReceiveStartLsn    *string `json:"receive_start_lsn" db:"receive_start_lsn"`
+	ReceiveStartTli    *int64  `json:"receive_start_tli" db:"receive_start_tli"`
+	WrittenLsn         *string `json:"written_lsn" db:"written_lsn"`
+	FlushedLsn         *string `json:"flushed_lsn" db:"flushed_lsn"`
+	ReceivedTli        *int64  `json:"received_tli" db:"received_tli"`
+	LastMsgSendTime    *string `json:"last_msg_send_time" db:"last_msg_send_time"`
+	LastMsgReceiptTime *string `json:"last_msg_receipt_time" db:"last_msg_receipt_time"`
+	LatestEndLsn       *string `json:"latest_end_lsn" db:"latest_end_lsn"`
+	LatestEndTime      *string `json:"latest_end_time" db:"latest_end_time"`
+	SlotName           *string `json:"slot_name" db:"slot_name"`
+	SenderHost         *string `json:"sender_host" db:"sender_host"`
+	SenderPort         *int64  `json:"sender_port" db:"sender_port"`
+}
+
+type PgStatWalReceiverPayload struct {
+	Rows []PgStatWalReceiverRow `json:"rows"`
+}
+
+// PgStatRecoveryPrefetchRow represents a row from pg_stat_recovery_prefetch (PG 15+).
+type PgStatRecoveryPrefetchRow struct {
+	StatsReset    *string `json:"stats_reset" db:"stats_reset"`
+	Prefetch      *int64  `json:"prefetch" db:"prefetch"`
+	Hit           *int64  `json:"hit" db:"hit"`
+	SkipInit      *int64  `json:"skip_init" db:"skip_init"`
+	SkipNew       *int64  `json:"skip_new" db:"skip_new"`
+	SkipFpw       *int64  `json:"skip_fpw" db:"skip_fpw"`
+	SkipRep       *int64  `json:"skip_rep" db:"skip_rep"`
+	WalDistance   *int64  `json:"wal_distance" db:"wal_distance"`
+	BlockDistance  *int64  `json:"block_distance" db:"block_distance"`
+	IoDepth       *int64  `json:"io_depth" db:"io_depth"`
+}
+
+type PgStatRecoveryPrefetchPayload struct {
+	Rows []PgStatRecoveryPrefetchRow `json:"rows"`
+}
+
+// PgStatSubscriptionRow represents a row from pg_stat_subscription.
+type PgStatSubscriptionRow struct {
+	SubID              *int64  `json:"subid" db:"subid"`
+	SubName            *string `json:"subname" db:"subname"`
+	PID                *int64  `json:"pid" db:"pid"`
+	LeaderPID          *int64  `json:"leader_pid" db:"leader_pid"`
+	RelID              *int64  `json:"relid" db:"relid"`
+	ReceivedLsn        *string `json:"received_lsn" db:"received_lsn"`
+	LastMsgSendTime    *string `json:"last_msg_send_time" db:"last_msg_send_time"`
+	LastMsgReceiptTime *string `json:"last_msg_receipt_time" db:"last_msg_receipt_time"`
+	LatestEndLsn       *string `json:"latest_end_lsn" db:"latest_end_lsn"`
+	LatestEndTime      *string `json:"latest_end_time" db:"latest_end_time"`
+	WorkerType         *string `json:"worker_type" db:"worker_type"`
+}
+
+type PgStatSubscriptionPayload struct {
+	Rows []PgStatSubscriptionRow `json:"rows"`
+}
+
+// PgStatSubscriptionStatsRow represents a row from pg_stat_subscription_stats (PG 15+).
+type PgStatSubscriptionStatsRow struct {
+	SubID           *int64  `json:"subid" db:"subid"`
+	SubName         *string `json:"subname" db:"subname"`
+	ApplyErrorCount *int64  `json:"apply_error_count" db:"apply_error_count"`
+	SyncErrorCount  *int64  `json:"sync_error_count" db:"sync_error_count"`
+	StatsReset      *string `json:"stats_reset" db:"stats_reset"`
+}
+
+type PgStatSubscriptionStatsPayload struct {
+	Rows []PgStatSubscriptionStatsRow `json:"rows"`
 }
 
 // DDLPayload is the JSON body POSTed to /api/v1/agent/ddl.

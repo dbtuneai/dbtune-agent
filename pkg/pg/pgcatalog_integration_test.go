@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dbtuneai/agent/pkg/pg/catalog"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -172,27 +173,38 @@ func runVersionGatedTest[T any](
 }
 
 func TestSimpleCollectors(t *testing.T) {
-	runSimpleCollectorTest(t, "pg_statistic", CollectPgStatistic, true)
-	runSimpleCollectorTest(t, "pg_stat_user_tables", CollectPgStatUserTables, true)
-	runSimpleCollectorTest(t, "pg_class", CollectPgClass, true)
-	runSimpleCollectorTest(t, "pg_stat_activity", CollectPgStatActivity, true)
-	runSimpleCollectorTest(t, "pg_stat_database", CollectPgStatDatabase, true)
-	runSimpleCollectorTest(t, "pg_stat_database_conflicts", CollectPgStatDatabaseConflicts, true)
-	runSimpleCollectorTest(t, "pg_stat_archiver", CollectPgStatArchiver, true)
-	runSimpleCollectorTest(t, "pg_stat_bgwriter", CollectPgStatBgwriter, true)
-	runSimpleCollectorTest(t, "pg_stat_replication", CollectPgStatReplication, false)
-	runSimpleCollectorTest(t, "pg_stat_slru", CollectPgStatSlru, true)
-	runSimpleCollectorTest(t, "pg_stat_user_indexes", CollectPgStatUserIndexes, true)
-	runSimpleCollectorTest(t, "pg_statio_user_tables", CollectPgStatioUserTables, false)
-	runSimpleCollectorTest(t, "pg_statio_user_indexes", CollectPgStatioUserIndexes, false)
-	runSimpleCollectorTest(t, "pg_stat_user_functions", CollectPgStatUserFunctions, false)
+	runSimpleCollectorTest(t, "pg_stats", catalog.CollectPgStats, true)
+	runSimpleCollectorTest(t, "pg_stat_user_tables", catalog.CollectPgStatUserTables, true)
+	runSimpleCollectorTest(t, "pg_class", catalog.CollectPgClass, true)
+	runSimpleCollectorTest(t, "pg_stat_activity", catalog.CollectPgStatActivity, true)
+	runSimpleCollectorTest(t, "pg_stat_database", catalog.CollectPgStatDatabase, true)
+	runSimpleCollectorTest(t, "pg_stat_database_conflicts", catalog.CollectPgStatDatabaseConflicts, true)
+	runSimpleCollectorTest(t, "pg_stat_archiver", catalog.CollectPgStatArchiver, true)
+	runSimpleCollectorTest(t, "pg_stat_bgwriter", catalog.CollectPgStatBgwriter, true)
+	runSimpleCollectorTest(t, "pg_stat_replication", catalog.CollectPgStatReplication, false)
+	runSimpleCollectorTest(t, "pg_stat_slru", catalog.CollectPgStatSlru, true)
+	runSimpleCollectorTest(t, "pg_stat_user_indexes", catalog.CollectPgStatUserIndexes, true)
+	runSimpleCollectorTest(t, "pg_statio_user_tables", catalog.CollectPgStatioUserTables, false)
+	runSimpleCollectorTest(t, "pg_statio_user_indexes", catalog.CollectPgStatioUserIndexes, false)
+	runSimpleCollectorTest(t, "pg_stat_user_functions", catalog.CollectPgStatUserFunctions, false)
+	runSimpleCollectorTest(t, "pg_locks", catalog.CollectPgLocks, false)
+	runSimpleCollectorTest(t, "pg_stat_progress_vacuum", catalog.CollectPgStatProgressVacuum, false)
+	runSimpleCollectorTest(t, "pg_stat_progress_analyze", catalog.CollectPgStatProgressAnalyze, false)
+	runSimpleCollectorTest(t, "pg_stat_progress_create_index", catalog.CollectPgStatProgressCreateIndex, false)
+	runSimpleCollectorTest(t, "pg_prepared_xacts", catalog.CollectPgPreparedXacts, false)
+	runSimpleCollectorTest(t, "pg_replication_slots", catalog.CollectPgReplicationSlots, false)
+	runSimpleCollectorTest(t, "pg_index", catalog.CollectPgIndex, true)
+	runSimpleCollectorTest(t, "pg_stat_wal_receiver", catalog.CollectPgStatWalReceiver, false)
+	runSimpleCollectorTest(t, "pg_stat_subscription", catalog.CollectPgStatSubscription, false)
 }
 
 func TestVersionGatedCollectors(t *testing.T) {
-	runVersionGatedTest(t, "pg_stat_checkpointer", 17, CollectPgStatCheckpointer)
-	runVersionGatedTest(t, "pg_stat_wal", 14, CollectPgStatWal)
-	runVersionGatedTest(t, "pg_stat_io", 16, CollectPgStatIO)
-	runVersionGatedTest(t, "pg_stat_replication_slots", 14, CollectPgStatReplicationSlots)
+	runVersionGatedTest(t, "pg_stat_checkpointer", 17, catalog.CollectPgStatCheckpointer)
+	runVersionGatedTest(t, "pg_stat_wal", 14, catalog.CollectPgStatWal)
+	runVersionGatedTest(t, "pg_stat_io", 16, catalog.CollectPgStatIO)
+	runVersionGatedTest(t, "pg_stat_replication_slots", 14, catalog.CollectPgStatReplicationSlots)
+	runVersionGatedTest(t, "pg_stat_recovery_prefetch", 15, catalog.CollectPgStatRecoveryPrefetch)
+	runVersionGatedTest(t, "pg_stat_subscription_stats", 15, catalog.CollectPgStatSubscriptionStats)
 }
 
 func TestCollectDDL(t *testing.T) {

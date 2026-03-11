@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/pg/catalog"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -89,7 +90,7 @@ type tableConstraint struct {
 
 // CollectDDL queries the PostgreSQL catalog and reconstructs CREATE TABLE + CREATE INDEX DDL.
 func CollectDDL(pgPool *pgxpool.Pool, ctx context.Context) (string, error) {
-	ctx, cancel := ensureTimeout(ctx)
+	ctx, cancel := catalog.EnsureTimeout(ctx)
 	defer cancel()
 	// 1. Collect columns
 	columnRows, err := utils.QueryWithPrefix(pgPool, ctx, schemaColumnsQuery)
