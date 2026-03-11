@@ -175,10 +175,16 @@ func CollectPgStats(pgPool *pgxpool.Pool, ctx context.Context, q PgStatsQueryMod
 			return nil, fmt.Errorf("failed to scan pg_stats row: %w", err)
 		}
 
-		r.MostCommonVals = pgArrayToJSON(mostCommonVals)
+		if r.MostCommonVals, err = pgArrayToJSON(mostCommonVals); err != nil {
+			return nil, fmt.Errorf("pg_stats %s.%s.%s most_common_vals: %w", r.SchemaName, r.TableName, r.AttName, err)
+		}
 		r.MostCommonFreqs = toRawJSON(mostCommonFreqs)
-		r.HistogramBounds = pgArrayToJSON(histogramBounds)
-		r.MostCommonElems = pgArrayToJSON(mostCommonElems)
+		if r.HistogramBounds, err = pgArrayToJSON(histogramBounds); err != nil {
+			return nil, fmt.Errorf("pg_stats %s.%s.%s histogram_bounds: %w", r.SchemaName, r.TableName, r.AttName, err)
+		}
+		if r.MostCommonElems, err = pgArrayToJSON(mostCommonElems); err != nil {
+			return nil, fmt.Errorf("pg_stats %s.%s.%s most_common_elems: %w", r.SchemaName, r.TableName, r.AttName, err)
+		}
 		r.MostCommonElemFreqs = toRawJSON(mostCommonElemFreqs)
 		r.ElemCountHistogram = toRawJSON(elemCountHistogram)
 
@@ -200,31 +206,34 @@ func toRawJSON(s *string) json.RawMessage {
 	return json.RawMessage(*s)
 }
 
+// pgtypeMap is reused across calls to pgArrayToJSON to avoid per-row allocation.
+var pgtypeMap = pgtype.NewMap()
+
 // pgArrayToJSON converts a PG text array literal like {foo,"bar baz",qux}
-// into a JSON array like ["foo","bar baz","qux"]. If the value is NULL or
-// parsing fails, returns nil.
-func pgArrayToJSON(s *string) json.RawMessage {
+// into a JSON array like ["foo","bar baz","qux"]. If the value is NULL,
+// returns (nil, nil). If parsing fails, returns an error.
+func pgArrayToJSON(s *string) (json.RawMessage, error) {
 	if s == nil {
-		return nil
+		return nil, nil
 	}
 	raw := *s
 
 	// Try pgtype text array parser first
 	var values []string
-	if err := pgtype.NewMap().Scan(pgtype.TextArrayOID, pgtype.TextFormatCode, []byte(raw), &values); err == nil {
+	if err := pgtypeMap.Scan(pgtype.TextArrayOID, pgtype.TextFormatCode, []byte(raw), &values); err == nil {
 		data, err := json.Marshal(values)
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("failed to marshal pg array to JSON: %w", err)
 		}
-		return json.RawMessage(data)
+		return json.RawMessage(data), nil
 	}
 
 	// If the PG literal is already valid JSON (shouldn't happen, but be safe)
 	if json.Valid([]byte(raw)) {
-		return json.RawMessage(raw)
+		return json.RawMessage(raw), nil
 	}
 
-	return nil
+	return nil, fmt.Errorf("failed to parse pg array: %q", raw)
 }
 
 // PgStatsCollectFunc is the function signature for querying pg_stats.
