@@ -2,9 +2,15 @@ package catalog
 
 import (
 	"context"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	PgStatWalName     = "pg_stat_wal"
+	PgStatWalInterval = 1 * time.Minute
 )
 
 // PG 14+ only. Uses to_jsonb for columns removed in PG 18
@@ -28,4 +34,25 @@ func CollectPgStatWal(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion 
 		return nil, nil
 	}
 	return CollectView[agent.PgStatWalRow](pgPool, ctx, pgStatWalQuery, "pg_stat_wal")
+}
+
+func NewPgStatWalCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) agent.CatalogCollector {
+	return agent.CatalogCollector{
+		Name:     PgStatWalName,
+		Interval: PgStatWalInterval,
+		Collect: func(ctx context.Context) (any, error) {
+			ctx, err := prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := CollectPgStatWal(pool, ctx, pgMajorVersion)
+			if err != nil {
+				return nil, err
+			}
+			if rows == nil {
+				return nil, nil
+			}
+			return &agent.PgStatWalPayload{Rows: rows}, nil
+		},
+	}
 }

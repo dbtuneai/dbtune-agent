@@ -2,9 +2,15 @@ package catalog
 
 import (
 	"context"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	PgStatBgwriterName     = "pg_stat_bgwriter"
+	PgStatBgwriterInterval = 1 * time.Minute
 )
 
 // Uses to_jsonb trick for columns removed or moved in PG 17 (to pg_stat_checkpointer).
@@ -25,4 +31,22 @@ FROM pg_stat_bgwriter b
 
 func CollectPgStatBgwriter(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatBgwriterRow, error) {
 	return CollectView[agent.PgStatBgwriterRow](pgPool, ctx, pgStatBgwriterQuery, "pg_stat_bgwriter")
+}
+
+func NewPgStatBgwriterCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
+	return agent.CatalogCollector{
+		Name:     PgStatBgwriterName,
+		Interval: PgStatBgwriterInterval,
+		Collect: func(ctx context.Context) (any, error) {
+			ctx, err := prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := CollectPgStatBgwriter(pool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgStatBgwriterPayload{Rows: rows}, nil
+		},
+	}
 }

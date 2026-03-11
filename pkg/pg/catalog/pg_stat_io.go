@@ -2,9 +2,15 @@ package catalog
 
 import (
 	"context"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	PgStatIOName     = "pg_stat_io"
+	PgStatIOInterval = 1 * time.Minute
 )
 
 // PG 16+ only. Uses to_jsonb for op_bytes which was removed in PG 18.
@@ -26,4 +32,25 @@ func CollectPgStatIO(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion i
 		return nil, nil
 	}
 	return CollectView[agent.PgStatIORow](pgPool, ctx, pgStatIOQuery, "pg_stat_io")
+}
+
+func NewPgStatIOCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) agent.CatalogCollector {
+	return agent.CatalogCollector{
+		Name:     PgStatIOName,
+		Interval: PgStatIOInterval,
+		Collect: func(ctx context.Context) (any, error) {
+			ctx, err := prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := CollectPgStatIO(pool, ctx, pgMajorVersion)
+			if err != nil {
+				return nil, err
+			}
+			if rows == nil {
+				return nil, nil
+			}
+			return &agent.PgStatIOPayload{Rows: rows}, nil
+		},
+	}
 }

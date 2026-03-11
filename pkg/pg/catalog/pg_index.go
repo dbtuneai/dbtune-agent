@@ -2,9 +2,15 @@ package catalog
 
 import (
 	"context"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	PgIndexName     = "pg_index"
+	PgIndexInterval = 5 * time.Minute
 )
 
 // Joined with pg_class/pg_namespace for human-readable names.
@@ -41,4 +47,22 @@ ORDER BY n.nspname, t.relname, c.relname
 
 func CollectPgIndex(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgIndexRow, error) {
 	return CollectView[agent.PgIndexRow](pgPool, ctx, pgIndexQuery, "pg_index")
+}
+
+func NewPgIndexCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
+	return agent.CatalogCollector{
+		Name:     PgIndexName,
+		Interval: PgIndexInterval,
+		Collect: func(ctx context.Context) (any, error) {
+			ctx, err := prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := CollectPgIndex(pool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgIndexPayload{Rows: rows}, nil
+		},
+	}
 }

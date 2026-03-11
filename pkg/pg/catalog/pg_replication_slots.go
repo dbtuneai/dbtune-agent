@@ -2,9 +2,15 @@ package catalog
 
 import (
 	"context"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	PgReplicationSlotsName     = "pg_replication_slots"
+	PgReplicationSlotsInterval = 1 * time.Minute
 )
 
 // two_phase/conflicting are PG15+, invalidation_reason is PG17+.
@@ -27,4 +33,22 @@ FROM pg_replication_slots s
 
 func CollectPgReplicationSlots(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgReplicationSlotsRow, error) {
 	return CollectView[agent.PgReplicationSlotsRow](pgPool, ctx, pgReplicationSlotsQuery, "pg_replication_slots")
+}
+
+func NewPgReplicationSlotsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
+	return agent.CatalogCollector{
+		Name:     PgReplicationSlotsName,
+		Interval: PgReplicationSlotsInterval,
+		Collect: func(ctx context.Context) (any, error) {
+			ctx, err := prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := CollectPgReplicationSlots(pool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgReplicationSlotsPayload{Rows: rows}, nil
+		},
+	}
 }

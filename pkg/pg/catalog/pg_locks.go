@@ -2,9 +2,15 @@ package catalog
 
 import (
 	"context"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	PgLocksName     = "pg_locks"
+	PgLocksInterval = 30 * time.Second
 )
 
 // Filtered to only blocked locks + their blockers via pg_blocking_pids().
@@ -38,4 +44,22 @@ WHERE l.pid IN (SELECT blocked_pid FROM blocked UNION SELECT blocking_pid FROM b
 
 func CollectPgLocks(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgLocksRow, error) {
 	return CollectView[agent.PgLocksRow](pgPool, ctx, pgLocksQuery, "pg_locks")
+}
+
+func NewPgLocksCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
+	return agent.CatalogCollector{
+		Name:     PgLocksName,
+		Interval: PgLocksInterval,
+		Collect: func(ctx context.Context) (any, error) {
+			ctx, err := prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := CollectPgLocks(pool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgLocksPayload{Rows: rows}, nil
+		},
+	}
 }

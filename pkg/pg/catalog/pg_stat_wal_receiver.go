@@ -2,9 +2,15 @@ package catalog
 
 import (
 	"context"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	PgStatWalReceiverName     = "pg_stat_wal_receiver"
+	PgStatWalReceiverInterval = 1 * time.Minute
 )
 
 // conninfo omitted (may contain passwords). sender_host + sender_port suffice.
@@ -29,4 +35,22 @@ FROM pg_stat_wal_receiver r
 
 func CollectPgStatWalReceiver(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatWalReceiverRow, error) {
 	return CollectView[agent.PgStatWalReceiverRow](pgPool, ctx, pgStatWalReceiverQuery, "pg_stat_wal_receiver")
+}
+
+func NewPgStatWalReceiverCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
+	return agent.CatalogCollector{
+		Name:     PgStatWalReceiverName,
+		Interval: PgStatWalReceiverInterval,
+		Collect: func(ctx context.Context) (any, error) {
+			ctx, err := prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := CollectPgStatWalReceiver(pool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgStatWalReceiverPayload{Rows: rows}, nil
+		},
+	}
 }

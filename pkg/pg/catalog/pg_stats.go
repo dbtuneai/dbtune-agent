@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"time"
 	"encoding/json"
 	"fmt"
 
@@ -9,6 +10,11 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	PgStatsName     = "pg_stats"
+	PgStatsInterval = 1 * time.Minute
 )
 
 // pgStatsQuery reads from the pg_stats view which provides a human-readable
@@ -136,4 +142,22 @@ func pgArrayToJSON(s *string) json.RawMessage {
 	}
 
 	return nil
+}
+
+func NewPgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
+	return agent.CatalogCollector{
+		Name:     PgStatsName,
+		Interval: PgStatsInterval,
+		Collect: func(ctx context.Context) (any, error) {
+			ctx, err := prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := CollectPgStats(pool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgStatsPayload{Rows: rows}, nil
+		},
+	}
 }
