@@ -337,22 +337,6 @@ func (adapter *AzureFlexAdapter) Collectors() []agent.MetricCollector {
 			Collector: pg.UptimeMinutes(pool),
 		},
 		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pool),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pool),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pool),
-		},
-		{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pool),
-		},
-		{
 			Key:       "database_wait_events",
 			Collector: pg.WaitEvents(pool),
 		},
@@ -365,12 +349,6 @@ func (adapter *AzureFlexAdapter) Collectors() []agent.MetricCollector {
 			Key:       "memory_used",
 			Collector: AsCollector(MemoryPercent(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName), metrics.NodeMemoryUsedPercentage),
 		},
-	}
-	if adapter.PGMajorVersion >= 17 {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_checkpointer",
-			Collector: pg.PGStatCheckpointer(pool),
-		})
 	}
 	return collectors
 }

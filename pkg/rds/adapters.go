@@ -103,7 +103,7 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	collectors := rdsAdapter.Collectors(false)
+	collectors := rdsAdapter.Collectors()
 	rdsAdapter.InitCollectors(collectors)
 	return rdsAdapter, nil
 }
@@ -200,7 +200,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 	return nil
 }
 
-func (adapter *RDSAdapter) Collectors(aurora bool) []agent.MetricCollector {
+func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
 	pool := adapter.PGPool
 	collectors := []agent.MetricCollector{
 		{
@@ -228,18 +228,6 @@ func (adapter *RDSAdapter) Collectors(aurora bool) []agent.MetricCollector {
 			Collector: pg.UptimeMinutes(pool),
 		},
 		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pool),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pool),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pool),
-		},
-		{
 			Key:       "database_wait_events",
 			Collector: pg.WaitEvents(pool),
 		},
@@ -253,19 +241,6 @@ func (adapter *RDSAdapter) Collectors(aurora bool) []agent.MetricCollector {
 			),
 		},
 	}
-	if adapter.PGMajorVersion >= 17 {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_checkpointer",
-			Collector: pg.PGStatCheckpointer(pool),
-		})
-	}
-	if !aurora {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pool),
-		})
-	}
-
 	return collectors
 }
 
@@ -344,7 +319,7 @@ func CreateAuroraRDSAdapter() (*AuroraRDSAdapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AuroraRDS adapter: %w", err)
 	}
-	collectors := rdsAdapter.Collectors(true)
+	collectors := rdsAdapter.Collectors()
 	rdsAdapter.InitCollectors(collectors)
 	return &AuroraRDSAdapter{*rdsAdapter}, nil
 }

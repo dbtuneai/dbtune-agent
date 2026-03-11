@@ -273,22 +273,6 @@ func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
 			Collector: pg.UptimeMinutes(pool),
 		},
 		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pool),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pool),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pool),
-		},
-		{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pool),
-		},
-		{
 			Key:       "database_wait_events",
 			Collector: pg.WaitEvents(pool),
 		},
@@ -296,12 +280,6 @@ func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
 			Key:       "hardware",
 			Collector: CloudSQLHardwareInfo(adapter.Logger(), adapter.CloudSQLConfig, adapter.CloudMonitoringClient),
 		},
-	}
-	if adapter.PGMajorVersion >= 17 {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_checkpointer",
-			Collector: pg.PGStatCheckpointer(pool),
-		})
 	}
 	return collectors
 }

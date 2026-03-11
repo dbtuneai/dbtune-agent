@@ -92,22 +92,6 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 			Collector: pg.UptimeMinutes(pgDriver),
 		},
 		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pgDriver),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pgDriver),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pgDriver),
-		},
-		{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pgDriver),
-		},
-		{
 			Key:       "database_wait_events",
 			Collector: pg.WaitEvents(pgDriver),
 		},
@@ -115,12 +99,6 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 			Key:       "hardware",
 			Collector: HardwareInfoOnPremise(),
 		},
-	}
-	if pgAdapter.PGMajorVersion >= 17 {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_checkpointer",
-			Collector: pg.PGStatCheckpointer(pgDriver),
-		})
 	}
 	return collectors
 }
