@@ -8,33 +8,37 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// PgStatWalReceiverRow represents a row from pg_stat_wal_receiver (no conninfo).
+type PgStatWalReceiverRow struct {
+	PID                *int64  `json:"pid" db:"pid"`
+	Status             *string `json:"status" db:"status"`
+	ReceiveStartLsn    *string `json:"receive_start_lsn" db:"receive_start_lsn"`
+	ReceiveStartTli    *int64  `json:"receive_start_tli" db:"receive_start_tli"`
+	WrittenLsn         *string `json:"written_lsn" db:"written_lsn"`
+	FlushedLsn         *string `json:"flushed_lsn" db:"flushed_lsn"`
+	ReceivedTli        *int64  `json:"received_tli" db:"received_tli"`
+	LastMsgSendTime    *string `json:"last_msg_send_time" db:"last_msg_send_time"`
+	LastMsgReceiptTime *string `json:"last_msg_receipt_time" db:"last_msg_receipt_time"`
+	LatestEndLsn       *string `json:"latest_end_lsn" db:"latest_end_lsn"`
+	LatestEndTime      *string `json:"latest_end_time" db:"latest_end_time"`
+	SlotName           *string `json:"slot_name" db:"slot_name"`
+	SenderHost         *string `json:"sender_host" db:"sender_host"`
+	SenderPort         *int64  `json:"sender_port" db:"sender_port"`
+}
+
+type PgStatWalReceiverPayload struct {
+	Rows []PgStatWalReceiverRow `json:"rows"`
+}
+
 const (
 	PgStatWalReceiverName     = "pg_stat_wal_receiver"
 	PgStatWalReceiverInterval = 1 * time.Minute
 )
 
-// conninfo omitted (may contain passwords). sender_host + sender_port suffice.
-// written_lsn/flushed_lsn are PG15+, use to_jsonb to safely extract.
-const pgStatWalReceiverQuery = `
-SELECT
-    pid, status,
-    receive_start_lsn::text AS receive_start_lsn,
-    receive_start_tli,
-    (to_jsonb(r) ->> 'written_lsn') AS written_lsn,
-    (to_jsonb(r) ->> 'flushed_lsn') AS flushed_lsn,
-    received_tli,
-    last_msg_send_time::text AS last_msg_send_time,
-    last_msg_receipt_time::text AS last_msg_receipt_time,
-    latest_end_lsn::text AS latest_end_lsn,
-    latest_end_time::text AS latest_end_time,
-    slot_name,
-    sender_host,
-    sender_port
-FROM pg_stat_wal_receiver r
-`
+const pgStatWalReceiverQuery = `SELECT * FROM pg_stat_wal_receiver`
 
-func CollectPgStatWalReceiver(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatWalReceiverRow, error) {
-	return CollectView[agent.PgStatWalReceiverRow](pgPool, ctx, pgStatWalReceiverQuery, "pg_stat_wal_receiver")
+func CollectPgStatWalReceiver(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatWalReceiverRow, error) {
+	return CollectView[PgStatWalReceiverRow](pgPool, ctx, pgStatWalReceiverQuery, "pg_stat_wal_receiver")
 }
 
 func NewPgStatWalReceiverCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
@@ -50,7 +54,7 @@ func NewPgStatWalReceiverCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) ag
 			if err != nil {
 				return nil, err
 			}
-			return &agent.PgStatWalReceiverPayload{Rows: rows}, nil
+			return &PgStatWalReceiverPayload{Rows: rows}, nil
 		},
 	}
 }

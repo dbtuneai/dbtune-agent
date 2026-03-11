@@ -13,16 +13,10 @@ const (
 	PgStatDatabaseConflictsInterval = 1 * time.Minute
 )
 
-const pgStatDatabaseConflictsQuery = `
-SELECT
-    datid::bigint AS datid, datname,
-    confl_tablespace, confl_lock, confl_snapshot, confl_bufferpin, confl_deadlock,
-    (to_jsonb(c) ->> 'confl_active_logicalslot')::bigint AS confl_active_logicalslot
-FROM pg_stat_database_conflicts c
-`
+const pgStatDatabaseConflictsQuery = `SELECT * FROM pg_stat_database_conflicts`
 
-func CollectPgStatDatabaseConflicts(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatDatabaseConflictsRow, error) {
-	return CollectView[agent.PgStatDatabaseConflictsRow](pgPool, ctx, pgStatDatabaseConflictsQuery, "pg_stat_database_conflicts")
+func CollectPgStatDatabaseConflicts(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatDatabaseConflictsRow, error) {
+	return CollectView[PgStatDatabaseConflictsRow](pgPool, ctx, pgStatDatabaseConflictsQuery, "pg_stat_database_conflicts")
 }
 
 func NewPgStatDatabaseConflictsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
@@ -38,7 +32,23 @@ func NewPgStatDatabaseConflictsCollector(pool *pgxpool.Pool, prepareCtx PrepareC
 			if err != nil {
 				return nil, err
 			}
-			return &agent.PgStatDatabaseConflictsPayload{Rows: rows}, nil
+			return &PgStatDatabaseConflictsPayload{Rows: rows}, nil
 		},
 	}
+}
+
+// PgStatDatabaseConflictsRow represents a row from pg_stat_database_conflicts.
+type PgStatDatabaseConflictsRow struct {
+	DatID           *int64  `json:"datid" db:"datid"`
+	DatName         *string `json:"datname" db:"datname"`
+	ConflTablespace *int64  `json:"confl_tablespace" db:"confl_tablespace"`
+	ConflLock       *int64  `json:"confl_lock" db:"confl_lock"`
+	ConflSnapshot   *int64  `json:"confl_snapshot" db:"confl_snapshot"`
+	ConflBufferpin  *int64  `json:"confl_bufferpin" db:"confl_bufferpin"`
+	ConflDeadlock   *int64  `json:"confl_deadlock" db:"confl_deadlock"`
+	ConflLogicalSlot *int64 `json:"confl_active_logicalslot" db:"confl_active_logicalslot"`
+}
+
+type PgStatDatabaseConflictsPayload struct {
+	Rows []PgStatDatabaseConflictsRow `json:"rows"`
 }

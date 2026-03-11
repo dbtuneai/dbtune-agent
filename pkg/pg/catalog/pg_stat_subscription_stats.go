@@ -8,25 +8,32 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// PgStatSubscriptionStatsRow represents a row from pg_stat_subscription_stats (PG 15+).
+type PgStatSubscriptionStatsRow struct {
+	SubID           *int64  `json:"subid" db:"subid"`
+	SubName         *string `json:"subname" db:"subname"`
+	ApplyErrorCount *int64  `json:"apply_error_count" db:"apply_error_count"`
+	SyncErrorCount  *int64  `json:"sync_error_count" db:"sync_error_count"`
+	StatsReset      *string `json:"stats_reset" db:"stats_reset"`
+}
+
+type PgStatSubscriptionStatsPayload struct {
+	Rows []PgStatSubscriptionStatsRow `json:"rows"`
+}
+
 const (
 	PgStatSubscriptionStatsName     = "pg_stat_subscription_stats"
 	PgStatSubscriptionStatsInterval = 1 * time.Minute
 )
 
 // PG 15+ only.
-const pgStatSubscriptionStatsQuery = `
-SELECT
-    subid, subname,
-    apply_error_count, sync_error_count,
-    stats_reset::text AS stats_reset
-FROM pg_stat_subscription_stats
-`
+const pgStatSubscriptionStatsQuery = `SELECT * FROM pg_stat_subscription_stats`
 
-func CollectPgStatSubscriptionStats(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion int) ([]agent.PgStatSubscriptionStatsRow, error) {
+func CollectPgStatSubscriptionStats(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion int) ([]PgStatSubscriptionStatsRow, error) {
 	if pgMajorVersion < 15 {
 		return nil, nil
 	}
-	return CollectView[agent.PgStatSubscriptionStatsRow](pgPool, ctx, pgStatSubscriptionStatsQuery, "pg_stat_subscription_stats")
+	return CollectView[PgStatSubscriptionStatsRow](pgPool, ctx, pgStatSubscriptionStatsQuery, "pg_stat_subscription_stats")
 }
 
 func NewPgStatSubscriptionStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) agent.CatalogCollector {
@@ -45,7 +52,7 @@ func NewPgStatSubscriptionStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareC
 			if rows == nil {
 				return nil, nil
 			}
-			return &agent.PgStatSubscriptionStatsPayload{Rows: rows}, nil
+			return &PgStatSubscriptionStatsPayload{Rows: rows}, nil
 		},
 	}
 }

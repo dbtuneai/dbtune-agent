@@ -8,28 +8,34 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// PgStatSubscriptionRow represents a row from pg_stat_subscription.
+type PgStatSubscriptionRow struct {
+	SubID              *int64  `json:"subid" db:"subid"`
+	SubName            *string `json:"subname" db:"subname"`
+	PID                *int64  `json:"pid" db:"pid"`
+	LeaderPID          *int64  `json:"leader_pid" db:"leader_pid"`
+	RelID              *int64  `json:"relid" db:"relid"`
+	ReceivedLsn        *string `json:"received_lsn" db:"received_lsn"`
+	LastMsgSendTime    *string `json:"last_msg_send_time" db:"last_msg_send_time"`
+	LastMsgReceiptTime *string `json:"last_msg_receipt_time" db:"last_msg_receipt_time"`
+	LatestEndLsn       *string `json:"latest_end_lsn" db:"latest_end_lsn"`
+	LatestEndTime      *string `json:"latest_end_time" db:"latest_end_time"`
+	WorkerType         *string `json:"worker_type" db:"worker_type"`
+}
+
+type PgStatSubscriptionPayload struct {
+	Rows []PgStatSubscriptionRow `json:"rows"`
+}
+
 const (
 	PgStatSubscriptionName     = "pg_stat_subscription"
 	PgStatSubscriptionInterval = 1 * time.Minute
 )
 
-// leader_pid is PG15+, worker_type is PG17+. Use to_jsonb to safely extract.
-const pgStatSubscriptionQuery = `
-SELECT
-    subid, subname, pid,
-    (to_jsonb(s) ->> 'leader_pid')::bigint AS leader_pid,
-    relid,
-    received_lsn::text AS received_lsn,
-    last_msg_send_time::text AS last_msg_send_time,
-    last_msg_receipt_time::text AS last_msg_receipt_time,
-    latest_end_lsn::text AS latest_end_lsn,
-    latest_end_time::text AS latest_end_time,
-    (to_jsonb(s) ->> 'worker_type') AS worker_type
-FROM pg_stat_subscription s
-`
+const pgStatSubscriptionQuery = `SELECT * FROM pg_stat_subscription`
 
-func CollectPgStatSubscription(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatSubscriptionRow, error) {
-	return CollectView[agent.PgStatSubscriptionRow](pgPool, ctx, pgStatSubscriptionQuery, "pg_stat_subscription")
+func CollectPgStatSubscription(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatSubscriptionRow, error) {
+	return CollectView[PgStatSubscriptionRow](pgPool, ctx, pgStatSubscriptionQuery, "pg_stat_subscription")
 }
 
 func NewPgStatSubscriptionCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
@@ -45,7 +51,7 @@ func NewPgStatSubscriptionCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) a
 			if err != nil {
 				return nil, err
 			}
-			return &agent.PgStatSubscriptionPayload{Rows: rows}, nil
+			return &PgStatSubscriptionPayload{Rows: rows}, nil
 		},
 	}
 }

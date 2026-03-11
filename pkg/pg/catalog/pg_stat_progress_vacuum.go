@@ -13,17 +13,29 @@ const (
 	PgStatProgressVacuumInterval = 30 * time.Second
 )
 
-const pgStatProgressVacuumQuery = `
-SELECT
-    pid, datid, datname, relid,
-    phase,
-    heap_blks_total, heap_blks_scanned, heap_blks_vacuumed,
-    index_vacuum_count, max_dead_tuples, num_dead_tuples
-FROM pg_stat_progress_vacuum
-`
+const pgStatProgressVacuumQuery = `SELECT * FROM pg_stat_progress_vacuum`
 
-func CollectPgStatProgressVacuum(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatProgressVacuumRow, error) {
-	return CollectView[agent.PgStatProgressVacuumRow](pgPool, ctx, pgStatProgressVacuumQuery, "pg_stat_progress_vacuum")
+// PgStatProgressVacuumRow represents a row from pg_stat_progress_vacuum.
+type PgStatProgressVacuumRow struct {
+	PID              *int64  `json:"pid" db:"pid"`
+	DatID            *int64  `json:"datid" db:"datid"`
+	DatName          *string `json:"datname" db:"datname"`
+	RelID            *int64  `json:"relid" db:"relid"`
+	Phase            *string `json:"phase" db:"phase"`
+	HeapBlksTotal    *int64  `json:"heap_blks_total" db:"heap_blks_total"`
+	HeapBlksScanned  *int64  `json:"heap_blks_scanned" db:"heap_blks_scanned"`
+	HeapBlksVacuumed *int64  `json:"heap_blks_vacuumed" db:"heap_blks_vacuumed"`
+	IndexVacuumCount *int64  `json:"index_vacuum_count" db:"index_vacuum_count"`
+	MaxDeadTuples    *int64  `json:"max_dead_tuples" db:"max_dead_tuples"`
+	NumDeadTuples    *int64  `json:"num_dead_tuples" db:"num_dead_tuples"`
+}
+
+type PgStatProgressVacuumPayload struct {
+	Rows []PgStatProgressVacuumRow `json:"rows"`
+}
+
+func CollectPgStatProgressVacuum(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatProgressVacuumRow, error) {
+	return CollectView[PgStatProgressVacuumRow](pgPool, ctx, pgStatProgressVacuumQuery, "pg_stat_progress_vacuum")
 }
 
 func NewPgStatProgressVacuumCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
@@ -39,7 +51,7 @@ func NewPgStatProgressVacuumCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx)
 			if err != nil {
 				return nil, err
 			}
-			return &agent.PgStatProgressVacuumPayload{Rows: rows}, nil
+			return &PgStatProgressVacuumPayload{Rows: rows}, nil
 		},
 	}
 }

@@ -14,21 +14,13 @@ const (
 )
 
 // PG 17+ only.
-const pgStatCheckpointerQuery = `
-SELECT
-    num_timed, num_requested,
-    restartpoints_timed, restartpoints_req, restartpoints_done,
-    write_time, sync_time, buffers_written,
-    stats_reset::text AS stats_reset,
-    (to_jsonb(c) ->> 'slru_written')::bigint AS slru_written
-FROM pg_stat_checkpointer c
-`
+const pgStatCheckpointerQuery = `SELECT * FROM pg_stat_checkpointer`
 
-func CollectPgStatCheckpointer(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion int) ([]agent.PgStatCheckpointerRow, error) {
+func CollectPgStatCheckpointer(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion int) ([]PgStatCheckpointerRow, error) {
 	if pgMajorVersion < 17 {
 		return nil, nil
 	}
-	return CollectView[agent.PgStatCheckpointerRow](pgPool, ctx, pgStatCheckpointerQuery, "pg_stat_checkpointer")
+	return CollectView[PgStatCheckpointerRow](pgPool, ctx, pgStatCheckpointerQuery, "pg_stat_checkpointer")
 }
 
 func NewPgStatCheckpointerCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) agent.CatalogCollector {
@@ -47,7 +39,25 @@ func NewPgStatCheckpointerCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, p
 			if rows == nil {
 				return nil, nil
 			}
-			return &agent.PgStatCheckpointerPayload{Rows: rows}, nil
+			return &PgStatCheckpointerPayload{Rows: rows}, nil
 		},
 	}
+}
+
+// PgStatCheckpointerRow represents a row from pg_stat_checkpointer (PG 17+).
+type PgStatCheckpointerRow struct {
+	NumTimed           *int64   `json:"num_timed" db:"num_timed"`
+	NumRequested       *int64   `json:"num_requested" db:"num_requested"`
+	RestartpointsTimed *int64   `json:"restartpoints_timed" db:"restartpoints_timed"`
+	RestartpointsReq   *int64   `json:"restartpoints_req" db:"restartpoints_req"`
+	RestartpointsDone  *int64   `json:"restartpoints_done" db:"restartpoints_done"`
+	WriteTime          *float64 `json:"write_time" db:"write_time"`
+	SyncTime           *float64 `json:"sync_time" db:"sync_time"`
+	BuffersWritten     *int64   `json:"buffers_written" db:"buffers_written"`
+	StatsReset         *string  `json:"stats_reset" db:"stats_reset"`
+	SlruWritten        *int64   `json:"slru_written" db:"slru_written"`
+}
+
+type PgStatCheckpointerPayload struct {
+	Rows []PgStatCheckpointerRow `json:"rows"`
 }

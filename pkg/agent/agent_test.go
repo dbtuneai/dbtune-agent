@@ -156,28 +156,33 @@ func CreateCommonAgentForTests(rt http.RoundTripper) CommonAgent {
 	}
 }
 
+// testPayload is a minimal struct used to test isNilPayload without importing catalog (which would cause a cycle).
+type testPayload struct {
+	Rows []string
+}
+
 func TestIsNilPayload(t *testing.T) {
 	t.Run("interface nil", func(t *testing.T) {
 		assert.True(t, isNilPayload(nil))
 	})
 
 	t.Run("typed nil pointer", func(t *testing.T) {
-		var p *PgStatCheckpointerPayload
+		var p *testPayload
 		assert.True(t, isNilPayload(p))
 	})
 
-	t.Run("typed nil pointer - activity", func(t *testing.T) {
-		var p *PgStatActivityPayload
+	t.Run("typed nil pointer - different type", func(t *testing.T) {
+		var p *struct{ Data int }
 		assert.True(t, isNilPayload(p))
 	})
 
 	t.Run("non-nil pointer with nil rows", func(t *testing.T) {
-		p := &PgStatCheckpointerPayload{Rows: nil}
+		p := &testPayload{Rows: nil}
 		assert.False(t, isNilPayload(p))
 	})
 
 	t.Run("non-nil pointer with rows", func(t *testing.T) {
-		p := &PgStatCheckpointerPayload{Rows: []PgStatCheckpointerRow{}}
+		p := &testPayload{Rows: []string{}}
 		assert.False(t, isNilPayload(p))
 	})
 
@@ -186,7 +191,7 @@ func TestIsNilPayload(t *testing.T) {
 	})
 
 	t.Run("non-pointer struct", func(t *testing.T) {
-		assert.False(t, isNilPayload(PgStatCheckpointerPayload{}))
+		assert.False(t, isNilPayload(testPayload{}))
 	})
 }
 

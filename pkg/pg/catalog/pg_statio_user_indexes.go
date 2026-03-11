@@ -14,15 +14,12 @@ const (
 )
 
 const pgStatioUserIndexesQuery = `
-SELECT relid::bigint AS relid, indexrelid::bigint AS indexrelid,
-    schemaname, relname, indexrelname,
-    idx_blks_read, idx_blks_hit
-FROM pg_statio_user_indexes
+SELECT * FROM pg_statio_user_indexes
 WHERE COALESCE(idx_blks_read,0) + COALESCE(idx_blks_hit,0) > 0
 `
 
-func CollectPgStatioUserIndexes(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatioUserIndexesRow, error) {
-	return CollectView[agent.PgStatioUserIndexesRow](pgPool, ctx, pgStatioUserIndexesQuery, "pg_statio_user_indexes")
+func CollectPgStatioUserIndexes(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatioUserIndexesRow, error) {
+	return CollectView[PgStatioUserIndexesRow](pgPool, ctx, pgStatioUserIndexesQuery, "pg_statio_user_indexes")
 }
 
 func NewPgStatioUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
@@ -38,7 +35,22 @@ func NewPgStatioUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) 
 			if err != nil {
 				return nil, err
 			}
-			return &agent.PgStatioUserIndexesPayload{Rows: rows}, nil
+			return &PgStatioUserIndexesPayload{Rows: rows}, nil
 		},
 	}
+}
+
+// PgStatioUserIndexesRow represents a row from pg_statio_user_indexes.
+type PgStatioUserIndexesRow struct {
+	RelID        *int64  `json:"relid" db:"relid"`
+	IndexRelID   *int64  `json:"indexrelid" db:"indexrelid"`
+	SchemaName   *string `json:"schemaname" db:"schemaname"`
+	RelName      *string `json:"relname" db:"relname"`
+	IndexRelName *string `json:"indexrelname" db:"indexrelname"`
+	IdxBlksRead  *int64  `json:"idx_blks_read" db:"idx_blks_read"`
+	IdxBlksHit   *int64  `json:"idx_blks_hit" db:"idx_blks_hit"`
+}
+
+type PgStatioUserIndexesPayload struct {
+	Rows []PgStatioUserIndexesRow `json:"rows"`
 }

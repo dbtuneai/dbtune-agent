@@ -2,8 +2,8 @@ package catalog
 
 import (
 	"context"
-	"time"
 	"fmt"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
@@ -31,7 +31,7 @@ ORDER BY n.nspname, c.relname;
 
 // CollectPgClass queries pg_class for reltuples and relpages of user tables.
 // This uses custom scanning because reltuples is float32 in pg_class.
-func CollectPgClass(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgClassRow, error) {
+func CollectPgClass(pgPool *pgxpool.Pool, ctx context.Context) ([]PgClassRow, error) {
 	ctx, cancel := EnsureTimeout(ctx)
 	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgClassQuery)
@@ -40,10 +40,10 @@ func CollectPgClass(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgClassR
 	}
 	defer rows.Close()
 
-	result := make([]agent.PgClassRow, 0)
+	result := make([]PgClassRow, 0)
 
 	for rows.Next() {
-		var r agent.PgClassRow
+		var r PgClassRow
 		err := rows.Scan(
 			&r.SchemaName,
 			&r.RelName,
@@ -76,7 +76,21 @@ func NewPgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.Catalo
 			if err != nil {
 				return nil, err
 			}
-			return &agent.PgClassPayload{Rows: rows}, nil
+			return &PgClassPayload{Rows: rows}, nil
 		},
 	}
+}
+
+// PgClassRow represents a single row from pg_class for user tables,
+// providing reltuples and relpages needed for index recommendation.
+type PgClassRow struct {
+	SchemaName string  `json:"schemaname"`
+	RelName    string  `json:"relname"`
+	RelTuples  float64 `json:"reltuples"`
+	RelPages   int     `json:"relpages"`
+}
+
+// PgClassPayload is the JSON body POSTed to /api/v1/agent/pg_class.
+type PgClassPayload struct {
+	Rows []PgClassRow `json:"rows"`
 }

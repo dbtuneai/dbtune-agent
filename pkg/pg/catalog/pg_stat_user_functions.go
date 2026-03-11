@@ -14,15 +14,14 @@ const (
 )
 
 const pgStatUserFunctionsQuery = `
-SELECT funcid::bigint AS funcid, schemaname, funcname, calls, total_time, self_time
-FROM pg_stat_user_functions
+SELECT * FROM pg_stat_user_functions
 WHERE calls > 0
 ORDER BY calls DESC
 LIMIT 500
 `
 
-func CollectPgStatUserFunctions(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatUserFunctionsRow, error) {
-	return CollectView[agent.PgStatUserFunctionsRow](pgPool, ctx, pgStatUserFunctionsQuery, "pg_stat_user_functions")
+func CollectPgStatUserFunctions(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatUserFunctionsRow, error) {
+	return CollectView[PgStatUserFunctionsRow](pgPool, ctx, pgStatUserFunctionsQuery, "pg_stat_user_functions")
 }
 
 func NewPgStatUserFunctionsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
@@ -38,7 +37,21 @@ func NewPgStatUserFunctionsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) 
 			if err != nil {
 				return nil, err
 			}
-			return &agent.PgStatUserFunctionsPayload{Rows: rows}, nil
+			return &PgStatUserFunctionsPayload{Rows: rows}, nil
 		},
 	}
+}
+
+// PgStatUserFunctionsRow represents a row from pg_stat_user_functions.
+type PgStatUserFunctionsRow struct {
+	FuncID     *int64   `json:"funcid" db:"funcid"`
+	SchemaName *string  `json:"schemaname" db:"schemaname"`
+	FuncName   *string  `json:"funcname" db:"funcname"`
+	Calls      *int64   `json:"calls" db:"calls"`
+	TotalTime  *float64 `json:"total_time" db:"total_time"`
+	SelfTime   *float64 `json:"self_time" db:"self_time"`
+}
+
+type PgStatUserFunctionsPayload struct {
+	Rows []PgStatUserFunctionsRow `json:"rows"`
 }

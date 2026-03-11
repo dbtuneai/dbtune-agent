@@ -13,27 +13,14 @@ const (
 	PgStatWalInterval = 1 * time.Minute
 )
 
-// PG 14+ only. Uses to_jsonb for columns removed in PG 18
-// (wal_records, wal_fpi, wal_buffers_full, wal_write, wal_sync, wal_write_time, wal_sync_time).
-const pgStatWalQuery = `
-SELECT
-    (to_jsonb(w) ->> 'wal_records')::bigint AS wal_records,
-    (to_jsonb(w) ->> 'wal_fpi')::bigint AS wal_fpi,
-    wal_bytes::bigint AS wal_bytes,
-    (to_jsonb(w) ->> 'wal_buffers_full')::bigint AS wal_buffers_full,
-    (to_jsonb(w) ->> 'wal_write')::bigint AS wal_write,
-    (to_jsonb(w) ->> 'wal_sync')::bigint AS wal_sync,
-    (to_jsonb(w) ->> 'wal_write_time')::float8 AS wal_write_time,
-    (to_jsonb(w) ->> 'wal_sync_time')::float8 AS wal_sync_time,
-    stats_reset::text AS stats_reset
-FROM pg_stat_wal w
-`
+// PG 14+ only.
+const pgStatWalQuery = `SELECT * FROM pg_stat_wal`
 
-func CollectPgStatWal(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion int) ([]agent.PgStatWalRow, error) {
+func CollectPgStatWal(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion int) ([]PgStatWalRow, error) {
 	if pgMajorVersion < 14 {
 		return nil, nil
 	}
-	return CollectView[agent.PgStatWalRow](pgPool, ctx, pgStatWalQuery, "pg_stat_wal")
+	return CollectView[PgStatWalRow](pgPool, ctx, pgStatWalQuery, "pg_stat_wal")
 }
 
 func NewPgStatWalCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) agent.CatalogCollector {
@@ -52,7 +39,24 @@ func NewPgStatWalCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVer
 			if rows == nil {
 				return nil, nil
 			}
-			return &agent.PgStatWalPayload{Rows: rows}, nil
+			return &PgStatWalPayload{Rows: rows}, nil
 		},
 	}
+}
+
+// PgStatWalRow represents a row from pg_stat_wal (PG 14+).
+type PgStatWalRow struct {
+	WalRecords     *int64   `json:"wal_records" db:"wal_records"`
+	WalFpi         *int64   `json:"wal_fpi" db:"wal_fpi"`
+	WalBytes       *int64   `json:"wal_bytes" db:"wal_bytes"`
+	WalBuffersFull *int64   `json:"wal_buffers_full" db:"wal_buffers_full"`
+	WalWrite       *int64   `json:"wal_write" db:"wal_write"`
+	WalSync        *int64   `json:"wal_sync" db:"wal_sync"`
+	WalWriteTime   *float64 `json:"wal_write_time" db:"wal_write_time"`
+	WalSyncTime    *float64 `json:"wal_sync_time" db:"wal_sync_time"`
+	StatsReset     *string  `json:"stats_reset" db:"stats_reset"`
+}
+
+type PgStatWalPayload struct {
+	Rows []PgStatWalRow `json:"rows"`
 }
