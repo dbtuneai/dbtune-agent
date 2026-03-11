@@ -679,10 +679,6 @@ func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName st
 			Collector: pg.UptimeMinutes(pool),
 		},
 		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pool),
-		},
-		{
 			Key:       "hardware",
 			Collector: kubernetes.CNPGContainerMetricsCollector(kubeClient, clusterName, containerName),
 		},

@@ -336,10 +336,7 @@ func (adapter *AzureFlexAdapter) Collectors() []agent.MetricCollector {
 			Key:       "server_uptime",
 			Collector: pg.UptimeMinutes(pool),
 		},
-		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pool),
-		},
+
 
 		{
 			Key:       "cpu_utilization",

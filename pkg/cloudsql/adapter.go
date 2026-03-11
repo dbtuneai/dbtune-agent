@@ -273,10 +273,6 @@ func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
 			Collector: pg.UptimeMinutes(pool),
 		},
 		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pool),
-		},
-		{
 			Key:       "hardware",
 			Collector: CloudSQLHardwareInfo(adapter.Logger(), adapter.CloudSQLConfig, adapter.CloudMonitoringClient),
 		},

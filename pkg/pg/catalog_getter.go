@@ -75,5 +75,6 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 		catalog.NewPgStatRecoveryPrefetchCollector(g.PGPool, p, g.PGMajorVersion),
 		catalog.NewPgStatSubscriptionCollector(g.PGPool, p),
 		catalog.NewPgStatSubscriptionStatsCollector(g.PGPool, p, g.PGMajorVersion),
+		catalog.NewWaitEventsCollector(g.PGPool, p),
 	}
 }

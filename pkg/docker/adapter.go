@@ -110,10 +110,6 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 			Collector: pg.UptimeMinutes(pgDriver),
 		},
 		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pgDriver),
-		},
-		{
 			Key:       "hardware",
 			Collector: DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
 		},

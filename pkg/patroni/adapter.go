@@ -850,10 +850,6 @@ func (adapter *PatroniAdapter) Collectors() []agent.MetricCollector {
 			Collector: pg.UptimeMinutes(pool),
 		},
 		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pool),
-		},
-		{
 			Key:       "hardware",
 			Collector: HardwareInfoPatroni(),
 		},
