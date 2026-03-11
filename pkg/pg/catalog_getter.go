@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/pg/catalog"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -44,23 +45,23 @@ func (g *CatalogGetter) GetDDL(ctx context.Context) (*agent.DDLPayload, error) {
 // CatalogCollectors returns all catalog collection tasks.
 func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 	return []agent.CatalogCollector{
-		{Name: "pg_statistic", Interval: 1 * time.Minute, Collect: func(ctx context.Context) (any, error) {
+		{Name: "pg_stats", Interval: 1 * time.Minute, Collect: func(ctx context.Context) (any, error) {
 			ctx, err := g.prepareCtx(ctx)
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatistic(g.PGPool, ctx)
+			rows, err := catalog.CollectPgStats(g.PGPool, ctx)
 			if err != nil {
 				return nil, err
 			}
-			return &agent.PgStatisticPayload{Rows: rows}, nil
+			return &agent.PgStatsPayload{Rows: rows}, nil
 		}},
 		{Name: "pg_stat_user_tables", Interval: 1 * time.Minute, Collect: func(ctx context.Context) (any, error) {
 			ctx, err := g.prepareCtx(ctx)
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatUserTables(g.PGPool, ctx)
+			rows, err := catalog.CollectPgStatUserTables(g.PGPool, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -71,7 +72,7 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgClass(g.PGPool, ctx)
+			rows, err := catalog.CollectPgClass(g.PGPool, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -82,7 +83,7 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatActivity(g.PGPool, ctx)
+			rows, err := catalog.CollectPgStatActivity(g.PGPool, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -93,7 +94,7 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatDatabase(g.PGPool, ctx)
+			rows, err := catalog.CollectPgStatDatabase(g.PGPool, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -104,7 +105,7 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatDatabaseConflicts(g.PGPool, ctx)
+			rows, err := catalog.CollectPgStatDatabaseConflicts(g.PGPool, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -115,7 +116,7 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatArchiver(g.PGPool, ctx)
+			rows, err := catalog.CollectPgStatArchiver(g.PGPool, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -126,7 +127,7 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatBgwriter(g.PGPool, ctx)
+			rows, err := catalog.CollectPgStatBgwriter(g.PGPool, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -137,7 +138,7 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatCheckpointer(g.PGPool, ctx, g.PGMajorVersion)
+			rows, err := catalog.CollectPgStatCheckpointer(g.PGPool, ctx, g.PGMajorVersion)
 			if err != nil {
 				return nil, err
 			}
@@ -151,7 +152,7 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatWal(g.PGPool, ctx, g.PGMajorVersion)
+			rows, err := catalog.CollectPgStatWal(g.PGPool, ctx, g.PGMajorVersion)
 			if err != nil {
 				return nil, err
 			}
@@ -165,7 +166,7 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatIO(g.PGPool, ctx, g.PGMajorVersion)
+			rows, err := catalog.CollectPgStatIO(g.PGPool, ctx, g.PGMajorVersion)
 			if err != nil {
 				return nil, err
 			}
@@ -179,7 +180,7 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatReplication(g.PGPool, ctx)
+			rows, err := catalog.CollectPgStatReplication(g.PGPool, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -190,7 +191,7 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatReplicationSlots(g.PGPool, ctx, g.PGMajorVersion)
+			rows, err := catalog.CollectPgStatReplicationSlots(g.PGPool, ctx, g.PGMajorVersion)
 			if err != nil {
 				return nil, err
 			}
@@ -204,7 +205,7 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatSlru(g.PGPool, ctx)
+			rows, err := catalog.CollectPgStatSlru(g.PGPool, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -215,7 +216,7 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatUserIndexes(g.PGPool, ctx)
+			rows, err := catalog.CollectPgStatUserIndexes(g.PGPool, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -226,7 +227,7 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatioUserTables(g.PGPool, ctx)
+			rows, err := catalog.CollectPgStatioUserTables(g.PGPool, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -237,7 +238,7 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatioUserIndexes(g.PGPool, ctx)
+			rows, err := catalog.CollectPgStatioUserIndexes(g.PGPool, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -248,11 +249,138 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatUserFunctions(g.PGPool, ctx)
+			rows, err := catalog.CollectPgStatUserFunctions(g.PGPool, ctx)
 			if err != nil {
 				return nil, err
 			}
 			return &agent.PgStatUserFunctionsPayload{Rows: rows}, nil
+		}},
+		{Name: "pg_locks", Interval: 30 * time.Second, Collect: func(ctx context.Context) (any, error) {
+			ctx, err := g.prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := catalog.CollectPgLocks(g.PGPool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgLocksPayload{Rows: rows}, nil
+		}},
+		{Name: "pg_stat_progress_vacuum", Interval: 30 * time.Second, Collect: func(ctx context.Context) (any, error) {
+			ctx, err := g.prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := catalog.CollectPgStatProgressVacuum(g.PGPool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgStatProgressVacuumPayload{Rows: rows}, nil
+		}},
+		{Name: "pg_stat_progress_analyze", Interval: 30 * time.Second, Collect: func(ctx context.Context) (any, error) {
+			ctx, err := g.prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := catalog.CollectPgStatProgressAnalyze(g.PGPool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgStatProgressAnalyzePayload{Rows: rows}, nil
+		}},
+		{Name: "pg_stat_progress_create_index", Interval: 30 * time.Second, Collect: func(ctx context.Context) (any, error) {
+			ctx, err := g.prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := catalog.CollectPgStatProgressCreateIndex(g.PGPool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgStatProgressCreateIndexPayload{Rows: rows}, nil
+		}},
+		{Name: "pg_prepared_xacts", Interval: 1 * time.Minute, Collect: func(ctx context.Context) (any, error) {
+			ctx, err := g.prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := catalog.CollectPgPreparedXacts(g.PGPool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgPreparedXactsPayload{Rows: rows}, nil
+		}},
+		{Name: "pg_replication_slots", Interval: 1 * time.Minute, Collect: func(ctx context.Context) (any, error) {
+			ctx, err := g.prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := catalog.CollectPgReplicationSlots(g.PGPool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgReplicationSlotsPayload{Rows: rows}, nil
+		}},
+		{Name: "pg_index", Interval: 5 * time.Minute, Collect: func(ctx context.Context) (any, error) {
+			ctx, err := g.prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := catalog.CollectPgIndex(g.PGPool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgIndexPayload{Rows: rows}, nil
+		}},
+		{Name: "pg_stat_wal_receiver", Interval: 1 * time.Minute, Collect: func(ctx context.Context) (any, error) {
+			ctx, err := g.prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := catalog.CollectPgStatWalReceiver(g.PGPool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgStatWalReceiverPayload{Rows: rows}, nil
+		}},
+		{Name: "pg_stat_recovery_prefetch", Interval: 1 * time.Minute, Collect: func(ctx context.Context) (any, error) {
+			ctx, err := g.prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := catalog.CollectPgStatRecoveryPrefetch(g.PGPool, ctx, g.PGMajorVersion)
+			if err != nil {
+				return nil, err
+			}
+			if rows == nil {
+				return nil, nil
+			}
+			return &agent.PgStatRecoveryPrefetchPayload{Rows: rows}, nil
+		}},
+		{Name: "pg_stat_subscription", Interval: 1 * time.Minute, Collect: func(ctx context.Context) (any, error) {
+			ctx, err := g.prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := catalog.CollectPgStatSubscription(g.PGPool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgStatSubscriptionPayload{Rows: rows}, nil
+		}},
+		{Name: "pg_stat_subscription_stats", Interval: 1 * time.Minute, Collect: func(ctx context.Context) (any, error) {
+			ctx, err := g.prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := catalog.CollectPgStatSubscriptionStats(g.PGPool, ctx, g.PGMajorVersion)
+			if err != nil {
+				return nil, err
+			}
+			if rows == nil {
+				return nil, nil
+			}
+			return &agent.PgStatSubscriptionStatsPayload{Rows: rows}, nil
 		}},
 	}
 }
