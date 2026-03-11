@@ -228,10 +228,6 @@ func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
 			Collector: pg.UptimeMinutes(pool),
 		},
 		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pool),
-		},
-		{
 			Key: "hardware",
 			Collector: RDSHardwareInfo(
 				adapter.Config.RDSDatabaseIdentifier,

@@ -92,10 +92,6 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 			Collector: pg.UptimeMinutes(pgDriver),
 		},
 		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pgDriver),
-		},
-		{
 			Key:       "hardware",
 			Collector: HardwareInfoOnPremise(),
 		},
