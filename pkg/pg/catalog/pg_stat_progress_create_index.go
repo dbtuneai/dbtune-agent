@@ -39,7 +39,7 @@ const (
 	PgStatProgressCreateIndexInterval = 30 * time.Second
 )
 
-const pgStatProgressCreateIndexQuery = `SELECT * FROM pg_stat_progress_create_index`
+const pgStatProgressCreateIndexQuery = `SELECT * FROM pg_stat_progress_create_index WHERE datname = current_database()`
 
 func CollectPgStatProgressCreateIndex(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatProgressCreateIndexRow, error) {
 	return CollectView[PgStatProgressCreateIndexRow](pgPool, ctx, pgStatProgressCreateIndexQuery, "pg_stat_progress_create_index")

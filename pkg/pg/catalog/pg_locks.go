@@ -25,6 +25,7 @@ WITH blocked AS (
 SELECT l.*
 FROM pg_locks l
 WHERE l.pid IN (SELECT blocked_pid FROM blocked UNION SELECT blocking_pid FROM blocked)
+  AND l.database IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))
 `
 
 // PgLocksRow represents a filtered row from pg_locks (blocked + blockers only).

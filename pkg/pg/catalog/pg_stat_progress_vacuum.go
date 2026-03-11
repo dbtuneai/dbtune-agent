@@ -15,7 +15,7 @@ const (
 	PgStatProgressVacuumInterval = 30 * time.Second
 )
 
-const pgStatProgressVacuumQuery = `SELECT * FROM pg_stat_progress_vacuum`
+const pgStatProgressVacuumQuery = `SELECT * FROM pg_stat_progress_vacuum WHERE datname = current_database()`
 
 // PgStatProgressVacuumRow represents a row from pg_stat_progress_vacuum.
 type PgStatProgressVacuumRow struct {

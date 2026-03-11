@@ -15,7 +15,7 @@ const (
 	PgPreparedXactsInterval = 1 * time.Minute
 )
 
-const pgPreparedXactsQuery = `SELECT * FROM pg_prepared_xacts ORDER BY gid`
+const pgPreparedXactsQuery = `SELECT * FROM pg_prepared_xacts WHERE database = current_database() ORDER BY gid`
 
 // PgPreparedXactsRow represents a row from pg_prepared_xacts.
 type PgPreparedXactsRow struct {

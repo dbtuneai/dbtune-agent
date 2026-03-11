@@ -15,7 +15,7 @@ const (
 	PgStatDatabaseInterval = 1 * time.Minute
 )
 
-const pgStatDatabaseQuery = `SELECT * FROM pg_stat_database`
+const pgStatDatabaseQuery = `SELECT * FROM pg_stat_database WHERE datname = current_database()`
 
 func CollectPgStatDatabase(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatDatabaseRow, error) {
 	return CollectView[PgStatDatabaseRow](pgPool, ctx, pgStatDatabaseQuery, "pg_stat_database")
