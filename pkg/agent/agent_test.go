@@ -1,7 +1,10 @@
 package agent
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -16,6 +19,7 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func quietLogger() *logrus.Logger {
@@ -291,4 +295,134 @@ func TestCommonAgent_GetProposedConfig_Succeeds(t *testing.T) {
 
 		transport.ActionWasCalled(t, "/api/v1/agent/configurations", http.MethodGet)
 	}
+}
+
+func TestGzipJSON(t *testing.T) {
+	t.Run("roundtrip produces valid gzip containing original JSON", func(t *testing.T) {
+		input := map[string]any{"key": "value", "number": 42}
+
+		jsonSize, buf, err := gzipJSON(input)
+		require.NoError(t, err)
+
+		// jsonSize should match a direct json.Marshal
+		expected, _ := json.Marshal(input)
+		assert.Equal(t, len(expected), jsonSize)
+
+		// compressed should be smaller (or at least different) than raw JSON
+		assert.Greater(t, buf.Len(), 0)
+
+		// decompress and verify roundtrip
+		gz, err := gzip.NewReader(buf)
+		require.NoError(t, err)
+		defer gz.Close()
+
+		decompressed, err := io.ReadAll(gz)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(expected), string(decompressed))
+	})
+
+	t.Run("large payload compresses significantly", func(t *testing.T) {
+		// Simulate a large repetitive payload like a schema with many tables
+		rows := make([]string, 1000)
+		for i := range rows {
+			rows[i] = "CREATE TABLE test_table_with_a_long_name (id serial PRIMARY KEY, name text NOT NULL, created_at timestamptz DEFAULT now())"
+		}
+		payload := map[string]any{"ddl": rows}
+
+		jsonSize, buf, err := gzipJSON(payload)
+		require.NoError(t, err)
+
+		// Repetitive data should compress well — at least 5x
+		assert.Less(t, buf.Len(), jsonSize/5, "expected at least 5x compression for repetitive data")
+	})
+
+	t.Run("empty struct", func(t *testing.T) {
+		jsonSize, buf, err := gzipJSON(struct{}{})
+		require.NoError(t, err)
+		assert.Equal(t, 2, jsonSize) // "{}"
+
+		gz, err := gzip.NewReader(buf)
+		require.NoError(t, err)
+		defer gz.Close()
+		decompressed, err := io.ReadAll(gz)
+		require.NoError(t, err)
+		assert.Equal(t, "{}", string(decompressed))
+	})
+
+	t.Run("unmarshalable payload returns error", func(t *testing.T) {
+		// channels cannot be marshaled to JSON
+		_, _, err := gzipJSON(make(chan int))
+		assert.Error(t, err)
+	})
+}
+
+func TestSendCatalogPayload_SendsGzippedBody(t *testing.T) {
+	transport := dbtunetest.CreateCatalogTrip("ddl")
+	agent := CreateCommonAgentForTests(transport)
+
+	payload := &testPayload{Rows: []string{"CREATE TABLE foo (id int)"}}
+	err := agent.SendCatalogPayload(context.Background(), "ddl", payload)
+	assert.NoError(t, err)
+
+	transport.ActionWasCalled(t, "/api/v1/agent/ddl", http.MethodPost)
+}
+
+func TestSendCatalogPayload_NilPayloadReturnsError(t *testing.T) {
+	transport := dbtunetest.CreateCatalogTrip("ddl")
+	agent := CreateCommonAgentForTests(transport)
+
+	var payload *testPayload
+	err := agent.SendCatalogPayload(context.Background(), "ddl", payload)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "payload is nil")
+}
+
+func TestSendCatalogPayload_DecompressedBodyMatchesPayload(t *testing.T) {
+	// Use a custom transport that captures the request body for inspection
+	payload := &testPayload{Rows: []string{"CREATE TABLE bar (id int)", "CREATE TABLE baz (name text)"}}
+	var capturedBody []byte
+	var capturedHeaders http.Header
+
+	customTransport := &captureTransport{
+		handler: func(req *http.Request) (*http.Response, error) {
+			capturedHeaders = req.Header.Clone()
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				return nil, err
+			}
+			capturedBody = body
+			return &http.Response{
+				Status:     "204 No Content",
+				StatusCode: http.StatusNoContent,
+			}, nil
+		},
+	}
+
+	agent := CreateCommonAgentForTests(customTransport)
+	err := agent.SendCatalogPayload(context.Background(), "ddl", payload)
+	require.NoError(t, err)
+
+	// Verify headers
+	assert.Equal(t, "application/json", capturedHeaders.Get("Content-Type"))
+	assert.Equal(t, "gzip", capturedHeaders.Get("Content-Encoding"))
+
+	// Decompress and verify body matches original payload
+	gz, err := gzip.NewReader(bytes.NewReader(capturedBody))
+	require.NoError(t, err)
+	defer gz.Close()
+
+	decompressed, err := io.ReadAll(gz)
+	require.NoError(t, err)
+
+	expectedJSON, _ := json.Marshal(payload)
+	assert.JSONEq(t, string(expectedJSON), string(decompressed))
+}
+
+// captureTransport is a simple RoundTripper that delegates to a handler function.
+type captureTransport struct {
+	handler func(*http.Request) (*http.Response, error)
+}
+
+func (ct *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return ct.handler(req)
 }

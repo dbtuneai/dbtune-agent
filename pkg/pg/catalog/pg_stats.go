@@ -260,12 +260,13 @@ func newPgStatsCollectFunc(collectFn PgStatsCollectFunc, batchSize int) func(ctx
 			if err != nil {
 				return nil, err
 			}
-			backfillOffset += batchSize
 			if len(statsRows) == 0 {
 				// OFFSET past all tables — switch to delta mode.
 				backfillDone = true
 				now := time.Now().UTC()
 				lastPoll = &now
+			} else {
+				backfillOffset += batchSize
 			}
 		} else {
 			// Delta phase: only tables analyzed since last poll.
