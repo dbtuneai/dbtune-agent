@@ -511,6 +511,7 @@ func (a *CommonAgent) GetMetrics(ctx context.Context) ([]metrics.FlatValue, erro
 				}
 			case <-collectorCtx.Done():
 				errorsChan <- fmt.Errorf("collector %s timed out", c.Key)
+				a.Logger().Warnf("collector %s did not respect context cancellation — goroutine leaked", c.Key)
 			}
 		}()
 	}
