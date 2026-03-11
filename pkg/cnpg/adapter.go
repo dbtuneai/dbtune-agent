@@ -644,47 +644,12 @@ func (adapter *CNPGAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 }
 
 func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName string, containerName string, logger *log.Logger) []agent.MetricCollector {
-	// Get PG config for query settings
 	pgConfig, _ := pg.ConfigFromViper(nil)
-
-	collectors := []agent.MetricCollector{
-		// TODO: Re-enable pg_role collector once backend supports it
-		// {
-		// 	Key:        "postgresql_role",
-		// 	MetricType: "string",
-		// 	Collector:  pg.PostgreSQLRole(pool),
-		// },
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pool, pgConfig.IncludeQueries, pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pool),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pool),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pool),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pool),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pool),
-		},
-		{
-			Key:       "hardware",
-			Collector: kubernetes.CNPGContainerMetricsCollector(kubeClient, clusterName, containerName),
-		},
-	}
-
-	return collectors
+	collectors := pg.DefaultMetricCollectors(pool, pgConfig)
+	return append(collectors, agent.MetricCollector{
+		Key:       "hardware",
+		Collector: kubernetes.CNPGContainerMetricsCollector(kubeClient, clusterName, containerName),
+	})
 }
 
 // extractSettingValue converts row.Setting to string for comparison.

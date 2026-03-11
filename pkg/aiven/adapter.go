@@ -383,46 +383,19 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails(ctx context.Context) *guardrai
 
 // AivenCollectors returns the metrics collectors for Aiven PostgreSQL
 func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
-	pgDriver := adapter.PGPool
-	collectors := []agent.MetricCollector{
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pgDriver, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pgDriver),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pgDriver),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pgDriver), // Use standard collector for consistency
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pgDriver),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pgDriver),
-		},
-		{
-			Key: "hardware",
-			Collector: AivenHardwareInfo(
-				&adapter.Client,
-				adapter.Config.ProjectName,
-				adapter.Config.ServiceName,
-				adapter.Config.MetricResolution,
-				adapter.Config,
-				adapter.State,
-				adapter.Logger(),
-			),
-		},
-	}
-	return collectors
+	collectors := pg.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
+	return append(collectors, agent.MetricCollector{
+		Key: "hardware",
+		Collector: AivenHardwareInfo(
+			&adapter.Client,
+			adapter.Config.ProjectName,
+			adapter.Config.ServiceName,
+			adapter.Config.MetricResolution,
+			adapter.Config,
+			adapter.State,
+			adapter.Logger(),
+		),
+	})
 }
 
 func boolPtr(b bool) *bool {

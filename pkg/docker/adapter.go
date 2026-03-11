@@ -83,38 +83,11 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 // DockerCollectors returns the list of collectors for Docker, replacing system metrics
 // with Docker-specific ones while keeping database-specific collectors
 func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
-	pgDriver := adapter.PGPool
-	collectors := []agent.MetricCollector{
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pgDriver, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pgDriver),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pgDriver),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pgDriver),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pgDriver),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pgDriver),
-		},
-		{
-			Key:       "hardware",
-			Collector: DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
-		},
-	}
-	return collectors
+	collectors := pg.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
+	return append(collectors, agent.MetricCollector{
+		Key:       "hardware",
+		Collector: DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
+	})
 }
 
 func (d *DockerContainerAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
