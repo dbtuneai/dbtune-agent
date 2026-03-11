@@ -41,14 +41,14 @@ func NewPgStatDatabaseConflictsCollector(pool *pgxpool.Pool, prepareCtx PrepareC
 
 // PgStatDatabaseConflictsRow represents a row from pg_stat_database_conflicts.
 type PgStatDatabaseConflictsRow struct {
-	DatID           *int64  `json:"datid" db:"datid"`
-	DatName         *string `json:"datname" db:"datname"`
-	ConflTablespace *int64  `json:"confl_tablespace" db:"confl_tablespace"`
-	ConflLock       *int64  `json:"confl_lock" db:"confl_lock"`
-	ConflSnapshot   *int64  `json:"confl_snapshot" db:"confl_snapshot"`
-	ConflBufferpin  *int64  `json:"confl_bufferpin" db:"confl_bufferpin"`
-	ConflDeadlock   *int64  `json:"confl_deadlock" db:"confl_deadlock"`
-	ConflLogicalSlot *int64 `json:"confl_active_logicalslot" db:"confl_active_logicalslot"`
+	DatID            *int64  `json:"datid" db:"datid"`                                       // pg: oid
+	DatName          *string `json:"datname" db:"datname"`                                   // pg: name
+	ConflTablespace  *int64  `json:"confl_tablespace" db:"confl_tablespace"`                 // pg: bigint
+	ConflLock        *int64  `json:"confl_lock" db:"confl_lock"`                             // pg: bigint
+	ConflSnapshot    *int64  `json:"confl_snapshot" db:"confl_snapshot"`                     // pg: bigint
+	ConflBufferpin   *int64  `json:"confl_bufferpin" db:"confl_bufferpin"`                   // pg: bigint
+	ConflDeadlock    *int64  `json:"confl_deadlock" db:"confl_deadlock"`                     // pg: bigint
+	ConflLogicalSlot *int64  `json:"confl_active_logicalslot" db:"confl_active_logicalslot"` // pg: bigint
 }
 
 type PgStatDatabaseConflictsPayload struct {

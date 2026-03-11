@@ -19,23 +19,23 @@ const pgReplicationSlotsQuery = `SELECT * FROM pg_replication_slots`
 
 // PgReplicationSlotsRow represents a row from pg_replication_slots.
 type PgReplicationSlotsRow struct {
-	SlotName           *string `json:"slot_name" db:"slot_name"`
-	Plugin             *string `json:"plugin" db:"plugin"`
-	SlotType           *string `json:"slot_type" db:"slot_type"`
-	DatOID             *int64  `json:"datoid" db:"datoid"`
-	Database           *string `json:"database" db:"database"`
-	Temporary          *bool   `json:"temporary" db:"temporary"`
-	Active             *bool   `json:"active" db:"active"`
-	ActivePID          *int64  `json:"active_pid" db:"active_pid"`
-	Xmin               *string `json:"xmin" db:"xmin"`
-	CatalogXmin        *string `json:"catalog_xmin" db:"catalog_xmin"`
-	RestartLsn         *string `json:"restart_lsn" db:"restart_lsn"`
-	ConfirmedFlushLsn  *string `json:"confirmed_flush_lsn" db:"confirmed_flush_lsn"`
-	WalStatus          *string `json:"wal_status" db:"wal_status"`
-	SafeWalSize        *int64  `json:"safe_wal_size" db:"safe_wal_size"`
-	TwoPhase           *string `json:"two_phase" db:"two_phase"`
-	Conflicting        *string `json:"conflicting" db:"conflicting"`
-	InvalidationReason *string `json:"invalidation_reason" db:"invalidation_reason"`
+	SlotName           *string `json:"slot_name" db:"slot_name"`                     // pg: name
+	Plugin             *string `json:"plugin" db:"plugin"`                           // pg: name
+	SlotType           *string `json:"slot_type" db:"slot_type"`                     // pg: text
+	DatOID             *int64  `json:"datoid" db:"datoid"`                           // pg: oid
+	Database           *string `json:"database" db:"database"`                       // pg: name
+	Temporary          *bool   `json:"temporary" db:"temporary"`                     // pg: boolean
+	Active             *bool   `json:"active" db:"active"`                           // pg: boolean
+	ActivePID          *int64  `json:"active_pid" db:"active_pid"`                   // pg: integer
+	Xmin               *string `json:"xmin" db:"xmin"`                               // pg: xid
+	CatalogXmin        *string `json:"catalog_xmin" db:"catalog_xmin"`               // pg: xid
+	RestartLsn         *string `json:"restart_lsn" db:"restart_lsn"`                 // pg: pg_lsn
+	ConfirmedFlushLsn  *string `json:"confirmed_flush_lsn" db:"confirmed_flush_lsn"` // pg: pg_lsn
+	WalStatus          *string `json:"wal_status" db:"wal_status"`                   // pg: text
+	SafeWalSize        *int64  `json:"safe_wal_size" db:"safe_wal_size"`             // pg: bigint
+	TwoPhase           *string `json:"two_phase" db:"two_phase"`                     // pg: boolean
+	Conflicting        *string `json:"conflicting" db:"conflicting"`                 // pg: boolean
+	InvalidationReason *string `json:"invalidation_reason" db:"invalidation_reason"` // pg: text
 }
 
 type PgReplicationSlotsPayload struct {

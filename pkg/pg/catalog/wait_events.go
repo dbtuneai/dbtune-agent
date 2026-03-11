@@ -77,8 +77,8 @@ func NewWaitEventsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.Cat
 
 // WaitEventRow represents a row from the wait events aggregation query.
 type WaitEventRow struct {
-	WaitEventType string `json:"wait_event_type" db:"wait_event_type"`
-	CurrentCount  int    `json:"current_count" db:"current_count"`
+	WaitEventType string `json:"wait_event_type" db:"wait_event_type"` // pg: text
+	CurrentCount  int    `json:"current_count" db:"current_count"`     // pg: bigint
 }
 
 type WaitEventsPayload struct {

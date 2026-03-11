@@ -41,13 +41,13 @@ func NewPgStatArchiverCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent
 
 // PgStatArchiverRow represents a row from pg_stat_archiver.
 type PgStatArchiverRow struct {
-	ArchivedCount    *int64  `json:"archived_count" db:"archived_count"`
-	LastArchivedWal  *string `json:"last_archived_wal" db:"last_archived_wal"`
-	LastArchivedTime *string `json:"last_archived_time" db:"last_archived_time"`
-	FailedCount      *int64  `json:"failed_count" db:"failed_count"`
-	LastFailedWal    *string `json:"last_failed_wal" db:"last_failed_wal"`
-	LastFailedTime   *string `json:"last_failed_time" db:"last_failed_time"`
-	StatsReset       *string `json:"stats_reset" db:"stats_reset"`
+	ArchivedCount    *int64  `json:"archived_count" db:"archived_count"`         // pg: bigint
+	LastArchivedWal  *string `json:"last_archived_wal" db:"last_archived_wal"`   // pg: text
+	LastArchivedTime *string `json:"last_archived_time" db:"last_archived_time"` // pg: timestamp with time zone
+	FailedCount      *int64  `json:"failed_count" db:"failed_count"`             // pg: bigint
+	LastFailedWal    *string `json:"last_failed_wal" db:"last_failed_wal"`       // pg: text
+	LastFailedTime   *string `json:"last_failed_time" db:"last_failed_time"`     // pg: timestamp with time zone
+	StatsReset       *string `json:"stats_reset" db:"stats_reset"`               // pg: timestamp with time zone
 }
 
 type PgStatArchiverPayload struct {
