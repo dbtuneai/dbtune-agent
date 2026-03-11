@@ -71,13 +71,13 @@ func NewPgStatioUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) 
 
 // PgStatioUserIndexesRow represents a row from pg_statio_user_indexes.
 type PgStatioUserIndexesRow struct {
-	RelID        *int64  `json:"relid" db:"relid"`
-	IndexRelID   *int64  `json:"indexrelid" db:"indexrelid"`
-	SchemaName   *string `json:"schemaname" db:"schemaname"`
-	RelName      *string `json:"relname" db:"relname"`
-	IndexRelName *string `json:"indexrelname" db:"indexrelname"`
-	IdxBlksRead  *int64  `json:"idx_blks_read" db:"idx_blks_read"`
-	IdxBlksHit   *int64  `json:"idx_blks_hit" db:"idx_blks_hit"`
+	RelID        *int64  `json:"relid" db:"relid"`                 // pg: oid
+	IndexRelID   *int64  `json:"indexrelid" db:"indexrelid"`       // pg: oid
+	SchemaName   *string `json:"schemaname" db:"schemaname"`       // pg: name
+	RelName      *string `json:"relname" db:"relname"`             // pg: name
+	IndexRelName *string `json:"indexrelname" db:"indexrelname"`   // pg: name
+	IdxBlksRead  *int64  `json:"idx_blks_read" db:"idx_blks_read"` // pg: bigint
+	IdxBlksHit   *int64  `json:"idx_blks_hit" db:"idx_blks_hit"`   // pg: bigint
 }
 
 type PgStatioUserIndexesPayload struct {

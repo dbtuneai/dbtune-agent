@@ -68,15 +68,15 @@ func NewPgStatUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) ag
 
 // PgStatUserIndexesRow represents a row from pg_stat_user_indexes.
 type PgStatUserIndexesRow struct {
-	RelID        *int64  `json:"relid" db:"relid"`
-	IndexRelID   *int64  `json:"indexrelid" db:"indexrelid"`
-	SchemaName   *string `json:"schemaname" db:"schemaname"`
-	RelName      *string `json:"relname" db:"relname"`
-	IndexRelName *string `json:"indexrelname" db:"indexrelname"`
-	IdxScan      *int64  `json:"idx_scan" db:"idx_scan"`
-	LastIdxScan  *string `json:"last_idx_scan" db:"last_idx_scan"`
-	IdxTupRead   *int64  `json:"idx_tup_read" db:"idx_tup_read"`
-	IdxTupFetch  *int64  `json:"idx_tup_fetch" db:"idx_tup_fetch"`
+	RelID        *int64  `json:"relid" db:"relid"`                 // pg: oid
+	IndexRelID   *int64  `json:"indexrelid" db:"indexrelid"`       // pg: oid
+	SchemaName   *string `json:"schemaname" db:"schemaname"`       // pg: name
+	RelName      *string `json:"relname" db:"relname"`             // pg: name
+	IndexRelName *string `json:"indexrelname" db:"indexrelname"`   // pg: name
+	IdxScan      *int64  `json:"idx_scan" db:"idx_scan"`           // pg: bigint
+	LastIdxScan  *string `json:"last_idx_scan" db:"last_idx_scan"` // pg: timestamp with time zone
+	IdxTupRead   *int64  `json:"idx_tup_read" db:"idx_tup_read"`   // pg: bigint
+	IdxTupFetch  *int64  `json:"idx_tup_fetch" db:"idx_tup_fetch"` // pg: bigint
 }
 
 type PgStatUserIndexesPayload struct {

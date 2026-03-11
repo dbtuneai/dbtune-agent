@@ -19,11 +19,11 @@ const pgPreparedXactsQuery = `SELECT * FROM pg_prepared_xacts WHERE database = c
 
 // PgPreparedXactsRow represents a row from pg_prepared_xacts.
 type PgPreparedXactsRow struct {
-	Transaction *string `json:"transaction" db:"transaction"`
-	GID         *string `json:"gid" db:"gid"`
-	Prepared    *string `json:"prepared" db:"prepared"`
-	Owner       *string `json:"owner" db:"owner"`
-	Database    *string `json:"database" db:"database"`
+	Transaction *string `json:"transaction" db:"transaction"` // pg: xid
+	GID         *string `json:"gid" db:"gid"`                 // pg: text
+	Prepared    *string `json:"prepared" db:"prepared"`       // pg: timestamp with time zone
+	Owner       *string `json:"owner" db:"owner"`             // pg: name
+	Database    *string `json:"database" db:"database"`       // pg: name
 }
 
 type PgPreparedXactsPayload struct {

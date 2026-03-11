@@ -12,20 +12,20 @@ import (
 
 // PgStatWalReceiverRow represents a row from pg_stat_wal_receiver (no conninfo).
 type PgStatWalReceiverRow struct {
-	PID                *int64  `json:"pid" db:"pid"`
-	Status             *string `json:"status" db:"status"`
-	ReceiveStartLsn    *string `json:"receive_start_lsn" db:"receive_start_lsn"`
-	ReceiveStartTli    *int64  `json:"receive_start_tli" db:"receive_start_tli"`
-	WrittenLsn         *string `json:"written_lsn" db:"written_lsn"`
-	FlushedLsn         *string `json:"flushed_lsn" db:"flushed_lsn"`
-	ReceivedTli        *int64  `json:"received_tli" db:"received_tli"`
-	LastMsgSendTime    *string `json:"last_msg_send_time" db:"last_msg_send_time"`
-	LastMsgReceiptTime *string `json:"last_msg_receipt_time" db:"last_msg_receipt_time"`
-	LatestEndLsn       *string `json:"latest_end_lsn" db:"latest_end_lsn"`
-	LatestEndTime      *string `json:"latest_end_time" db:"latest_end_time"`
-	SlotName           *string `json:"slot_name" db:"slot_name"`
-	SenderHost         *string `json:"sender_host" db:"sender_host"`
-	SenderPort         *int64  `json:"sender_port" db:"sender_port"`
+	PID                *int64  `json:"pid" db:"pid"`                                     // pg: integer
+	Status             *string `json:"status" db:"status"`                               // pg: text
+	ReceiveStartLsn    *string `json:"receive_start_lsn" db:"receive_start_lsn"`         // pg: pg_lsn
+	ReceiveStartTli    *int64  `json:"receive_start_tli" db:"receive_start_tli"`         // pg: integer
+	WrittenLsn         *string `json:"written_lsn" db:"written_lsn"`                    // pg: pg_lsn
+	FlushedLsn         *string `json:"flushed_lsn" db:"flushed_lsn"`                    // pg: pg_lsn
+	ReceivedTli        *int64  `json:"received_tli" db:"received_tli"`                   // pg: integer
+	LastMsgSendTime    *string `json:"last_msg_send_time" db:"last_msg_send_time"`       // pg: timestamp with time zone
+	LastMsgReceiptTime *string `json:"last_msg_receipt_time" db:"last_msg_receipt_time"` // pg: timestamp with time zone
+	LatestEndLsn       *string `json:"latest_end_lsn" db:"latest_end_lsn"`              // pg: pg_lsn
+	LatestEndTime      *string `json:"latest_end_time" db:"latest_end_time"`             // pg: timestamp with time zone
+	SlotName           *string `json:"slot_name" db:"slot_name"`                         // pg: text
+	SenderHost         *string `json:"sender_host" db:"sender_host"`                     // pg: text
+	SenderPort         *int64  `json:"sender_port" db:"sender_port"`                     // pg: integer
 }
 
 type PgStatWalReceiverPayload struct {
