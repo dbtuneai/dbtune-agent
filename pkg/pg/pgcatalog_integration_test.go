@@ -173,9 +173,13 @@ func runVersionGatedTest[T any](
 }
 
 func TestSimpleCollectors(t *testing.T) {
-	runSimpleCollectorTest(t, "pg_stats", catalog.CollectPgStats, true)
+	runSimpleCollectorTest(t, "pg_stats", func(pool *pgxpool.Pool, ctx context.Context) ([]catalog.PgStatsRow, error) {
+		return catalog.CollectPgStats(pool, ctx, catalog.PgStatsBackfillQuery(catalog.PgStatsBackfillBatchSize, 0))
+	}, true)
 	runSimpleCollectorTest(t, "pg_stat_user_tables", catalog.CollectPgStatUserTables, true)
-	runSimpleCollectorTest(t, "pg_class", catalog.CollectPgClass, true)
+	runSimpleCollectorTest(t, "pg_class", func(pool *pgxpool.Pool, ctx context.Context) ([]catalog.PgClassRow, error) {
+		return catalog.CollectPgClass(pool, ctx, catalog.PgClassBackfillQuery(catalog.PgClassBackfillBatchSize, 0))
+	}, true)
 	runSimpleCollectorTest(t, "pg_stat_activity", catalog.CollectPgStatActivity, true)
 	runSimpleCollectorTest(t, "pg_stat_database", catalog.CollectPgStatDatabase, true)
 	runSimpleCollectorTest(t, "pg_stat_database_conflicts", catalog.CollectPgStatDatabaseConflicts, true)

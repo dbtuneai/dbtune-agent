@@ -1,5 +1,7 @@
 package catalog
 
+// https://www.postgresql.org/docs/current/view-pg-locks.html
+
 import (
 	"context"
 	"time"

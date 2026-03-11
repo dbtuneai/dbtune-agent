@@ -1,5 +1,7 @@
 package catalog
 
+// https://www.postgresql.org/docs/current/view-pg-stats.html
+
 import (
 	"context"
 	"time"
@@ -8,6 +10,7 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -39,45 +42,101 @@ type PgStatsPayload struct {
 const (
 	PgStatsName     = "pg_stats"
 	PgStatsInterval = 1 * time.Minute
+
+	// PgStatsBackfillBatchSize controls how many tables' statistics are sent per
+	// tick during the initial backfill phase. This bounds memory usage on large
+	// databases (e.g. 10k+ tables) by spreading the first full snapshot across
+	// multiple ticks instead of sending everything at once. After all batches
+	// are sent, the collector switches to delta mode using last_analyze timestamps.
+	PgStatsBackfillBatchSize = 500
 )
 
-// pgStatsQuery reads from the pg_stats view which provides a human-readable
-// form of the pg_statistic catalog. Array columns use format() to stringify anyarray values
-// since anyarray cannot be cast to text[] directly.
-const pgStatsQuery = `
-SELECT
-    schemaname,
-    tablename,
-    attname,
-    inherited,
-    null_frac,
-    avg_width,
-    n_distinct,
-    CASE WHEN most_common_vals IS NULL THEN NULL
-         ELSE pg_catalog.format('%s', most_common_vals) END,
-    CASE WHEN most_common_freqs IS NULL THEN NULL
-         ELSE pg_catalog.array_to_json(most_common_freqs) END,
-    CASE WHEN histogram_bounds IS NULL THEN NULL
-         ELSE pg_catalog.format('%s', histogram_bounds) END,
-    correlation,
-    CASE WHEN most_common_elems IS NULL THEN NULL
-         ELSE pg_catalog.format('%s', most_common_elems) END,
-    CASE WHEN most_common_elem_freqs IS NULL THEN NULL
-         ELSE pg_catalog.array_to_json(most_common_elem_freqs) END,
-    CASE WHEN elem_count_histogram IS NULL THEN NULL
-         ELSE pg_catalog.array_to_json(elem_count_histogram) END
-FROM pg_stats
-WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
-ORDER BY schemaname, tablename, attname;
+// pgStatsColumns is the SELECT list shared by the full and delta queries.
+// Array columns use format() to stringify anyarray values since anyarray
+// cannot be cast to text[] directly.
+const pgStatsColumns = `
+    ps.schemaname,
+    ps.tablename,
+    ps.attname,
+    ps.inherited,
+    ps.null_frac,
+    ps.avg_width,
+    ps.n_distinct,
+    CASE WHEN ps.most_common_vals IS NULL THEN NULL
+         ELSE pg_catalog.format('%s', ps.most_common_vals) END,
+    CASE WHEN ps.most_common_freqs IS NULL THEN NULL
+         ELSE pg_catalog.array_to_json(ps.most_common_freqs) END,
+    CASE WHEN ps.histogram_bounds IS NULL THEN NULL
+         ELSE pg_catalog.format('%s', ps.histogram_bounds) END,
+    ps.correlation,
+    CASE WHEN ps.most_common_elems IS NULL THEN NULL
+         ELSE pg_catalog.format('%s', ps.most_common_elems) END,
+    CASE WHEN ps.most_common_elem_freqs IS NULL THEN NULL
+         ELSE pg_catalog.array_to_json(ps.most_common_elem_freqs) END,
+    CASE WHEN ps.elem_count_histogram IS NULL THEN NULL
+         ELSE pg_catalog.array_to_json(ps.elem_count_histogram) END`
+
+// pgStatsQueryBatch fetches stats for a batch of tables during the initial
+// backfill phase. The subquery paginates through pg_stat_user_tables using
+// LIMIT/OFFSET ($1=batch size, $2=offset) to bound memory per tick.
+const pgStatsQueryBatch = `SELECT` + pgStatsColumns + `
+FROM pg_stats ps
+JOIN (
+    SELECT schemaname, relname
+    FROM pg_stat_user_tables
+    ORDER BY schemaname, relname
+    LIMIT $1 OFFSET $2
+) batch ON ps.schemaname = batch.schemaname
+       AND ps.tablename  = batch.relname
+ORDER BY ps.schemaname, ps.tablename, ps.attname
 `
+
+// pgStatsQueryDelta returns stats only for tables that have been (auto-)analyzed
+// since $1. The JOIN against pg_stat_user_tables implicitly excludes system schemas.
+const pgStatsQueryDelta = `SELECT` + pgStatsColumns + `
+FROM pg_stats ps
+JOIN pg_stat_user_tables pst
+  ON ps.schemaname = pst.schemaname
+ AND ps.tablename  = pst.relname
+WHERE GREATEST(pst.last_analyze, pst.last_autoanalyze) > $1
+ORDER BY ps.schemaname, ps.tablename, ps.attname
+`
+
+// PgStatsQueryMode specifies which pg_stats query mode to use.
+type PgStatsQueryMode struct {
+	// Backfill mode: paginate through all tables.
+	batchSize int
+	offset    int
+	// Delta mode: only tables analyzed after this time.
+	since *time.Time
+}
+
+// PgStatsBackfillQuery creates a query mode for batch backfill.
+func PgStatsBackfillQuery(batchSize, offset int) PgStatsQueryMode {
+	return PgStatsQueryMode{batchSize: batchSize, offset: offset}
+}
+
+// PgStatsDeltaQuery creates a query mode for delta updates since a given time.
+func PgStatsDeltaQuery(since time.Time) PgStatsQueryMode {
+	return PgStatsQueryMode{since: &since}
+}
 
 // CollectPgStats queries the pg_stats view and returns rows for the backend.
 // This uses custom scanning because pg_stats has anyarray columns that cannot
 // be directly scanned by pgx.RowToStructByNameLax.
-func CollectPgStats(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatsRow, error) {
+func CollectPgStats(pgPool *pgxpool.Pool, ctx context.Context, q PgStatsQueryMode) ([]PgStatsRow, error) {
 	ctx, cancel := EnsureTimeout(ctx)
 	defer cancel()
-	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatsQuery)
+
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if q.since != nil {
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, pgStatsQueryDelta, *q.since)
+	} else {
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, pgStatsQueryBatch, q.batchSize, q.offset)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stats: %w", err)
 	}
@@ -168,21 +227,65 @@ func pgArrayToJSON(s *string) json.RawMessage {
 	return nil
 }
 
+// PgStatsCollectFunc is the function signature for querying pg_stats.
+// Injected into the collector to allow testing without a real database.
+type PgStatsCollectFunc func(ctx context.Context, q PgStatsQueryMode) ([]PgStatsRow, error)
+
+// newPgStatsCollectFunc builds the collect closure that implements the
+// backfill → delta state machine. Extracted for testability.
+func newPgStatsCollectFunc(collectFn PgStatsCollectFunc, batchSize int) func(ctx context.Context) (any, error) {
+	var (
+		backfillOffset = 0        // advances by batchSize each tick
+		backfillDone   = false    // true once a batch returns 0 rows
+		lastPoll       *time.Time // set after backfill completes, used for delta queries
+	)
+	return func(ctx context.Context) (any, error) {
+		var (
+			statsRows []PgStatsRow
+			err       error
+		)
+
+		if !backfillDone {
+			// Backfill phase: paginate through all tables in batches.
+			statsRows, err = collectFn(ctx, PgStatsBackfillQuery(batchSize, backfillOffset))
+			if err != nil {
+				return nil, err
+			}
+			backfillOffset += batchSize
+			if len(statsRows) == 0 {
+				// OFFSET past all tables — switch to delta mode.
+				backfillDone = true
+				now := time.Now().UTC()
+				lastPoll = &now
+			}
+		} else {
+			// Delta phase: only tables analyzed since last poll.
+			now := time.Now().UTC()
+			statsRows, err = collectFn(ctx, PgStatsDeltaQuery(*lastPoll))
+			if err != nil {
+				return nil, err
+			}
+			lastPoll = &now
+		}
+
+		if len(statsRows) == 0 {
+			return nil, nil
+		}
+		return &PgStatsPayload{Rows: statsRows}, nil
+	}
+}
+
 func NewPgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
+	collectFn := func(ctx context.Context, q PgStatsQueryMode) ([]PgStatsRow, error) {
+		ctx, err := prepareCtx(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return CollectPgStats(pool, ctx, q)
+	}
 	return agent.CatalogCollector{
-		Name:          PgStatsName,
-		Interval:      PgStatsInterval,
-		SkipUnchanged: true,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStats(pool, ctx)
-			if err != nil {
-				return nil, err
-			}
-			return &PgStatsPayload{Rows: rows}, nil
-		},
+		Name:     PgStatsName,
+		Interval: PgStatsInterval,
+		Collect:  newPgStatsCollectFunc(collectFn, PgStatsBackfillBatchSize),
 	}
 }

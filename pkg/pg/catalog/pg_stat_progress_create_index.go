@@ -1,5 +1,7 @@
 package catalog
 
+// https://www.postgresql.org/docs/current/progress-reporting.html#CREATE-INDEX-PROGRESS-REPORTING
+
 import (
 	"context"
 	"time"

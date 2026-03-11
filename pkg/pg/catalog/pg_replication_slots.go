@@ -1,5 +1,7 @@
 package catalog
 
+// https://www.postgresql.org/docs/current/view-pg-replication-slots.html
+
 import (
 	"context"
 	"time"

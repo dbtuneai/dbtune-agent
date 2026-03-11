@@ -1,7 +1,10 @@
 package catalog
 
+// https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ALL-TABLES
+
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -11,9 +14,38 @@ import (
 const (
 	PgStatUserTablesName     = "pg_stat_user_tables"
 	PgStatUserTablesInterval = 1 * time.Minute
+
+	// PgStatUserTablesCategoryLimit caps each activity category in the UNION
+	// query. The final result contains at most 3× this value (before dedup),
+	// but in practice heavy-write tables are often heavy-read too, so the
+	// actual count is usually well below the theoretical max.
+	PgStatUserTablesCategoryLimit = 200
 )
 
-const pgStatUserTablesQuery = `SELECT * FROM pg_stat_user_tables ORDER BY schemaname, relname`
+// pgStatUserTablesQuery samples the most interesting tables from three
+// complementary perspectives, ensuring no single activity dimension
+// drowns out the others:
+//
+//  1. Write activity (n_tup_ins + n_tup_upd + n_tup_del) — tables with the
+//     most churn are the primary tuning targets for autovacuum, fillfactor,
+//     and index maintenance.
+//
+//  2. Read activity (seq_scan + idx_scan) — tables scanned most often,
+//     including read-only/static tables that may benefit from missing-index
+//     analysis. Without this category, a large static table hammered by
+//     sequential scans would never surface.
+//
+//  3. Dead-tuple pressure (n_dead_tup) — tables accumulating bloat that
+//     may need vacuum tuning, regardless of current read/write rate.
+//
+// UNION deduplicates across categories automatically.
+var pgStatUserTablesQuery = fmt.Sprintf(`
+SELECT * FROM pg_stat_user_tables ORDER BY COALESCE(n_tup_ins,0) + COALESCE(n_tup_upd,0) + COALESCE(n_tup_del,0) DESC LIMIT %d
+UNION
+SELECT * FROM pg_stat_user_tables ORDER BY COALESCE(seq_scan,0) + COALESCE(idx_scan,0) DESC LIMIT %d
+UNION
+SELECT * FROM pg_stat_user_tables ORDER BY COALESCE(n_dead_tup,0) DESC LIMIT %d
+`, PgStatUserTablesCategoryLimit, PgStatUserTablesCategoryLimit, PgStatUserTablesCategoryLimit)
 
 func CollectPgStatUserTables(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatUserTableRow, error) {
 	return CollectView[PgStatUserTableRow](pgPool, ctx, pgStatUserTablesQuery, "pg_stat_user_tables")

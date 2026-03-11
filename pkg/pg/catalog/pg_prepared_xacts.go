@@ -1,5 +1,7 @@
 package catalog
 
+// https://www.postgresql.org/docs/current/view-pg-prepared-xacts.html
+
 import (
 	"context"
 	"time"
@@ -13,7 +15,7 @@ const (
 	PgPreparedXactsInterval = 1 * time.Minute
 )
 
-const pgPreparedXactsQuery = `SELECT * FROM pg_prepared_xacts`
+const pgPreparedXactsQuery = `SELECT * FROM pg_prepared_xacts ORDER BY gid`
 
 // PgPreparedXactsRow represents a row from pg_prepared_xacts.
 type PgPreparedXactsRow struct {
