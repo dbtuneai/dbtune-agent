@@ -174,35 +174,50 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	})
 
 	// Catalog view collection goroutines — all follow the same get→send pattern.
-	for _, c := range adapter.CatalogCollectors() {
+	// Stagger start times so their tickers are permanently offset, spreading
+	// load evenly across the interval instead of all firing at once.
+	collectors := adapter.CatalogCollectors()
+	const stagger = 1 * time.Second
+	for i, c := range collectors {
 		c := c
+		delay := time.Duration(i) * stagger
 		var lastHash string
-		go runWithTicker(ctx, c.Interval, c.Name, logger, false, func(ctx context.Context) error {
-			data, err := c.Collect(ctx)
-			if err != nil {
-				return handleGetError(ctx, adapter, logger, c.Name, err)
+		go func() {
+			if delay > 0 {
+				logger.Debugf("staggering %s by %s", c.Name, delay)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return
+				}
 			}
-			if data == nil {
-				return nil
-			}
-			if c.SkipUnchanged {
-				hash, err := metrics.HashJSON(data)
+			runWithTicker(ctx, c.Interval, c.Name, logger, false, func(ctx context.Context) error {
+				data, err := c.Collect(ctx)
 				if err != nil {
-					logger.Warnf("%s: hash failed, sending anyway: %v", c.Name, err)
-				} else if hash == lastHash {
-					logger.Debugf("%s: unchanged, skipping send", c.Name)
+					return handleGetError(ctx, adapter, logger, c.Name, err)
+				}
+				if data == nil {
 					return nil
 				}
-				if err := adapter.SendCatalogPayload(ctx, c.Name, data); err != nil {
-					return err
+				if c.SkipUnchanged {
+					hash, err := metrics.HashJSON(data)
+					if err != nil {
+						logger.Warnf("%s: hash failed, sending anyway: %v", c.Name, err)
+					} else if hash == lastHash {
+						logger.Debugf("%s: unchanged, skipping send", c.Name)
+						return nil
+					}
+					if err := adapter.SendCatalogPayload(ctx, c.Name, data); err != nil {
+						return err
+					}
+					if hash != "" {
+						lastHash = hash
+					}
+					return nil
 				}
-				if hash != "" {
-					lastHash = hash
-				}
-				return nil
-			}
-			return adapter.SendCatalogPayload(ctx, c.Name, data)
-		})
+				return adapter.SendCatalogPayload(ctx, c.Name, data)
+			})
+		}()
 	}
 
 	// Block forever
