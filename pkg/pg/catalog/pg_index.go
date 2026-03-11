@@ -1,5 +1,7 @@
 package catalog
 
+// https://www.postgresql.org/docs/current/catalog-pg-index.html
+
 import (
 	"context"
 	"time"

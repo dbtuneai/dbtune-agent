@@ -1,5 +1,7 @@
 package catalog
 
+// https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STATIO-ALL-TABLES
+
 import (
 	"context"
 	"time"

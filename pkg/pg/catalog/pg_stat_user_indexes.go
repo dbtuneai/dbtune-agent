@@ -1,7 +1,10 @@
 package catalog
 
+// https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ALL-INDEXES
+
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -11,9 +14,35 @@ import (
 const (
 	PgStatUserIndexesName     = "pg_stat_user_indexes"
 	PgStatUserIndexesInterval = 1 * time.Minute
+
+	// PgStatUserIndexesCategoryLimit caps each activity category in the UNION
+	// query. See PgStatUserTablesCategoryLimit for rationale.
+	PgStatUserIndexesCategoryLimit = 200
 )
 
-const pgStatUserIndexesQuery = `SELECT * FROM pg_stat_user_indexes`
+// pgStatUserIndexesQuery samples the most interesting indexes from three
+// complementary perspectives:
+//
+//  1. Scan count (idx_scan) — the most-used indexes, directly relevant for
+//     performance analysis and index recommendation.
+//
+//  2. Rows returned (idx_tup_read) — indexes doing the most work per scan.
+//     A low-scan but high-tup-read index may indicate expensive range scans
+//     worth investigating.
+//
+//  3. Unused indexes (idx_scan = 0, then by idx_tup_read) — indexes that
+//     have never been scanned are candidates for dropping to reduce write
+//     overhead and bloat. These would be missed entirely by scan-based
+//     ordering alone.
+//
+// UNION deduplicates across categories automatically.
+var pgStatUserIndexesQuery = fmt.Sprintf(`
+SELECT * FROM pg_stat_user_indexes ORDER BY COALESCE(idx_scan,0) DESC LIMIT %d
+UNION
+SELECT * FROM pg_stat_user_indexes ORDER BY COALESCE(idx_tup_read,0) DESC LIMIT %d
+UNION
+SELECT * FROM pg_stat_user_indexes WHERE COALESCE(idx_scan,0) = 0 ORDER BY COALESCE(idx_tup_read,0) DESC LIMIT %d
+`, PgStatUserIndexesCategoryLimit, PgStatUserIndexesCategoryLimit, PgStatUserIndexesCategoryLimit)
 
 func CollectPgStatUserIndexes(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatUserIndexesRow, error) {
 	return CollectView[PgStatUserIndexesRow](pgPool, ctx, pgStatUserIndexesQuery, "pg_stat_user_indexes")
