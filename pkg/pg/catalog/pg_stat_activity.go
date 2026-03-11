@@ -15,7 +15,7 @@ const (
 	PgStatActivityInterval = 1 * time.Minute
 )
 
-const pgStatActivityQuery = `SELECT * FROM pg_stat_activity`
+const pgStatActivityQuery = `SELECT * FROM pg_stat_activity WHERE datname = current_database()`
 
 func CollectPgStatActivity(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatActivityRow, error) {
 	return CollectView[PgStatActivityRow](pgPool, ctx, pgStatActivityQuery, "pg_stat_activity")

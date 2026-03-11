@@ -15,7 +15,7 @@ const (
 	PgStatDatabaseConflictsInterval = 1 * time.Minute
 )
 
-const pgStatDatabaseConflictsQuery = `SELECT * FROM pg_stat_database_conflicts`
+const pgStatDatabaseConflictsQuery = `SELECT * FROM pg_stat_database_conflicts WHERE datname = current_database()`
 
 func CollectPgStatDatabaseConflicts(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatDatabaseConflictsRow, error) {
 	return CollectView[PgStatDatabaseConflictsRow](pgPool, ctx, pgStatDatabaseConflictsQuery, "pg_stat_database_conflicts")

@@ -15,7 +15,7 @@ const (
 	PgStatProgressAnalyzeInterval = 30 * time.Second
 )
 
-const pgStatProgressAnalyzeQuery = `SELECT * FROM pg_stat_progress_analyze`
+const pgStatProgressAnalyzeQuery = `SELECT * FROM pg_stat_progress_analyze WHERE datname = current_database()`
 
 // PgStatProgressAnalyzeRow represents a row from pg_stat_progress_analyze (PG 13+).
 type PgStatProgressAnalyzeRow struct {
