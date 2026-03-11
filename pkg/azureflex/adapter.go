@@ -310,44 +310,17 @@ func (adapter *AzureFlexAdapter) Guardrails(ctx context.Context) *guardrails.Sig
 }
 
 func (adapter *AzureFlexAdapter) Collectors() []agent.MetricCollector {
-	pool := adapter.PGPool
-	collectors := []agent.MetricCollector{
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pool, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pool),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pool),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pool),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pool),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pool),
-		},
-
-
-		{
+	collectors := pg.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
+	return append(collectors,
+		agent.MetricCollector{
 			Key:       "cpu_utilization",
 			Collector: AsCollector(CPUUtilization(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName), metrics.NodeCPUUsage),
 		},
-		{
+		agent.MetricCollector{
 			Key:       "memory_used",
 			Collector: AsCollector(MemoryPercent(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName), metrics.NodeMemoryUsedPercentage),
 		},
-	}
-	return collectors
+	)
 }
 
 func AsCollector(metricGetter func() (float64, error), metric metrics.MetricDef) func(ctx context.Context, metric_state *agent.MetricsState) error {

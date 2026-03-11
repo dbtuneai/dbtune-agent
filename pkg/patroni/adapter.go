@@ -826,34 +826,9 @@ func (adapter *PatroniAdapter) Guardrails(ctx context.Context) *guardrails.Signa
 }
 
 func (adapter *PatroniAdapter) Collectors() []agent.MetricCollector {
-	pool := adapter.PGDriver
-	collectors := []agent.MetricCollector{
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pool, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pool),
-		},
-
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pool),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pool),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pool),
-		},
-		{
-			Key:       "hardware",
-			Collector: HardwareInfoPatroni(),
-		},
-	}
-
-	return collectors
+	collectors := pg.DefaultMetricCollectors(adapter.PGDriver, adapter.pgConfig)
+	return append(collectors, agent.MetricCollector{
+		Key:       "hardware",
+		Collector: HardwareInfoPatroni(),
+	})
 }

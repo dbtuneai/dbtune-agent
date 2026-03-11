@@ -65,38 +65,11 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 }
 
 func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollector {
-	pgDriver := pgAdapter.PGPool
-	collectors := []agent.MetricCollector{
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pgDriver, pgAdapter.pgConfig.IncludeQueries, pgAdapter.pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pgDriver),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pgDriver),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pgDriver),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pgDriver),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pgDriver),
-		},
-		{
-			Key:       "hardware",
-			Collector: HardwareInfoOnPremise(),
-		},
-	}
-	return collectors
+	collectors := pg.DefaultMetricCollectors(pgAdapter.PGPool, pgAdapter.pgConfig)
+	return append(collectors, agent.MetricCollector{
+		Key:       "hardware",
+		Collector: HardwareInfoOnPremise(),
+	})
 }
 
 func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
