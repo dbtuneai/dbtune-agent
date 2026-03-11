@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/metrics"
 
 	"github.com/sirupsen/logrus"
 )
@@ -175,12 +176,29 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	// Catalog view collection goroutines — all follow the same get→send pattern.
 	for _, c := range adapter.CatalogCollectors() {
 		c := c
+		var lastHash string
 		go runWithTicker(ctx, c.Interval, c.Name, logger, false, func(ctx context.Context) error {
 			data, err := c.Collect(ctx)
 			if err != nil {
 				return handleGetError(ctx, adapter, logger, c.Name, err)
 			}
 			if data == nil {
+				return nil
+			}
+			if c.SkipUnchanged {
+				hash, err := metrics.HashJSON(data)
+				if err != nil {
+					logger.Warnf("%s: hash failed, sending anyway: %v", c.Name, err)
+				} else if hash == lastHash {
+					logger.Debugf("%s: unchanged, skipping send", c.Name)
+					return nil
+				}
+				if err := adapter.SendCatalogPayload(ctx, c.Name, data); err != nil {
+					return err
+				}
+				if hash != "" {
+					lastHash = hash
+				}
 				return nil
 			}
 			return adapter.SendCatalogPayload(ctx, c.Name, data)

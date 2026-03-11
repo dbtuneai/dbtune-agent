@@ -117,9 +117,10 @@ type ProposedConfigResponse struct {
 
 // CatalogCollector defines a periodic catalog collection task.
 type CatalogCollector struct {
-	Name     string
-	Interval time.Duration
-	Collect  func(ctx context.Context) (any, error)
+	Name          string
+	Interval      time.Duration
+	Collect       func(ctx context.Context) (any, error)
+	SkipUnchanged bool // When true, skip send if JSON hash matches previous
 }
 
 type AgentLooper interface {

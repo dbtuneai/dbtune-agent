@@ -13,28 +13,10 @@ const (
 	PgStatReplicationInterval = 1 * time.Minute
 )
 
-const pgStatReplicationQuery = `
-SELECT
-    pid, usesysid, usename, application_name,
-    client_addr::text AS client_addr,
-    client_hostname, client_port,
-    backend_start::text AS backend_start,
-    backend_xmin::text AS backend_xmin,
-    state,
-    sent_lsn::text AS sent_lsn,
-    write_lsn::text AS write_lsn,
-    flush_lsn::text AS flush_lsn,
-    replay_lsn::text AS replay_lsn,
-    write_lag::text AS write_lag,
-    flush_lag::text AS flush_lag,
-    replay_lag::text AS replay_lag,
-    sync_priority, sync_state,
-    reply_time::text AS reply_time
-FROM pg_stat_replication
-`
+const pgStatReplicationQuery = `SELECT * FROM pg_stat_replication`
 
-func CollectPgStatReplication(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatReplicationRow, error) {
-	return CollectView[agent.PgStatReplicationRow](pgPool, ctx, pgStatReplicationQuery, "pg_stat_replication")
+func CollectPgStatReplication(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatReplicationRow, error) {
+	return CollectView[PgStatReplicationRow](pgPool, ctx, pgStatReplicationQuery, "pg_stat_replication")
 }
 
 func NewPgStatReplicationCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
@@ -50,7 +32,35 @@ func NewPgStatReplicationCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) ag
 			if err != nil {
 				return nil, err
 			}
-			return &agent.PgStatReplicationPayload{Rows: rows}, nil
+			return &PgStatReplicationPayload{Rows: rows}, nil
 		},
 	}
+}
+
+// PgStatReplicationRow represents a row from pg_stat_replication.
+type PgStatReplicationRow struct {
+	PID             *int64  `json:"pid" db:"pid"`
+	UseSysID        *int64  `json:"usesysid" db:"usesysid"`
+	UseName         *string `json:"usename" db:"usename"`
+	ApplicationName *string `json:"application_name" db:"application_name"`
+	ClientAddr      *string `json:"client_addr" db:"client_addr"`
+	ClientHostname  *string `json:"client_hostname" db:"client_hostname"`
+	ClientPort      *int64  `json:"client_port" db:"client_port"`
+	BackendStart    *string `json:"backend_start" db:"backend_start"`
+	BackendXmin     *string `json:"backend_xmin" db:"backend_xmin"`
+	State           *string `json:"state" db:"state"`
+	SentLsn         *string `json:"sent_lsn" db:"sent_lsn"`
+	WriteLsn        *string `json:"write_lsn" db:"write_lsn"`
+	FlushLsn        *string `json:"flush_lsn" db:"flush_lsn"`
+	ReplayLsn       *string `json:"replay_lsn" db:"replay_lsn"`
+	WriteLag        *string `json:"write_lag" db:"write_lag"`
+	FlushLag        *string `json:"flush_lag" db:"flush_lag"`
+	ReplayLag       *string `json:"replay_lag" db:"replay_lag"`
+	SyncPriority    *int64  `json:"sync_priority" db:"sync_priority"`
+	SyncState       *string `json:"sync_state" db:"sync_state"`
+	ReplyTime       *string `json:"reply_time" db:"reply_time"`
+}
+
+type PgStatReplicationPayload struct {
+	Rows []PgStatReplicationRow `json:"rows"`
 }

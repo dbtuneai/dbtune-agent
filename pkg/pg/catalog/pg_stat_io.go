@@ -13,25 +13,14 @@ const (
 	PgStatIOInterval = 1 * time.Minute
 )
 
-// PG 16+ only. Uses to_jsonb for op_bytes which was removed in PG 18.
-const pgStatIOQuery = `
-SELECT
-    backend_type, object, context,
-    reads, read_time, writes, write_time,
-    writebacks, writeback_time,
-    extends, extend_time,
-    (to_jsonb(io) ->> 'op_bytes')::bigint AS op_bytes,
-    hits, evictions, reuses,
-    fsyncs, fsync_time,
-    stats_reset::text AS stats_reset
-FROM pg_stat_io io
-`
+// PG 16+ only.
+const pgStatIOQuery = `SELECT * FROM pg_stat_io`
 
-func CollectPgStatIO(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion int) ([]agent.PgStatIORow, error) {
+func CollectPgStatIO(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion int) ([]PgStatIORow, error) {
 	if pgMajorVersion < 16 {
 		return nil, nil
 	}
-	return CollectView[agent.PgStatIORow](pgPool, ctx, pgStatIOQuery, "pg_stat_io")
+	return CollectView[PgStatIORow](pgPool, ctx, pgStatIOQuery, "pg_stat_io")
 }
 
 func NewPgStatIOCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) agent.CatalogCollector {
@@ -50,7 +39,33 @@ func NewPgStatIOCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVers
 			if rows == nil {
 				return nil, nil
 			}
-			return &agent.PgStatIOPayload{Rows: rows}, nil
+			return &PgStatIOPayload{Rows: rows}, nil
 		},
 	}
+}
+
+// PgStatIORow represents a row from pg_stat_io (PG 16+).
+type PgStatIORow struct {
+	BackendType   *string  `json:"backend_type" db:"backend_type"`
+	Object        *string  `json:"object" db:"object"`
+	Context       *string  `json:"context" db:"context"`
+	Reads         *int64   `json:"reads" db:"reads"`
+	ReadTime      *float64 `json:"read_time" db:"read_time"`
+	Writes        *int64   `json:"writes" db:"writes"`
+	WriteTime     *float64 `json:"write_time" db:"write_time"`
+	Writebacks    *int64   `json:"writebacks" db:"writebacks"`
+	WritebackTime *float64 `json:"writeback_time" db:"writeback_time"`
+	Extends       *int64   `json:"extends" db:"extends"`
+	ExtendTime    *float64 `json:"extend_time" db:"extend_time"`
+	OpBytes       *int64   `json:"op_bytes" db:"op_bytes"`
+	Hits          *int64   `json:"hits" db:"hits"`
+	Evictions     *int64   `json:"evictions" db:"evictions"`
+	Reuses        *int64   `json:"reuses" db:"reuses"`
+	Fsyncs        *int64   `json:"fsyncs" db:"fsyncs"`
+	FsyncTime     *float64 `json:"fsync_time" db:"fsync_time"`
+	StatsReset    *string  `json:"stats_reset" db:"stats_reset"`
+}
+
+type PgStatIOPayload struct {
+	Rows []PgStatIORow `json:"rows"`
 }

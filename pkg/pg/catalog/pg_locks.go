@@ -14,36 +14,43 @@ const (
 )
 
 // Filtered to only blocked locks + their blockers via pg_blocking_pids().
-// waitstart is PG14+ so we use to_jsonb to safely extract it.
 const pgLocksQuery = `
 WITH blocked AS (
     SELECT pid AS blocked_pid, unnest(pg_blocking_pids(pid)) AS blocking_pid
     FROM pg_locks
     WHERE NOT granted
 )
-SELECT
-    l.locktype,
-    l.database,
-    l.relation,
-    l.page,
-    l.tuple,
-    l.virtualxid::text AS virtualxid,
-    l.transactionid::text AS transactionid,
-    l.classid,
-    l.objid,
-    l.objsubid,
-    l.virtualtransaction,
-    l.pid,
-    l.mode,
-    l.granted,
-    l.fastpath,
-    (to_jsonb(l) ->> 'waitstart') AS waitstart
+SELECT l.*
 FROM pg_locks l
 WHERE l.pid IN (SELECT blocked_pid FROM blocked UNION SELECT blocking_pid FROM blocked)
 `
 
-func CollectPgLocks(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgLocksRow, error) {
-	return CollectView[agent.PgLocksRow](pgPool, ctx, pgLocksQuery, "pg_locks")
+// PgLocksRow represents a filtered row from pg_locks (blocked + blockers only).
+type PgLocksRow struct {
+	LockType           *string `json:"locktype" db:"locktype"`
+	Database           *int64  `json:"database" db:"database"`
+	Relation           *int64  `json:"relation" db:"relation"`
+	Page               *int64  `json:"page" db:"page"`
+	Tuple              *int64  `json:"tuple" db:"tuple"`
+	VirtualXID         *string `json:"virtualxid" db:"virtualxid"`
+	TransactionID      *string `json:"transactionid" db:"transactionid"`
+	ClassID            *int64  `json:"classid" db:"classid"`
+	ObjID              *int64  `json:"objid" db:"objid"`
+	ObjSubID           *int64  `json:"objsubid" db:"objsubid"`
+	VirtualTransaction *string `json:"virtualtransaction" db:"virtualtransaction"`
+	PID                *int64  `json:"pid" db:"pid"`
+	Mode               *string `json:"mode" db:"mode"`
+	Granted            *bool   `json:"granted" db:"granted"`
+	FastPath           *bool   `json:"fastpath" db:"fastpath"`
+	WaitStart          *string `json:"waitstart" db:"waitstart"`
+}
+
+type PgLocksPayload struct {
+	Rows []PgLocksRow `json:"rows"`
+}
+
+func CollectPgLocks(pgPool *pgxpool.Pool, ctx context.Context) ([]PgLocksRow, error) {
+	return CollectView[PgLocksRow](pgPool, ctx, pgLocksQuery, "pg_locks")
 }
 
 func NewPgLocksCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
@@ -59,7 +66,7 @@ func NewPgLocksCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.Catalo
 			if err != nil {
 				return nil, err
 			}
-			return &agent.PgLocksPayload{Rows: rows}, nil
+			return &PgLocksPayload{Rows: rows}, nil
 		},
 	}
 }

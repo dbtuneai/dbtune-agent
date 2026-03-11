@@ -140,6 +140,114 @@ func setupCatalogMocksError(m *MockAgentLooper) {
 	})
 }
 
+// Test SkipUnchanged dedup behavior for catalog collectors
+func TestCatalogSkipUnchanged(t *testing.T) {
+	t.Run("identical data only sends once", func(t *testing.T) {
+		logger := logrus.New()
+		logger.SetOutput(io.Discard)
+
+		var sendCount int
+		var mu sync.Mutex
+
+		mockAgent := new(MockAgentLooper)
+		mockAgent.On("Logger").Return(logger)
+		mockAgent.On("SendHeartbeat", mock.Anything).Return(nil)
+		mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
+		mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
+		mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
+		mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
+		mockAgent.On("GetDDL", mock.Anything).Return(&agent.DDLPayload{Hash: "abc123"}, nil)
+		mockAgent.On("SendDDL", mock.Anything, mock.Anything).Return(nil)
+		mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+		mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+		mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
+		mockAgent.On("Guardrails", mock.Anything).Return(nil)
+
+		// Return identical data every tick, with SkipUnchanged enabled
+		mockAgent.On("CatalogCollectors").Return([]agent.CatalogCollector{
+			{
+				Name:          "test_dedup",
+				Interval:      10 * time.Millisecond,
+				SkipUnchanged: true,
+				Collect: func(ctx context.Context) (any, error) {
+					return map[string]string{"key": "same_value"}, nil
+				},
+			},
+		})
+		mockAgent.On("SendCatalogPayload", mock.Anything, "test_dedup", mock.Anything).
+			Run(func(args mock.Arguments) {
+				mu.Lock()
+				sendCount++
+				mu.Unlock()
+			}).Return(nil)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		go Runner(ctx, mockAgent)
+		time.Sleep(200 * time.Millisecond)
+
+		mu.Lock()
+		defer mu.Unlock()
+		assert.Equal(t, 1, sendCount, "SendCatalogPayload should be called exactly once for identical data")
+	})
+
+	t.Run("changed data sends again", func(t *testing.T) {
+		logger := logrus.New()
+		logger.SetOutput(io.Discard)
+
+		var sendCount int
+		var callCount int
+		var mu sync.Mutex
+
+		mockAgent := new(MockAgentLooper)
+		mockAgent.On("Logger").Return(logger)
+		mockAgent.On("SendHeartbeat", mock.Anything).Return(nil)
+		mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
+		mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
+		mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
+		mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
+		mockAgent.On("GetDDL", mock.Anything).Return(&agent.DDLPayload{Hash: "abc123"}, nil)
+		mockAgent.On("SendDDL", mock.Anything, mock.Anything).Return(nil)
+		mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+		mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+		mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
+		mockAgent.On("Guardrails", mock.Anything).Return(nil)
+
+		// Return different data on each call
+		mockAgent.On("CatalogCollectors").Return([]agent.CatalogCollector{
+			{
+				Name:          "test_dedup_change",
+				Interval:      10 * time.Millisecond,
+				SkipUnchanged: true,
+				Collect: func(ctx context.Context) (any, error) {
+					mu.Lock()
+					callCount++
+					n := callCount
+					mu.Unlock()
+					return map[string]int{"counter": n}, nil
+				},
+			},
+		})
+		mockAgent.On("SendCatalogPayload", mock.Anything, "test_dedup_change", mock.Anything).
+			Run(func(args mock.Arguments) {
+				mu.Lock()
+				sendCount++
+				mu.Unlock()
+			}).Return(nil)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		go Runner(ctx, mockAgent)
+		time.Sleep(200 * time.Millisecond)
+
+		mu.Lock()
+		defer mu.Unlock()
+		assert.Greater(t, sendCount, 1, "SendCatalogPayload should be called multiple times when data changes")
+	})
+}
+
 // Test runWithTicker function
 func TestRunWithTicker(t *testing.T) {
 	logger := logrus.New()
@@ -371,60 +479,6 @@ func (s *stubAgentLooper) Guardrails(ctx context.Context) *guardrails.Signal {
 
 func (s *stubAgentLooper) GetDDL(ctx context.Context) (*agent.DDLPayload, error) {
 	return &agent.DDLPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatistic(ctx context.Context) (*agent.PgStatsPayload, error) {
-	return &agent.PgStatsPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatUserTables(ctx context.Context) (*agent.PgStatUserTablePayload, error) {
-	return &agent.PgStatUserTablePayload{}, nil
-}
-func (s *stubAgentLooper) GetPgClass(ctx context.Context) (*agent.PgClassPayload, error) {
-	return &agent.PgClassPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatActivity(ctx context.Context) (*agent.PgStatActivityPayload, error) {
-	return &agent.PgStatActivityPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatDatabaseAll(ctx context.Context) (*agent.PgStatDatabasePayload, error) {
-	return &agent.PgStatDatabasePayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatDatabaseConflicts(ctx context.Context) (*agent.PgStatDatabaseConflictsPayload, error) {
-	return &agent.PgStatDatabaseConflictsPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatArchiver(ctx context.Context) (*agent.PgStatArchiverPayload, error) {
-	return &agent.PgStatArchiverPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatBgwriterAll(ctx context.Context) (*agent.PgStatBgwriterPayload, error) {
-	return &agent.PgStatBgwriterPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatCheckpointerAll(ctx context.Context) (*agent.PgStatCheckpointerPayload, error) {
-	return &agent.PgStatCheckpointerPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatWalAll(ctx context.Context) (*agent.PgStatWalPayload, error) {
-	return &agent.PgStatWalPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatIO(ctx context.Context) (*agent.PgStatIOPayload, error) {
-	return &agent.PgStatIOPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatReplication(ctx context.Context) (*agent.PgStatReplicationPayload, error) {
-	return &agent.PgStatReplicationPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatReplicationSlots(ctx context.Context) (*agent.PgStatReplicationSlotsPayload, error) {
-	return &agent.PgStatReplicationSlotsPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatSlru(ctx context.Context) (*agent.PgStatSlruPayload, error) {
-	return &agent.PgStatSlruPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatUserIndexes(ctx context.Context) (*agent.PgStatUserIndexesPayload, error) {
-	return &agent.PgStatUserIndexesPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatioUserTables(ctx context.Context) (*agent.PgStatioUserTablesPayload, error) {
-	return &agent.PgStatioUserTablesPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatioUserIndexes(ctx context.Context) (*agent.PgStatioUserIndexesPayload, error) {
-	return &agent.PgStatioUserIndexesPayload{}, nil
-}
-func (s *stubAgentLooper) GetPgStatUserFunctions(ctx context.Context) (*agent.PgStatUserFunctionsPayload, error) {
-	return &agent.PgStatUserFunctionsPayload{}, nil
 }
 func (s *stubAgentLooper) CatalogCollectors() []agent.CatalogCollector {
 	return nil

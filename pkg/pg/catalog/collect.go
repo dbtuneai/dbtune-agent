@@ -3,8 +3,11 @@ package catalog
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"sync"
 	"time"
 
+	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,9 +30,27 @@ func EnsureTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, DefaultQueryTimeout)
 }
 
+// scannerCache stores one *pgxutil.Scanner per struct type, created on first use.
+var scannerCache sync.Map // reflect.Type → *pgxutil.Scanner[T] (stored as any)
+
+// getScanner returns the cached Scanner for type T, creating it on first access.
+func getScanner[T any]() *pgxutil.Scanner[T] {
+	var zero T
+	t := reflect.TypeOf(zero)
+
+	if v, ok := scannerCache.Load(t); ok {
+		return v.(*pgxutil.Scanner[T])
+	}
+
+	s := pgxutil.NewScanner[T]()
+	actual, _ := scannerCache.LoadOrStore(t, s)
+	return actual.(*pgxutil.Scanner[T])
+}
+
 // CollectView is a generic helper that queries a pg catalog view and scans
-// the results into a slice of structs using pgx.RowToStructByNameLax.
-// This eliminates boilerplate for the common pattern of query → scan → return.
+// the results into a slice of structs. It uses a cached Scanner that
+// pre-computes struct reflection once per type and caches column-to-field
+// mappings per column layout, making it safe across PG version changes.
 func CollectView[T any](pool *pgxpool.Pool, ctx context.Context, query string, viewName string) ([]T, error) {
 	ctx, cancel := EnsureTimeout(ctx)
 	defer cancel()
@@ -38,5 +59,7 @@ func CollectView[T any](pool *pgxpool.Pool, ctx context.Context, query string, v
 		return nil, fmt.Errorf("failed to query %s: %w", viewName, err)
 	}
 	defer rows.Close()
-	return pgx.CollectRows(rows, pgx.RowToStructByNameLax[T])
+
+	scanner := getScanner[T]()
+	return pgx.CollectRows(rows, scanner.Scan)
 }

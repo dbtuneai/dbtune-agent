@@ -13,26 +13,35 @@ const (
 	PgReplicationSlotsInterval = 1 * time.Minute
 )
 
-// two_phase/conflicting are PG15+, invalidation_reason is PG17+.
-// Use to_jsonb to safely extract them on older versions.
-const pgReplicationSlotsQuery = `
-SELECT
-    slot_name, plugin, slot_type,
-    datoid, database,
-    temporary, active, active_pid,
-    xmin::text AS xmin,
-    catalog_xmin::text AS catalog_xmin,
-    restart_lsn::text AS restart_lsn,
-    confirmed_flush_lsn::text AS confirmed_flush_lsn,
-    wal_status, safe_wal_size,
-    (to_jsonb(s) ->> 'two_phase') AS two_phase,
-    (to_jsonb(s) ->> 'conflicting') AS conflicting,
-    (to_jsonb(s) ->> 'invalidation_reason') AS invalidation_reason
-FROM pg_replication_slots s
-`
+const pgReplicationSlotsQuery = `SELECT * FROM pg_replication_slots`
 
-func CollectPgReplicationSlots(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgReplicationSlotsRow, error) {
-	return CollectView[agent.PgReplicationSlotsRow](pgPool, ctx, pgReplicationSlotsQuery, "pg_replication_slots")
+// PgReplicationSlotsRow represents a row from pg_replication_slots.
+type PgReplicationSlotsRow struct {
+	SlotName           *string `json:"slot_name" db:"slot_name"`
+	Plugin             *string `json:"plugin" db:"plugin"`
+	SlotType           *string `json:"slot_type" db:"slot_type"`
+	DatOID             *int64  `json:"datoid" db:"datoid"`
+	Database           *string `json:"database" db:"database"`
+	Temporary          *bool   `json:"temporary" db:"temporary"`
+	Active             *bool   `json:"active" db:"active"`
+	ActivePID          *int64  `json:"active_pid" db:"active_pid"`
+	Xmin               *string `json:"xmin" db:"xmin"`
+	CatalogXmin        *string `json:"catalog_xmin" db:"catalog_xmin"`
+	RestartLsn         *string `json:"restart_lsn" db:"restart_lsn"`
+	ConfirmedFlushLsn  *string `json:"confirmed_flush_lsn" db:"confirmed_flush_lsn"`
+	WalStatus          *string `json:"wal_status" db:"wal_status"`
+	SafeWalSize        *int64  `json:"safe_wal_size" db:"safe_wal_size"`
+	TwoPhase           *string `json:"two_phase" db:"two_phase"`
+	Conflicting        *string `json:"conflicting" db:"conflicting"`
+	InvalidationReason *string `json:"invalidation_reason" db:"invalidation_reason"`
+}
+
+type PgReplicationSlotsPayload struct {
+	Rows []PgReplicationSlotsRow `json:"rows"`
+}
+
+func CollectPgReplicationSlots(pgPool *pgxpool.Pool, ctx context.Context) ([]PgReplicationSlotsRow, error) {
+	return CollectView[PgReplicationSlotsRow](pgPool, ctx, pgReplicationSlotsQuery, "pg_replication_slots")
 }
 
 func NewPgReplicationSlotsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
@@ -48,7 +57,7 @@ func NewPgReplicationSlotsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) a
 			if err != nil {
 				return nil, err
 			}
-			return &agent.PgReplicationSlotsPayload{Rows: rows}, nil
+			return &PgReplicationSlotsPayload{Rows: rows}, nil
 		},
 	}
 }

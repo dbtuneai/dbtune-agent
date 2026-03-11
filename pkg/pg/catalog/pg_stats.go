@@ -12,6 +12,30 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// PgStatsRow represents a single row from the pg_stats view,
+// matching the backend's PgStats Django model.
+type PgStatsRow struct {
+	SchemaName          string          `json:"schemaname"`
+	TableName           string          `json:"tablename"`
+	AttName             string          `json:"attname"`
+	Inherited           bool            `json:"inherited"`
+	NullFrac            *float64        `json:"null_frac"`
+	AvgWidth            *int            `json:"avg_width"`
+	NDistinct           *float64        `json:"n_distinct"`
+	MostCommonVals      json.RawMessage `json:"most_common_vals"`
+	MostCommonFreqs     json.RawMessage `json:"most_common_freqs"`
+	HistogramBounds     json.RawMessage `json:"histogram_bounds"`
+	Correlation         *float64        `json:"correlation"`
+	MostCommonElems     json.RawMessage `json:"most_common_elems"`
+	MostCommonElemFreqs json.RawMessage `json:"most_common_elem_freqs"`
+	ElemCountHistogram  json.RawMessage `json:"elem_count_histogram"`
+}
+
+// PgStatsPayload is the JSON body POSTed to /api/v1/agent/pg_stats.
+type PgStatsPayload struct {
+	Rows []PgStatsRow `json:"rows"`
+}
+
 const (
 	PgStatsName     = "pg_stats"
 	PgStatsInterval = 1 * time.Minute
@@ -50,7 +74,7 @@ ORDER BY schemaname, tablename, attname;
 // CollectPgStats queries the pg_stats view and returns rows for the backend.
 // This uses custom scanning because pg_stats has anyarray columns that cannot
 // be directly scanned by pgx.RowToStructByNameLax.
-func CollectPgStats(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatsRow, error) {
+func CollectPgStats(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatsRow, error) {
 	ctx, cancel := EnsureTimeout(ctx)
 	defer cancel()
 	rows, err := utils.QueryWithPrefix(pgPool, ctx, pgStatsQuery)
@@ -59,10 +83,10 @@ func CollectPgStats(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatsR
 	}
 	defer rows.Close()
 
-	result := make([]agent.PgStatsRow, 0)
+	result := make([]PgStatsRow, 0)
 
 	for rows.Next() {
-		var r agent.PgStatsRow
+		var r PgStatsRow
 		var (
 			mostCommonVals      *string
 			mostCommonFreqs     *string
@@ -146,8 +170,9 @@ func pgArrayToJSON(s *string) json.RawMessage {
 
 func NewPgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
 	return agent.CatalogCollector{
-		Name:     PgStatsName,
-		Interval: PgStatsInterval,
+		Name:          PgStatsName,
+		Interval:      PgStatsInterval,
+		SkipUnchanged: true,
 		Collect: func(ctx context.Context) (any, error) {
 			ctx, err := prepareCtx(ctx)
 			if err != nil {
@@ -157,7 +182,7 @@ func NewPgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.Catalo
 			if err != nil {
 				return nil, err
 			}
-			return &agent.PgStatsPayload{Rows: rows}, nil
+			return &PgStatsPayload{Rows: rows}, nil
 		},
 	}
 }
