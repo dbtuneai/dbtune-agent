@@ -211,6 +211,42 @@ func TestPgStatsCollector(t *testing.T) {
 	}
 }
 
+func TestPgArrayToJSON(t *testing.T) {
+	t.Run("nil input returns nil", func(t *testing.T) {
+		result, err := pgArrayToJSON(nil)
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("valid pg array", func(t *testing.T) {
+		s := "{foo,bar,baz}"
+		result, err := pgArrayToJSON(&s)
+		require.NoError(t, err)
+		assert.JSONEq(t, `["foo","bar","baz"]`, string(result))
+	})
+
+	t.Run("valid pg array with quoted elements", func(t *testing.T) {
+		s := `{foo,"bar baz",qux}`
+		result, err := pgArrayToJSON(&s)
+		require.NoError(t, err)
+		assert.JSONEq(t, `["foo","bar baz","qux"]`, string(result))
+	})
+
+	t.Run("valid json passthrough", func(t *testing.T) {
+		s := `["already","json"]`
+		result, err := pgArrayToJSON(&s)
+		require.NoError(t, err)
+		assert.JSONEq(t, `["already","json"]`, string(result))
+	})
+
+	t.Run("unparseable input returns error", func(t *testing.T) {
+		s := "not a valid array or json"
+		result, err := pgArrayToJSON(&s)
+		assert.Error(t, err)
+		assert.Nil(t, result)
+	})
+}
+
 func TestPgStatsQueryModeConstructors(t *testing.T) {
 	t.Run("backfill query", func(t *testing.T) {
 		q := PgStatsBackfillQuery(100, 200)
