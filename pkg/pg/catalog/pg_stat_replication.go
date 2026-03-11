@@ -2,9 +2,15 @@ package catalog
 
 import (
 	"context"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	PgStatReplicationName     = "pg_stat_replication"
+	PgStatReplicationInterval = 1 * time.Minute
 )
 
 const pgStatReplicationQuery = `
@@ -29,4 +35,22 @@ FROM pg_stat_replication
 
 func CollectPgStatReplication(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatReplicationRow, error) {
 	return CollectView[agent.PgStatReplicationRow](pgPool, ctx, pgStatReplicationQuery, "pg_stat_replication")
+}
+
+func NewPgStatReplicationCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
+	return agent.CatalogCollector{
+		Name:     PgStatReplicationName,
+		Interval: PgStatReplicationInterval,
+		Collect: func(ctx context.Context) (any, error) {
+			ctx, err := prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := CollectPgStatReplication(pool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgStatReplicationPayload{Rows: rows}, nil
+		},
+	}
 }

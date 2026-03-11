@@ -2,11 +2,17 @@ package catalog
 
 import (
 	"context"
+	"time"
 	"fmt"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	PgClassName     = "pg_class"
+	PgClassInterval = 1 * time.Minute
 )
 
 // pgClassQuery reads reltuples and relpages from pg_class for user tables.
@@ -55,4 +61,22 @@ func CollectPgClass(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgClassR
 	}
 
 	return result, nil
+}
+
+func NewPgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
+	return agent.CatalogCollector{
+		Name:     PgClassName,
+		Interval: PgClassInterval,
+		Collect: func(ctx context.Context) (any, error) {
+			ctx, err := prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := CollectPgClass(pool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgClassPayload{Rows: rows}, nil
+		},
+	}
 }

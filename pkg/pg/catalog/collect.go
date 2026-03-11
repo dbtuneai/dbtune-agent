@@ -10,6 +10,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// PrepareCtx is a hook called before each catalog query to allow adapters
+// (e.g. CNPG, Patroni) to perform failover checks or replace the context.
+type PrepareCtx func(ctx context.Context) (context.Context, error)
+
 // DefaultQueryTimeout is the maximum time allowed for a single catalog query.
 // This prevents stuck queries (e.g., due to lock contention) from hanging goroutines forever.
 const DefaultQueryTimeout = 30 * time.Second

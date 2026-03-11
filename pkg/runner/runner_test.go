@@ -372,8 +372,8 @@ func (s *stubAgentLooper) Guardrails(ctx context.Context) *guardrails.Signal {
 func (s *stubAgentLooper) GetDDL(ctx context.Context) (*agent.DDLPayload, error) {
 	return &agent.DDLPayload{}, nil
 }
-func (s *stubAgentLooper) GetPgStatistic(ctx context.Context) (*agent.PgStatisticPayload, error) {
-	return &agent.PgStatisticPayload{}, nil
+func (s *stubAgentLooper) GetPgStatistic(ctx context.Context) (*agent.PgStatsPayload, error) {
+	return &agent.PgStatsPayload{}, nil
 }
 func (s *stubAgentLooper) GetPgStatUserTables(ctx context.Context) (*agent.PgStatUserTablePayload, error) {
 	return &agent.PgStatUserTablePayload{}, nil
@@ -425,6 +425,12 @@ func (s *stubAgentLooper) GetPgStatioUserIndexes(ctx context.Context) (*agent.Pg
 }
 func (s *stubAgentLooper) GetPgStatUserFunctions(ctx context.Context) (*agent.PgStatUserFunctionsPayload, error) {
 	return &agent.PgStatUserFunctionsPayload{}, nil
+}
+func (s *stubAgentLooper) CatalogCollectors() []agent.CatalogCollector {
+	return nil
+}
+func (s *stubAgentLooper) SendCatalogPayload(ctx context.Context, name string, payload any) error {
+	return nil
 }
 
 func createStubAgentLooper(rt http.RoundTripper) *stubAgentLooper {

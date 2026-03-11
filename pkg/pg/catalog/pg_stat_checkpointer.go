@@ -2,9 +2,15 @@ package catalog
 
 import (
 	"context"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	PgStatCheckpointerName     = "pg_stat_checkpointer"
+	PgStatCheckpointerInterval = 1 * time.Minute
 )
 
 // PG 17+ only.
@@ -23,4 +29,25 @@ func CollectPgStatCheckpointer(pgPool *pgxpool.Pool, ctx context.Context, pgMajo
 		return nil, nil
 	}
 	return CollectView[agent.PgStatCheckpointerRow](pgPool, ctx, pgStatCheckpointerQuery, "pg_stat_checkpointer")
+}
+
+func NewPgStatCheckpointerCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) agent.CatalogCollector {
+	return agent.CatalogCollector{
+		Name:     PgStatCheckpointerName,
+		Interval: PgStatCheckpointerInterval,
+		Collect: func(ctx context.Context) (any, error) {
+			ctx, err := prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := CollectPgStatCheckpointer(pool, ctx, pgMajorVersion)
+			if err != nil {
+				return nil, err
+			}
+			if rows == nil {
+				return nil, nil
+			}
+			return &agent.PgStatCheckpointerPayload{Rows: rows}, nil
+		},
+	}
 }

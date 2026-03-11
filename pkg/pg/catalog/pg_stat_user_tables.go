@@ -2,9 +2,15 @@ package catalog
 
 import (
 	"context"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	PgStatUserTablesName     = "pg_stat_user_tables"
+	PgStatUserTablesInterval = 1 * time.Minute
 )
 
 const pgStatUserTablesQuery = `
@@ -33,4 +39,22 @@ ORDER BY schemaname, relname
 
 func CollectPgStatUserTables(pgPool *pgxpool.Pool, ctx context.Context) ([]agent.PgStatUserTableRow, error) {
 	return CollectView[agent.PgStatUserTableRow](pgPool, ctx, pgStatUserTablesQuery, "pg_stat_user_tables")
+}
+
+func NewPgStatUserTablesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.CatalogCollector {
+	return agent.CatalogCollector{
+		Name:     PgStatUserTablesName,
+		Interval: PgStatUserTablesInterval,
+		Collect: func(ctx context.Context) (any, error) {
+			ctx, err := prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := CollectPgStatUserTables(pool, ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &agent.PgStatUserTablePayload{Rows: rows}, nil
+		},
+	}
 }
