@@ -73,6 +73,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		CatalogGetter: pg.CatalogGetter{
 			PGPool:         pgPool,
 			PGMajorVersion: pgMajorVersion,
+			HealthGate:     pg.NewHealthGate(pgPool, commonAgent.Logger()),
 		},
 		State:          &State{LastGuardrailCheck: time.Now()},
 		CloudSQLConfig: config,
@@ -85,7 +86,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		},
 		GuardrailSettings: &guardrailSettings,
 		pgConfig:          pgConfig,
-		PGVersion: PGVersion,
+		PGVersion:         PGVersion,
 	}
 
 	c.InitCollectors(c.Collectors())

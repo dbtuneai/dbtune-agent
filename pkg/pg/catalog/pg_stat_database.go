@@ -41,39 +41,39 @@ func NewPgStatDatabaseCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent
 
 // PgStatDatabaseRow represents a row from pg_stat_database.
 type PgStatDatabaseRow struct {
-	DatID                  *int64   `json:"datid" db:"datid"`                                       // pg: oid
-	DatName                *string  `json:"datname" db:"datname"`                                   // pg: name
-	NumBackends            *int64   `json:"numbackends" db:"numbackends"`                           // pg: integer
-	XactCommit             *int64   `json:"xact_commit" db:"xact_commit"`                           // pg: bigint
-	XactRollback           *int64   `json:"xact_rollback" db:"xact_rollback"`                       // pg: bigint
-	BlksRead               *int64   `json:"blks_read" db:"blks_read"`                               // pg: bigint
-	BlksHit                *int64   `json:"blks_hit" db:"blks_hit"`                                 // pg: bigint
-	TupReturned            *int64   `json:"tup_returned" db:"tup_returned"`                         // pg: bigint
-	TupFetched             *int64   `json:"tup_fetched" db:"tup_fetched"`                           // pg: bigint
-	TupInserted            *int64   `json:"tup_inserted" db:"tup_inserted"`                         // pg: bigint
-	TupUpdated             *int64   `json:"tup_updated" db:"tup_updated"`                           // pg: bigint
-	TupDeleted             *int64   `json:"tup_deleted" db:"tup_deleted"`                           // pg: bigint
-	Conflicts              *int64   `json:"conflicts" db:"conflicts"`                               // pg: bigint
-	TempFiles              *int64   `json:"temp_files" db:"temp_files"`                             // pg: bigint
-	TempBytes              *int64   `json:"temp_bytes" db:"temp_bytes"`                             // pg: bigint
-	Deadlocks              *int64   `json:"deadlocks" db:"deadlocks"`                               // pg: bigint
-	ChecksumFailures       *int64   `json:"checksum_failures" db:"checksum_failures"`               // pg: bigint
-	ChecksumLastFailure    *string  `json:"checksum_last_failure" db:"checksum_last_failure"`       // pg: timestamp with time zone
-	BlkReadTime            *float64 `json:"blk_read_time" db:"blk_read_time"`                       // pg: double precision
-	BlkWriteTime           *float64 `json:"blk_write_time" db:"blk_write_time"`                     // pg: double precision
-	SessionTime            *float64 `json:"session_time" db:"session_time"`                         // pg: double precision
-	ActiveTime             *float64 `json:"active_time" db:"active_time"`                           // pg: double precision
-	IdleInTransactionTime  *float64 `json:"idle_in_transaction_time" db:"idle_in_transaction_time"` // pg: double precision
-	Sessions               *int64   `json:"sessions" db:"sessions"`                                 // pg: bigint
-	SessionsAbandoned      *int64   `json:"sessions_abandoned" db:"sessions_abandoned"`             // pg: bigint
-	SessionsFatal          *int64   `json:"sessions_fatal" db:"sessions_fatal"`                     // pg: bigint
-	SessionsKilled         *int64   `json:"sessions_killed" db:"sessions_killed"`                   // pg: bigint
-	StatsReset             *string  `json:"stats_reset" db:"stats_reset"`                           // pg: timestamp with time zone
-	ParallelWorkers        *int64   `json:"parallel_workers" db:"parallel_workers"`                 // pg: bigint
-	TempBytesRead          *int64   `json:"temp_bytes_read" db:"temp_bytes_read"`                   // pg: bigint
-	TempBytesWritten       *int64   `json:"temp_bytes_written" db:"temp_bytes_written"`             // pg: bigint
-	TempFilesRead          *int64   `json:"temp_files_read" db:"temp_files_read"`                   // pg: bigint
-	TempFilesWritten       *int64   `json:"temp_files_written" db:"temp_files_written"`             // pg: bigint
+	DatID                 *Oid             `json:"datid" db:"datid"`
+	DatName               *Name            `json:"datname" db:"datname"`
+	NumBackends           *Integer         `json:"numbackends" db:"numbackends"`
+	XactCommit            *Bigint          `json:"xact_commit" db:"xact_commit"`
+	XactRollback          *Bigint          `json:"xact_rollback" db:"xact_rollback"`
+	BlksRead              *Bigint          `json:"blks_read" db:"blks_read"`
+	BlksHit               *Bigint          `json:"blks_hit" db:"blks_hit"`
+	TupReturned           *Bigint          `json:"tup_returned" db:"tup_returned"`
+	TupFetched            *Bigint          `json:"tup_fetched" db:"tup_fetched"`
+	TupInserted           *Bigint          `json:"tup_inserted" db:"tup_inserted"`
+	TupUpdated            *Bigint          `json:"tup_updated" db:"tup_updated"`
+	TupDeleted            *Bigint          `json:"tup_deleted" db:"tup_deleted"`
+	Conflicts             *Bigint          `json:"conflicts" db:"conflicts"`
+	TempFiles             *Bigint          `json:"temp_files" db:"temp_files"`
+	TempBytes             *Bigint          `json:"temp_bytes" db:"temp_bytes"`
+	Deadlocks             *Bigint          `json:"deadlocks" db:"deadlocks"`
+	ChecksumFailures      *Bigint          `json:"checksum_failures" db:"checksum_failures"`
+	ChecksumLastFailure   *TimestampTZ     `json:"checksum_last_failure" db:"checksum_last_failure"`
+	BlkReadTime           *DoublePrecision `json:"blk_read_time" db:"blk_read_time"`
+	BlkWriteTime          *DoublePrecision `json:"blk_write_time" db:"blk_write_time"`
+	SessionTime           *DoublePrecision `json:"session_time" db:"session_time"`
+	ActiveTime            *DoublePrecision `json:"active_time" db:"active_time"`
+	IdleInTransactionTime *DoublePrecision `json:"idle_in_transaction_time" db:"idle_in_transaction_time"`
+	Sessions              *Bigint          `json:"sessions" db:"sessions"`
+	SessionsAbandoned     *Bigint          `json:"sessions_abandoned" db:"sessions_abandoned"`
+	SessionsFatal         *Bigint          `json:"sessions_fatal" db:"sessions_fatal"`
+	SessionsKilled        *Bigint          `json:"sessions_killed" db:"sessions_killed"`
+	StatsReset            *TimestampTZ     `json:"stats_reset" db:"stats_reset"`
+	ParallelWorkers       *Bigint          `json:"parallel_workers" db:"parallel_workers"`
+	TempBytesRead         *Bigint          `json:"temp_bytes_read" db:"temp_bytes_read"`
+	TempBytesWritten      *Bigint          `json:"temp_bytes_written" db:"temp_bytes_written"`
+	TempFilesRead         *Bigint          `json:"temp_files_read" db:"temp_files_read"`
+	TempFilesWritten      *Bigint          `json:"temp_files_written" db:"temp_files_written"`
 }
 
 type PgStatDatabasePayload struct {

@@ -41,28 +41,28 @@ func NewPgStatActivityCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent
 
 // PgStatActivityRow represents a row from pg_stat_activity.
 type PgStatActivityRow struct {
-	DatID           *int64  `json:"datid" db:"datid"`                       // pg: oid
-	DatName         *string `json:"datname" db:"datname"`                   // pg: name
-	PID             *int64  `json:"pid" db:"pid"`                           // pg: integer
-	LeaderPID       *int64  `json:"leader_pid" db:"leader_pid"`             // pg: integer
-	UseSysID        *int64  `json:"usesysid" db:"usesysid"`                 // pg: oid
-	UseName         *string `json:"usename" db:"usename"`                   // pg: name
-	ApplicationName *string `json:"application_name" db:"application_name"` // pg: text
-	ClientAddr      *string `json:"client_addr" db:"client_addr"`           // pg: inet
-	ClientHostname  *string `json:"client_hostname" db:"client_hostname"`   // pg: text
-	ClientPort      *int64  `json:"client_port" db:"client_port"`           // pg: integer
-	BackendStart    *string `json:"backend_start" db:"backend_start"`       // pg: timestamp with time zone
-	XactStart       *string `json:"xact_start" db:"xact_start"`             // pg: timestamp with time zone
-	QueryStart      *string `json:"query_start" db:"query_start"`           // pg: timestamp with time zone
-	StateChange     *string `json:"state_change" db:"state_change"`         // pg: timestamp with time zone
-	WaitEventType   *string `json:"wait_event_type" db:"wait_event_type"`   // pg: text
-	WaitEvent       *string `json:"wait_event" db:"wait_event"`             // pg: text
-	State           *string `json:"state" db:"state"`                       // pg: text
-	BackendXID      *string `json:"backend_xid" db:"backend_xid"`           // pg: xid
-	BackendXmin     *string `json:"backend_xmin" db:"backend_xmin"`         // pg: xid
-	QueryID         *int64  `json:"query_id" db:"query_id"`                 // pg: bigint
-	Query           *string `json:"query" db:"query"`                       // pg: text
-	BackendType     *string `json:"backend_type" db:"backend_type"`         // pg: text
+	DatID           *Oid         `json:"datid" db:"datid"`
+	DatName         *Name        `json:"datname" db:"datname"`
+	PID             *Integer     `json:"pid" db:"pid"`
+	LeaderPID       *Integer     `json:"leader_pid" db:"leader_pid"`
+	UseSysID        *Oid         `json:"usesysid" db:"usesysid"`
+	UseName         *Name        `json:"usename" db:"usename"`
+	ApplicationName *Text        `json:"application_name" db:"application_name"`
+	ClientAddr      *Inet        `json:"client_addr" db:"client_addr"`
+	ClientHostname  *Text        `json:"client_hostname" db:"client_hostname"`
+	ClientPort      *Integer     `json:"client_port" db:"client_port"`
+	BackendStart    *TimestampTZ `json:"backend_start" db:"backend_start"`
+	XactStart       *TimestampTZ `json:"xact_start" db:"xact_start"`
+	QueryStart      *TimestampTZ `json:"query_start" db:"query_start"`
+	StateChange     *TimestampTZ `json:"state_change" db:"state_change"`
+	WaitEventType   *Text        `json:"wait_event_type" db:"wait_event_type"`
+	WaitEvent       *Text        `json:"wait_event" db:"wait_event"`
+	State           *Text        `json:"state" db:"state"`
+	BackendXID      *Xid         `json:"backend_xid" db:"backend_xid"`
+	BackendXmin     *Xid         `json:"backend_xmin" db:"backend_xmin"`
+	QueryID         *Bigint      `json:"query_id" db:"query_id"`
+	Query           *Text        `json:"query" db:"query"`
+	BackendType     *Text        `json:"backend_type" db:"backend_type"`
 }
 
 type PgStatActivityPayload struct {

@@ -41,15 +41,15 @@ func NewPgStatSlruCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent.Cat
 
 // PgStatSlruRow represents a row from pg_stat_slru.
 type PgStatSlruRow struct {
-	Name        *string `json:"name" db:"name"`               // pg: text
-	BlksZeroed  *int64  `json:"blks_zeroed" db:"blks_zeroed"` // pg: bigint
-	BlksHit     *int64  `json:"blks_hit" db:"blks_hit"`       // pg: bigint
-	BlksRead    *int64  `json:"blks_read" db:"blks_read"`     // pg: bigint
-	BlksWritten *int64  `json:"blks_written" db:"blks_written"` // pg: bigint
-	BlksExists  *int64  `json:"blks_exists" db:"blks_exists"` // pg: bigint
-	Flushes     *int64  `json:"flushes" db:"flushes"`         // pg: bigint
-	Truncates   *int64  `json:"truncates" db:"truncates"`     // pg: bigint
-	StatsReset  *string `json:"stats_reset" db:"stats_reset"` // pg: timestamp with time zone
+	Name        *Text        `json:"name" db:"name"`
+	BlksZeroed  *Bigint      `json:"blks_zeroed" db:"blks_zeroed"`
+	BlksHit     *Bigint      `json:"blks_hit" db:"blks_hit"`
+	BlksRead    *Bigint      `json:"blks_read" db:"blks_read"`
+	BlksWritten *Bigint      `json:"blks_written" db:"blks_written"`
+	BlksExists  *Bigint      `json:"blks_exists" db:"blks_exists"`
+	Flushes     *Bigint      `json:"flushes" db:"flushes"`
+	Truncates   *Bigint      `json:"truncates" db:"truncates"`
+	StatsReset  *TimestampTZ `json:"stats_reset" db:"stats_reset"`
 }
 
 type PgStatSlruPayload struct {

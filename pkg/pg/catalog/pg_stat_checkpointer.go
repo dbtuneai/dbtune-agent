@@ -48,16 +48,16 @@ func NewPgStatCheckpointerCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, p
 
 // PgStatCheckpointerRow represents a row from pg_stat_checkpointer (PG 17+).
 type PgStatCheckpointerRow struct {
-	NumTimed           *int64   `json:"num_timed" db:"num_timed"`                     // pg: bigint
-	NumRequested       *int64   `json:"num_requested" db:"num_requested"`             // pg: bigint
-	RestartpointsTimed *int64   `json:"restartpoints_timed" db:"restartpoints_timed"` // pg: bigint
-	RestartpointsReq   *int64   `json:"restartpoints_req" db:"restartpoints_req"`     // pg: bigint
-	RestartpointsDone  *int64   `json:"restartpoints_done" db:"restartpoints_done"`   // pg: bigint
-	WriteTime          *float64 `json:"write_time" db:"write_time"`                   // pg: double precision
-	SyncTime           *float64 `json:"sync_time" db:"sync_time"`                     // pg: double precision
-	BuffersWritten     *int64   `json:"buffers_written" db:"buffers_written"`         // pg: bigint
-	StatsReset         *string  `json:"stats_reset" db:"stats_reset"`                 // pg: timestamp with time zone
-	SlruWritten        *int64   `json:"slru_written" db:"slru_written"`               // pg: bigint
+	NumTimed           *Bigint          `json:"num_timed" db:"num_timed"`
+	NumRequested       *Bigint          `json:"num_requested" db:"num_requested"`
+	RestartpointsTimed *Bigint          `json:"restartpoints_timed" db:"restartpoints_timed"`
+	RestartpointsReq   *Bigint          `json:"restartpoints_req" db:"restartpoints_req"`
+	RestartpointsDone  *Bigint          `json:"restartpoints_done" db:"restartpoints_done"`
+	WriteTime          *DoublePrecision `json:"write_time" db:"write_time"`
+	SyncTime           *DoublePrecision `json:"sync_time" db:"sync_time"`
+	BuffersWritten     *Bigint          `json:"buffers_written" db:"buffers_written"`
+	StatsReset         *TimestampTZ     `json:"stats_reset" db:"stats_reset"`
+	SlruWritten        *Bigint          `json:"slru_written" db:"slru_written"`
 }
 
 type PgStatCheckpointerPayload struct {

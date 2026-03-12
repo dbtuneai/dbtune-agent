@@ -65,6 +65,7 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 		CatalogGetter: pg.CatalogGetter{
 			PGPool:         pgPool,
 			PGMajorVersion: pgMajorVersion,
+			HealthGate:     pg.NewHealthGate(pgPool, common.Logger()),
 		},
 		AzureFlexConfig: config,
 		GuardrailConfig: guardrailConfig,

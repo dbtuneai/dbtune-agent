@@ -80,6 +80,7 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 	adpt.CatalogGetter = pg.CatalogGetter{
 		PGPool:         pgPool,
 		PGMajorVersion: pg.ParsePgMajorVersion(pgVersion),
+		HealthGate:     pg.NewHealthGate(pgPool, common.Logger()),
 		PrepareContext: func(ctx context.Context) (context.Context, error) {
 			opsCtx := adpt.State.GetOperationsContext()
 			if err := adpt.checkFailoverBeforeOperation(ctx, "catalog_query"); err != nil {

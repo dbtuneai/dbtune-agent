@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/dbtune/dbtunetest"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
+	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -531,4 +533,102 @@ func TestRunnerCallsAllAPIActions(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	transport.AllActionsCalled(t)
+}
+
+// ---------------------------------------------------------------------------
+// isRecoveryError — ErrDatabaseDown integration
+// ---------------------------------------------------------------------------
+
+func TestIsRecoveryError_ErrDatabaseDown(t *testing.T) {
+	if !isRecoveryError(pg.ErrDatabaseDown) {
+		t.Fatal("isRecoveryError should return true for ErrDatabaseDown")
+	}
+}
+
+func TestIsRecoveryError_WrappedErrDatabaseDown(t *testing.T) {
+	wrapped := fmt.Errorf("collector pg_stat_activity: %w", pg.ErrDatabaseDown)
+	if !isRecoveryError(wrapped) {
+		t.Fatal("isRecoveryError should return true for wrapped ErrDatabaseDown")
+	}
+}
+
+func TestIsRecoveryError_OtherErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"generic", errors.New("something broke"), false},
+		{"failover detected", errors.New("failover detected: new primary"), true},
+		{"recovery in progress", errors.New("cannot execute: recovery in progress"), true},
+		{"ErrDatabaseDown direct", pg.ErrDatabaseDown, true},
+		{"ErrDatabaseDown wrapped", fmt.Errorf("outer: %w", pg.ErrDatabaseDown), true},
+		{"ErrDatabaseDown double wrapped", fmt.Errorf("a: %w", fmt.Errorf("b: %w", pg.ErrDatabaseDown)), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isRecoveryError(tc.err)
+			if got != tc.want {
+				t.Errorf("isRecoveryError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHandleGetError_SuppressesErrDatabaseDown verifies that handleGetError
+// does NOT call SendError when the error is ErrDatabaseDown.
+func TestHandleGetError_SuppressesErrDatabaseDown(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+
+	mockAgent := new(MockAgentLooper)
+	mockAgent.On("Logger").Return(logger)
+	// SendError should NOT be called.
+
+	ctx := context.Background()
+	err := handleGetError(ctx, mockAgent, logger, "test_collector", pg.ErrDatabaseDown)
+
+	if err != nil {
+		t.Fatalf("handleGetError should return nil for recovery errors, got %v", err)
+	}
+	mockAgent.AssertNotCalled(t, "SendError", mock.Anything, mock.Anything)
+}
+
+// TestHandleGetError_WrappedErrDatabaseDown_Suppressed verifies wrapped ErrDatabaseDown
+// is also suppressed.
+func TestHandleGetError_WrappedErrDatabaseDown_Suppressed(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+
+	mockAgent := new(MockAgentLooper)
+	mockAgent.On("Logger").Return(logger)
+
+	ctx := context.Background()
+	wrapped := fmt.Errorf("pg_stat_user_tables: %w", pg.ErrDatabaseDown)
+	err := handleGetError(ctx, mockAgent, logger, "test_collector", wrapped)
+
+	if err != nil {
+		t.Fatalf("handleGetError should return nil for wrapped ErrDatabaseDown, got %v", err)
+	}
+	mockAgent.AssertNotCalled(t, "SendError", mock.Anything, mock.Anything)
+}
+
+// TestHandleGetError_NonRecoveryError_SendsError verifies non-recovery errors
+// still trigger SendError.
+func TestHandleGetError_NonRecoveryError_SendsError(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+
+	mockAgent := new(MockAgentLooper)
+	mockAgent.On("Logger").Return(logger)
+	mockAgent.On("SendError", mock.Anything, mock.AnythingOfType("agent.ErrorPayload")).Return(nil)
+
+	ctx := context.Background()
+	err := handleGetError(ctx, mockAgent, logger, "test_collector", errors.New("syntax error"))
+
+	if err == nil {
+		t.Fatal("handleGetError should return the error for non-recovery errors")
+	}
+	mockAgent.AssertCalled(t, "SendError", mock.Anything, mock.AnythingOfType("agent.ErrorPayload"))
 }

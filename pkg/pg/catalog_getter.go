@@ -20,13 +20,27 @@ type CatalogGetter struct {
 	PGPool         *pgxpool.Pool
 	PGMajorVersion int
 	PrepareContext func(ctx context.Context) (context.Context, error)
+	HealthGate     *HealthGate
 }
 
 func (g *CatalogGetter) prepareCtx(ctx context.Context) (context.Context, error) {
+	if g.HealthGate != nil {
+		if err := g.HealthGate.Check(); err != nil {
+			return nil, err
+		}
+	}
 	if g.PrepareContext != nil {
 		return g.PrepareContext(ctx)
 	}
 	return ctx, nil
+}
+
+// StartHealthGate starts the health gate's ping goroutine lifecycle.
+// Adapters inherit this via embedding, so no per-adapter method is needed.
+func (g *CatalogGetter) StartHealthGate(ctx context.Context) {
+	if g.HealthGate != nil {
+		g.HealthGate.Start(ctx)
+	}
 }
 
 func (g *CatalogGetter) GetDDL(ctx context.Context) (*agent.DDLPayload, error) {
@@ -36,6 +50,9 @@ func (g *CatalogGetter) GetDDL(ctx context.Context) (*agent.DDLPayload, error) {
 	}
 	ddl, err := CollectDDL(g.PGPool, ctx)
 	if err != nil {
+		if g.HealthGate != nil {
+			g.HealthGate.ReportError(err)
+		}
 		return nil, err
 	}
 	return &agent.DDLPayload{DDL: ddl, Hash: HashDDL(ddl)}, nil
@@ -45,7 +62,7 @@ func (g *CatalogGetter) GetDDL(ctx context.Context) (*agent.DDLPayload, error) {
 func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 	p := catalog.PrepareCtx(g.prepareCtx)
 
-	return []agent.CatalogCollector{
+	collectors := []agent.CatalogCollector{
 		catalog.NewPgStatsCollector(g.PGPool, p),
 		catalog.NewPgStatUserTablesCollector(g.PGPool, p),
 		catalog.NewPgClassCollector(g.PGPool, p),
@@ -77,4 +94,20 @@ func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 		catalog.NewPgStatSubscriptionStatsCollector(g.PGPool, p, g.PGMajorVersion),
 		catalog.NewWaitEventsCollector(g.PGPool, p),
 	}
+
+	// Wrap each collector's Collect func to report errors to the health gate.
+	if g.HealthGate != nil {
+		for i := range collectors {
+			orig := collectors[i].Collect
+			collectors[i].Collect = func(ctx context.Context) (any, error) {
+				data, err := orig(ctx)
+				if err != nil {
+					g.HealthGate.ReportError(err)
+				}
+				return data, err
+			}
+		}
+	}
+
+	return collectors
 }

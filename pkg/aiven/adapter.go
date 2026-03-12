@@ -96,13 +96,14 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		CatalogGetter: pg.CatalogGetter{
 			PGPool:         pgPool,
 			PGMajorVersion: pgMajorVersion,
+			HealthGate:     pg.NewHealthGate(pgPool, commonAgent.Logger()),
 		},
 		Config:            aivenConfig,
 		Client:            aivenClient,
 		State:             state,
 		GuardrailSettings: guardrailSettings,
-		pgConfig:  pgConfig,
-		PGVersion: PGVersion,
+		pgConfig:          pgConfig,
+		PGVersion:         PGVersion,
 	}
 
 	// Initialize collectors
@@ -569,4 +570,3 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (age
 
 	return configRows, nil
 }
-

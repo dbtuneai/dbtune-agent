@@ -122,6 +122,7 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 	adapter.CatalogGetter = pg.CatalogGetter{
 		PGPool:         dbpool,
 		PGMajorVersion: pg.ParsePgMajorVersion(pgVersion),
+		HealthGate:     pg.NewHealthGate(dbpool, adapter.Logger()),
 		PrepareContext: func(ctx context.Context) (context.Context, error) {
 			if err := adapter.CheckForFailover(ctx); err != nil {
 				return nil, err

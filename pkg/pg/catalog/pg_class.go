@@ -63,10 +63,10 @@ ORDER BY n.nspname, c.relname
 // PgClassRow represents a single row from pg_class for user tables,
 // providing reltuples and relpages needed for index recommendation.
 type PgClassRow struct {
-	SchemaName string  `json:"schemaname"` // pg: name
-	RelName    string  `json:"relname"`    // pg: name
-	RelTuples  float64 `json:"reltuples"`  // pg: float4
-	RelPages   int64   `json:"relpages"`   // pg: int4
+	SchemaName Name    `json:"schemaname"`
+	RelName    Name    `json:"relname"`
+	RelTuples  Real    `json:"reltuples"`
+	RelPages   Integer `json:"relpages"`
 }
 
 // PgClassPayload is the JSON body POSTed to /api/v1/agent/pg_class.

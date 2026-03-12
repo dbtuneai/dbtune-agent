@@ -169,11 +169,11 @@ func TestPgStatsCollector(t *testing.T) {
 			calls: []call{
 				{
 					// Backfill — empty DB
-					wantMode:    "backfill",
+					wantMode:      "backfill",
 					wantBatchSize: 500,
-					wantOffset:  0,
-					returnRows:  nil,
-					wantNilData: true,
+					wantOffset:    0,
+					returnRows:    nil,
+					wantNilData:   true,
 				},
 				{
 					wantMode:  "delta",
