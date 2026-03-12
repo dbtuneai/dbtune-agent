@@ -50,8 +50,7 @@ UNION ALL
 SELECT
 	'TOTAL' as wait_event_type,
 	sum(current_count) as current_count
-FROM wait_counts;
-`
+FROM wait_counts`
 
 func CollectWaitEvents(pgPool *pgxpool.Pool, ctx context.Context) ([]WaitEventRow, error) {
 	return CollectView[WaitEventRow](pgPool, ctx, waitEventsQuery, "wait_events")

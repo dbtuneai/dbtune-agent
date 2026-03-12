@@ -14,8 +14,7 @@ SELECT
     COUNT(*) FILTER (WHERE state = 'active') AS active_connections,
     COUNT(*) FILTER (WHERE state = 'idle') AS idle_connections,
     COUNT(*) FILTER (WHERE state = 'idle in transaction') AS idle_in_transaction_connections
-FROM pg_stat_activity
-`
+FROM pg_stat_activity`
 
 func Connections(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
