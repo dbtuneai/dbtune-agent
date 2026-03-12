@@ -46,12 +46,12 @@ func NewPgStatUserFunctionsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) 
 
 // PgStatUserFunctionsRow represents a row from pg_stat_user_functions.
 type PgStatUserFunctionsRow struct {
-	FuncID     *Oid              `json:"funcid" db:"funcid"`
-	SchemaName *Name             `json:"schemaname" db:"schemaname"`
-	FuncName   *Name             `json:"funcname" db:"funcname"`
-	Calls      *Bigint           `json:"calls" db:"calls"`
-	TotalTime  *DoublePrecision  `json:"total_time" db:"total_time"`
-	SelfTime   *DoublePrecision  `json:"self_time" db:"self_time"`
+	FuncID     *Oid             `json:"funcid" db:"funcid"`
+	SchemaName *Name            `json:"schemaname" db:"schemaname"`
+	FuncName   *Name            `json:"funcname" db:"funcname"`
+	Calls      *Bigint          `json:"calls" db:"calls"`
+	TotalTime  *DoublePrecision `json:"total_time" db:"total_time"`
+	SelfTime   *DoublePrecision `json:"self_time" db:"self_time"`
 }
 
 type PgStatUserFunctionsPayload struct {

@@ -86,7 +86,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		},
 		GuardrailSettings: &guardrailSettings,
 		pgConfig:          pgConfig,
-		PGVersion: PGVersion,
+		PGVersion:         PGVersion,
 	}
 
 	c.InitCollectors(c.Collectors())

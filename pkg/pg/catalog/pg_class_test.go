@@ -158,11 +158,11 @@ func TestPgClassCollector(t *testing.T) {
 			batchSize: 500,
 			calls: []call{
 				{
-					wantMode:    "backfill",
+					wantMode:      "backfill",
 					wantBatchSize: 500,
-					wantOffset:  0,
-					returnRows:  nil,
-					wantNilData: true,
+					wantOffset:    0,
+					returnRows:    nil,
+					wantNilData:   true,
 				},
 				{
 					wantMode:  "delta",

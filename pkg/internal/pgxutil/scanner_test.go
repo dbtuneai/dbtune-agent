@@ -1214,14 +1214,14 @@ func TestScan_DefinedTypes(t *testing.T) {
 	type TimestampTZ string
 
 	type definedRow struct {
-		ID      Oid              `db:"id"`
-		Name    Name             `db:"name"`
-		Label   Text             `db:"label"`
-		Count   Integer          `db:"count"`
-		Total   Bigint           `db:"total"`
-		Ratio   Real             `db:"ratio"`
-		Precise DoublePrecision  `db:"precise"`
-		Active  Boolean          `db:"active"`
+		ID      Oid             `db:"id"`
+		Name    Name            `db:"name"`
+		Label   Text            `db:"label"`
+		Count   Integer         `db:"count"`
+		Total   Bigint          `db:"total"`
+		Ratio   Real            `db:"ratio"`
+		Precise DoublePrecision `db:"precise"`
+		Active  Boolean         `db:"active"`
 	}
 	scanner := NewScanner[definedRow]()
 

@@ -20,17 +20,17 @@ import (
 //
 // Use pointers (*Oid, *Name, etc.) for nullable columns.
 
-type Oid uint32               // pg: oid — object identifier
-type Name string              // pg: name — 63-byte SQL identifier
-type Text string              // pg: text — variable-length string
-type Bigint int64             // pg: bigint / int8
-type Integer int64            // pg: integer / int4
-type Smallint int64           // pg: smallint / int2
-type Real float64             // pg: real / float4
-type DoublePrecision float64  // pg: double precision / float8
-type Boolean bool             // pg: boolean
-type PgLsn string             // pg: pg_lsn — log sequence number
-type Numeric int64            // pg: numeric — arbitrary precision (lossy: mapped to int64)
+type Oid uint32              // pg: oid — object identifier
+type Name string             // pg: name — 63-byte SQL identifier
+type Text string             // pg: text — variable-length string
+type Bigint int64            // pg: bigint / int8
+type Integer int64           // pg: integer / int4
+type Smallint int64          // pg: smallint / int2
+type Real float64            // pg: real / float4
+type DoublePrecision float64 // pg: double precision / float8
+type Boolean bool            // pg: boolean
+type PgLsn string            // pg: pg_lsn — log sequence number
+type Numeric int64           // pg: numeric — arbitrary precision (lossy: mapped to int64)
 
 // Inet wraps string for pg inet columns.
 // Implements pgtype.NetipPrefixScanner so InetCodec's binary scan matches.

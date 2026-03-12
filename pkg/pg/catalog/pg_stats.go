@@ -4,9 +4,9 @@ package catalog
 
 import (
 	"context"
-	"time"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/internal/utils"

@@ -51,10 +51,10 @@ type columnMapping struct {
 //	rows, err := pool.Query(ctx, "SELECT * FROM pg_stat_database")
 //	results, err := pgx.CollectRows(rows, pgStatScanner.Scan)
 type Scanner[T any] struct {
-	fields []structField          // pre-computed at NewScanner time
-	byName map[string]int         // field name → index into fields, pre-computed
-	cache  sync.Map               // colKey (string) → *columnMapping
-	typ    reflect.Type           // cached reflect.Type of T
+	fields []structField  // pre-computed at NewScanner time
+	byName map[string]int // field name → index into fields, pre-computed
+	cache  sync.Map       // colKey (string) → *columnMapping
+	typ    reflect.Type   // cached reflect.Type of T
 }
 
 // NewScanner creates a Scanner for struct type T. Call this once at
