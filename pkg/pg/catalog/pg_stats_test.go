@@ -12,7 +12,7 @@ import (
 
 // fakeRow creates a PgStatsRow with the given schema/table/column names.
 func fakeRow(schema, table, col string) PgStatsRow {
-	return PgStatsRow{SchemaName: schema, TableName: table, AttName: col}
+	return PgStatsRow{SchemaName: Name(schema), TableName: Name(table), AttName: Name(col)}
 }
 
 func TestPgStatsCollector(t *testing.T) {

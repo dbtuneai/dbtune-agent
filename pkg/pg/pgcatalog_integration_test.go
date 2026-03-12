@@ -5,6 +5,7 @@ package pg
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -146,6 +147,10 @@ func runSimpleCollectorTest[T any](
 			if expectNonEmpty {
 				assert.NotEmpty(t, rows, "expected rows from %s on PG %d", name, pg.version)
 			}
+			for i, row := range rows {
+				_, err := json.Marshal(row)
+				require.NoError(t, err, "json.Marshal failed for %s row %d on PG %d", name, i, pg.version)
+			}
 		})
 	}
 }
@@ -167,6 +172,10 @@ func runVersionGatedTest[T any](
 				assert.NotNil(t, rows, "expected data on PG %d (>= %d)", pg.version, minVersion)
 			} else {
 				assert.Nil(t, rows, "expected nil on PG %d (< %d)", pg.version, minVersion)
+			}
+			for i, row := range rows {
+				_, err := json.Marshal(row)
+				require.NoError(t, err, "json.Marshal failed for %s row %d on PG %d", name, i, pg.version)
 			}
 		})
 	}
