@@ -121,6 +121,10 @@ func (m *MockAgentLooper) SendError(ctx context.Context, payload agent.ErrorPayl
 	return args.Error(0)
 }
 
+func (m *MockAgentLooper) StartHealthGate(ctx context.Context) {
+	m.Called(ctx)
+}
+
 // setupCatalogMocksSuccess sets up catalog collectors that return test data successfully.
 func setupCatalogMocksSuccess(m *MockAgentLooper) {
 	testData := map[string]bool{}
@@ -164,6 +168,7 @@ func TestCatalogSkipUnchanged(t *testing.T) {
 		mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 		mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 		mockAgent.On("Guardrails", mock.Anything).Return(nil)
+		mockAgent.On("StartHealthGate", mock.Anything).Return()
 
 		// Return identical data every tick, with SkipUnchanged enabled
 		mockAgent.On("CatalogCollectors").Return([]agent.CatalogCollector{
@@ -215,6 +220,7 @@ func TestCatalogSkipUnchanged(t *testing.T) {
 		mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 		mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 		mockAgent.On("Guardrails", mock.Anything).Return(nil)
+		mockAgent.On("StartHealthGate", mock.Anything).Return()
 
 		// Return different data on each call
 		mockAgent.On("CatalogCollectors").Return([]agent.CatalogCollector{
@@ -326,6 +332,7 @@ func TestRunner(t *testing.T) {
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.On("StartHealthGate", mock.Anything).Return()
 	setupCatalogMocksSuccess(mockAgent)
 
 	// Run the Runner in a goroutine with a timeout
@@ -359,6 +366,7 @@ func TestRunnerWithErrors(t *testing.T) {
 	mockAgent.On("SendError", mock.Anything, mock.AnythingOfType("agent.ErrorPayload")).Return(nil)
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, errors.New("config error"))
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.On("StartHealthGate", mock.Anything).Return()
 	setupCatalogMocksError(mockAgent)
 
 	// Run the Runner in a goroutine with a timeout
@@ -394,6 +402,7 @@ func TestRunnerWhenGetProposedConfigReturnsAConfigThenApplyConfigShouldBeCalled(
 	mockAgent.On("GetDDL", mock.Anything).Return(&agent.DDLPayload{Hash: "abc123"}, nil)
 	mockAgent.On("SendDDL", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.On("StartHealthGate", mock.Anything).Return()
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(mockRecommendation, nil)
@@ -431,6 +440,7 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 	mockAgent.On("GetDDL", mock.Anything).Return(&agent.DDLPayload{Hash: "abc123"}, nil)
 	mockAgent.On("SendDDL", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.On("StartHealthGate", mock.Anything).Return()
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
@@ -574,6 +584,39 @@ func TestIsRecoveryError_OtherErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Runner calls StartHealthGate when adapter implements healthGater
+// ---------------------------------------------------------------------------
+
+func TestRunner_CallsStartHealthGate(t *testing.T) {
+	mockAgent := new(MockAgentLooper)
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+
+	mockAgent.On("Logger").Return(logger)
+	mockAgent.On("SendHeartbeat", mock.Anything).Return(nil)
+	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetDDL", mock.Anything).Return(&agent.DDLPayload{Hash: "abc123"}, nil)
+	mockAgent.On("SendDDL", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
+	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.On("StartHealthGate", mock.Anything).Return()
+	setupCatalogMocksSuccess(mockAgent)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go Runner(ctx, mockAgent)
+	time.Sleep(200 * time.Millisecond)
+
+	mockAgent.AssertCalled(t, "StartHealthGate", mock.Anything)
 }
 
 // TestHandleGetError_SuppressesErrDatabaseDown verifies that handleGetError
