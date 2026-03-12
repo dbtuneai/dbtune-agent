@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
@@ -12,7 +13,53 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// inferNumericType attempts to parse a string setting into a numeric Go type.
+// settingNameRegex matches valid PostgreSQL setting names: lowercase letters,
+// digits, underscores, and dots (for extension settings like pg_stat_statements.max).
+var settingNameRegex = regexp.MustCompile(`^[a-z][a-z0-9_.]*$`)
+
+// SanitizeSettingName validates that a PostgreSQL setting name contains only
+// safe characters. Setting names are identifiers like "shared_buffers" or
+// "pg_stat_statements.max" and must not contain SQL metacharacters.
+func SanitizeSettingName(name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("setting name must not be empty")
+	}
+	if !settingNameRegex.MatchString(name) {
+		return "", fmt.Errorf("invalid setting name %q: must match [a-z][a-z0-9_.]*", name)
+	}
+	return name, nil
+}
+
+// dangerousChars are characters that must never appear in a setting value.
+var dangerousChars = []string{";", "'", "--", "\\", "\n", "\r"}
+
+// SanitizeSettingValue validates and quotes a PostgreSQL setting value.
+// Values are single-quoted for use in ALTER SYSTEM SET statements.
+func SanitizeSettingValue(value string) (string, error) {
+	for _, ch := range dangerousChars {
+		if strings.Contains(value, ch) {
+			return "", fmt.Errorf("invalid setting value %q: contains forbidden character %q", value, ch)
+		}
+	}
+	return "'" + value + "'", nil
+}
+
+// databaseNameRegex matches valid unquoted PostgreSQL identifiers.
+var databaseNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_\-]+$`)
+
+// SanitizeDatabaseName validates and double-quotes a database name for use
+// in SQL statements like ALTER DATABASE.
+func SanitizeDatabaseName(name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("database name must not be empty")
+	}
+	if !databaseNameRegex.MatchString(name) {
+		return "", fmt.Errorf("invalid database name %q: must match [a-zA-Z0-9_-]+", name)
+	}
+	return `"` + name + `"`, nil
+}
+
+// InferNumericType attempts to parse a string setting into a numeric Go type.
 // Returns int64 if parseable as integer, float64 if parseable as float, or the
 // original string if neither. This preserves JSON serialization format (200 not "200")
 // without relying on the potentially unreliable vartype metadata.
@@ -30,12 +77,9 @@ func InferNumericType(setting interface{}) interface{} {
 	return s
 }
 
-// PGVersion returns the version of the PostgreSQL instance
-const PGVersionQuery = `
-SELECT version();
-`
+const PGVersionQuery = `SELECT version()`
 
-// Example: 16.4
+// PGVersion returns the version string (e.g. "16.4") of the PostgreSQL instance.
 func PGVersion(pgPool *pgxpool.Pool) (string, error) {
 	var pgVersion string
 	versionRegex := regexp.MustCompile(`PostgreSQL (\d+\.\d+)`)
@@ -48,9 +92,7 @@ func PGVersion(pgPool *pgxpool.Pool) (string, error) {
 	return matches[1], nil
 }
 
-const MaxConnectionsQuery = `
-SELECT setting::integer FROM pg_settings WHERE  name = 'max_connections';
-`
+const MaxConnectionsQuery = `SELECT setting::integer FROM pg_settings WHERE name = 'max_connections'`
 
 func MaxConnections(pgPool *pgxpool.Pool) (uint32, error) {
 	var maxConnections uint32
@@ -62,17 +104,23 @@ func MaxConnections(pgPool *pgxpool.Pool) (uint32, error) {
 	return maxConnections, nil
 }
 
-const SELECT_NUMERIC_SETTINGS = `
-	SELECT name, setting, unit, vartype, context
-	FROM pg_settings
-	WHERE vartype IN ('real', 'integer');
+const SelectNumericSettings = `
+SELECT name, setting, unit, vartype, context
+FROM pg_settings
+WHERE vartype IN ('real', 'integer')
 `
 
-const SELECT_NON_NUMERIC_SETTINGS = `
-	SELECT name, setting, unit, vartype, context
-	FROM pg_settings
-	WHERE vartype NOT IN ('real', 'integer');
+const SelectNonNumericSettings = `
+SELECT name, setting, unit, vartype, context
+FROM pg_settings
+WHERE vartype NOT IN ('real', 'integer')
 `
+
+// Deprecated: Use SelectNumericSettings instead.
+const SELECT_NUMERIC_SETTINGS = SelectNumericSettings
+
+// Deprecated: Use SelectNonNumericSettings instead.
+const SELECT_NON_NUMERIC_SETTINGS = SelectNonNumericSettings
 
 func GetActiveConfig(
 	pool *pgxpool.Pool,
@@ -82,7 +130,7 @@ func GetActiveConfig(
 	var configRows agent.ConfigArraySchema
 
 	// Query for numeric types (real and integer)
-	numericRows, err := utils.QueryWithPrefix(pool, ctx, SELECT_NUMERIC_SETTINGS)
+	numericRows, err := utils.QueryWithPrefix(pool, ctx, SelectNumericSettings)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +147,7 @@ func GetActiveConfig(
 	}
 
 	// Query for non-numeric types
-	nonNumericRows, err := utils.QueryWithPrefix(pool, ctx, SELECT_NON_NUMERIC_SETTINGS)
+	nonNumericRows, err := utils.QueryWithPrefix(pool, ctx, SelectNonNumericSettings)
 	if err != nil {
 		return nil, err
 	}
@@ -117,9 +165,7 @@ func GetActiveConfig(
 	return configRows, nil
 }
 
-const ReloadConfigQuery = `
-SELECT pg_reload_conf();
-`
+const ReloadConfigQuery = `SELECT pg_reload_conf()`
 
 func ReloadConfig(pgPool *pgxpool.Pool) error {
 	_, err := utils.ExecWithPrefix(pgPool, context.Background(), ReloadConfigQuery)
@@ -129,46 +175,49 @@ func ReloadConfig(pgPool *pgxpool.Pool) error {
 	return nil
 }
 
-const AlterSystemQuery = `
-ALTER SYSTEM SET %s = %s;
-`
-
 func AlterSystem(pgPool *pgxpool.Pool, name string, value string) error {
-	_, err := utils.ExecWithPrefix(pgPool, context.Background(), fmt.Sprintf(AlterSystemQuery, name, value))
+	safeName, err := SanitizeSettingName(name)
 	if err != nil {
-		return err
+		return fmt.Errorf("alter system: %w", err)
 	}
-	return nil
+	safeValue, err := SanitizeSettingValue(value)
+	if err != nil {
+		return fmt.Errorf("alter system: %w", err)
+	}
+	query := fmt.Sprintf("ALTER SYSTEM SET %s = %s", safeName, safeValue)
+	_, err = utils.ExecWithPrefix(pgPool, context.Background(), query)
+	return err
 }
-
-const AlterSystemResetQuery = `
-ALTER SYSTEM RESET %s;
-
-`
 
 func AlterSystemReset(pgPool *pgxpool.Pool, name string) error {
-	_, err := utils.ExecWithPrefix(pgPool, context.Background(), fmt.Sprintf(AlterSystemResetQuery, name))
+	safeName, err := SanitizeSettingName(name)
 	if err != nil {
-		return err
+		return fmt.Errorf("alter system reset: %w", err)
 	}
-	return nil
+	query := fmt.Sprintf("ALTER SYSTEM RESET %s", safeName)
+	_, err = utils.ExecWithPrefix(pgPool, context.Background(), query)
+	return err
 }
-
-const AlterDatabaseQuery = `
-ALTER DATABASE %s SET %s = %s;
-`
 
 func AlterDatabase(pgPool *pgxpool.Pool, dbname string, name string, value string) error {
-	_, err := utils.ExecWithPrefix(pgPool, context.Background(), fmt.Sprintf(AlterDatabaseQuery, dbname, name, value))
+	safeDB, err := SanitizeDatabaseName(dbname)
 	if err != nil {
-		return err
+		return fmt.Errorf("alter database: %w", err)
 	}
-	return nil
+	safeName, err := SanitizeSettingName(name)
+	if err != nil {
+		return fmt.Errorf("alter database: %w", err)
+	}
+	safeValue, err := SanitizeSettingValue(value)
+	if err != nil {
+		return fmt.Errorf("alter database: %w", err)
+	}
+	query := fmt.Sprintf("ALTER DATABASE %s SET %s = %s", safeDB, safeName, safeValue)
+	_, err = utils.ExecWithPrefix(pgPool, context.Background(), query)
+	return err
 }
 
-const DataDirectoryQuery = `
-SHOW data_directory;
-`
+const DataDirectoryQuery = `SHOW data_directory`
 
 func DataDirectory(pgPool *pgxpool.Pool) (string, error) {
 	var dataDir string
@@ -179,18 +228,14 @@ func DataDirectory(pgPool *pgxpool.Pool) (string, error) {
 	return dataDir, nil
 }
 
-const Select1Query = `
-SELECT 1;
-`
+const Select1Query = `SELECT 1`
 
 func Select1(pgPool *pgxpool.Pool) error {
 	_, err := utils.ExecWithPrefix(pgPool, context.Background(), Select1Query)
 	return err
 }
 
-const CheckPGStatStatementsQuery = `
-SELECT COUNT(*) FROM pg_stat_statements;
-`
+const CheckPGStatStatementsQuery = `SELECT COUNT(*) FROM pg_stat_statements`
 
 func CheckPGStatStatements(pgPool *pgxpool.Pool) error {
 	_, err := utils.ExecWithPrefix(pgPool, context.Background(), CheckPGStatStatementsQuery)

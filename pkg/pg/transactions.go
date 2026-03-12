@@ -11,10 +11,8 @@ import (
 )
 
 const TransactionsPerSecondQuery = `
-SELECT SUM(xact_commit)::bigint
-AS server_xact_commits
-FROM pg_stat_database;
-`
+SELECT SUM(xact_commit)::bigint AS server_xact_commits
+FROM pg_stat_database`
 
 func TransactionsPerSecond(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {

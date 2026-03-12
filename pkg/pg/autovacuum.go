@@ -10,9 +10,7 @@ import (
 )
 
 // https://stackoverflow.com/a/25012622
-const AutovacuumQuery = `
-SELECT COUNT(*) FROM pg_stat_activity WHERE starts_with(query, 'autovacuum:');
-`
+const AutovacuumQuery = `SELECT COUNT(*) FROM pg_stat_activity WHERE starts_with(query, 'autovacuum:')`
 
 func Autovacuum(pgPool *pgxpool.Pool) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
