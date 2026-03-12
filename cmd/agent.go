@@ -23,7 +23,22 @@ import (
 
 const AVAILABLE_FLAGS = "--docker, --aurora, --rds, --aiven, --local, --cloudsql, --azure-flex, --cnpg, --patroni"
 
+const banner = `
+ ____  ____  _
+|  _ \| __ )| |_ _   _ _ __   ___
+| | | |  _ \| __| | | | '_ \ / _ \
+| |_| | |_) | |_| |_| | | | |  __/
+|____/|____/ \__|\__,_|_| |_|\___|
+ __ _  __ _  ___ _ __ | |_
+/ _` + "`" + ` |/ _` + "`" + ` |/ _ \ '_ \| __|
+| (_| | (_| |  __/ | | | |_
+\__,_|\__, |\___|_| |_|\__|
+      |___/
+`
+
 func main() {
+	fmt.Print(banner)
+
 	// Define flags
 	useDocker := flag.Bool("docker", false, "Use Docker adapter")
 	useAurora := flag.Bool("aurora", false, "Use Aurora adapter")

@@ -141,8 +141,8 @@ func CreateCommonAgentForTests(rt http.RoundTripper) CommonAgent {
 		logger:    logrus.New(),
 		ServerURLs: dbtune.ServerURLs{
 			ServerUrl: "http://localhost:8080",
-			ApiKey:    "super-secret-key",
-			DbID:      "test-database-id",
+			ApiKey:    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+			DbID:      "550e8400-e29b-41d4-a716-446655440000",
 		},
 		StartTime: time.Now().UTC().Format(time.RFC3339),
 		Version:   "test-version",
