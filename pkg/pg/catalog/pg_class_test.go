@@ -11,7 +11,7 @@ import (
 )
 
 func fakeClassRow(schema, table string) PgClassRow {
-	return PgClassRow{SchemaName: schema, RelName: table, RelTuples: 100, RelPages: 10}
+	return PgClassRow{SchemaName: Name(schema), RelName: Name(table), RelTuples: Real(100), RelPages: Integer(10)}
 }
 
 func TestPgClassCollector(t *testing.T) {
