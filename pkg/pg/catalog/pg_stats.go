@@ -48,7 +48,7 @@ const (
 	// databases (e.g. 10k+ tables) by spreading the first full snapshot across
 	// multiple ticks instead of sending everything at once. After all batches
 	// are sent, the collector switches to delta mode using last_analyze timestamps.
-	PgStatsBackfillBatchSize = 500
+	PgStatsBackfillBatchSize = 200
 )
 
 // pgStatsColumns is the SELECT list shared by the full and delta queries.
