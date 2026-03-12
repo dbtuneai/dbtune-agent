@@ -67,6 +67,11 @@ func (h *HealthGate) ReportError(err error) {
 	h.down.Store(true)
 	// Only one goroutine should ping at a time.
 	if h.pinging.CompareAndSwap(false, true) {
+		if h.ctx == nil {
+			// Start() was never called — no context to ping with.
+			h.pinging.Store(false)
+			return
+		}
 		h.logger.Warn("health gate: database connection lost, starting recovery pings")
 		go h.pingUntilRecovery()
 	}

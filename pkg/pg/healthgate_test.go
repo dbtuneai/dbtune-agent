@@ -611,6 +611,28 @@ func TestCatalogCollectors_NilHealthGate_NoWrapping(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// CatalogGetter.GetDDL — health gate short-circuit
+// ---------------------------------------------------------------------------
+
+func TestGetDDL_HealthGateDown_ReturnsErrDatabaseDown(t *testing.T) {
+	hg := &HealthGate{logger: testLogger()}
+	hg.down.Store(true)
+
+	g := &CatalogGetter{
+		HealthGate: hg,
+		// pool is nil — we should never reach it because the gate is down.
+	}
+
+	data, err := g.GetDDL(context.Background())
+	if !errors.Is(err, ErrDatabaseDown) {
+		t.Fatalf("expected ErrDatabaseDown, got %v", err)
+	}
+	if data != nil {
+		t.Fatalf("expected nil data, got %v", data)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // ErrDatabaseDown sentinel
 // ---------------------------------------------------------------------------
 
@@ -748,16 +770,15 @@ func TestReportError_MixedErrorSequence(t *testing.T) {
 
 func TestReportError_BeforeStart_DoesNotPanic(t *testing.T) {
 	hg := &HealthGate{logger: testLogger()}
-	// ctx is nil — ReportError shouldn't panic. The ping goroutine will see
-	// a nil context and could panic on h.ctx.Done(), but we want to verify
-	// the gate at least gets tripped.
-	//
-	// In production, Start() is always called before collectors run, so
-	// this tests a defensive edge case.
-	//
-	// We don't call ReportError here because pinging on nil ctx would panic.
-	// Instead, verify that Check works without Start.
-	if err := hg.Check(); err != nil {
-		t.Fatalf("Check should work before Start: %v", err)
+	// ctx is nil — ReportError should not panic even though Start() was never called.
+	// The gate should be tripped (down=true) but no ping goroutine should be spawned
+	// since there's no ctx to ping with.
+	hg.ReportError(&pgconn.ConnectError{})
+
+	if !hg.down.Load() {
+		t.Fatal("gate should be tripped (down=true) after ReportError with connection error")
+	}
+	if hg.pinging.Load() {
+		t.Fatal("no ping goroutine should be running when ctx is nil (Start not called)")
 	}
 }
