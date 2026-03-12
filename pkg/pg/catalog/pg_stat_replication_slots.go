@@ -48,16 +48,16 @@ func NewPgStatReplicationSlotsCollector(pool *pgxpool.Pool, prepareCtx PrepareCt
 
 // PgStatReplicationSlotsRow represents a row from pg_stat_replication_slots (PG 14+).
 type PgStatReplicationSlotsRow struct {
-	SlotName    *string `json:"slot_name" db:"slot_name"`       // pg: name
-	SpillTxns   *int64  `json:"spill_txns" db:"spill_txns"`    // pg: bigint
-	SpillCount  *int64  `json:"spill_count" db:"spill_count"`  // pg: bigint
-	SpillBytes  *int64  `json:"spill_bytes" db:"spill_bytes"`  // pg: bigint
-	StreamTxns  *int64  `json:"stream_txns" db:"stream_txns"`  // pg: bigint
-	StreamCount *int64  `json:"stream_count" db:"stream_count"` // pg: bigint
-	StreamBytes *int64  `json:"stream_bytes" db:"stream_bytes"` // pg: bigint
-	TotalTxns   *int64  `json:"total_txns" db:"total_txns"`    // pg: bigint
-	TotalBytes  *int64  `json:"total_bytes" db:"total_bytes"`  // pg: bigint
-	StatsReset  *string `json:"stats_reset" db:"stats_reset"`  // pg: timestamp with time zone
+	SlotName    *Name        `json:"slot_name" db:"slot_name"`
+	SpillTxns   *Bigint      `json:"spill_txns" db:"spill_txns"`
+	SpillCount  *Bigint      `json:"spill_count" db:"spill_count"`
+	SpillBytes  *Bigint      `json:"spill_bytes" db:"spill_bytes"`
+	StreamTxns  *Bigint      `json:"stream_txns" db:"stream_txns"`
+	StreamCount *Bigint      `json:"stream_count" db:"stream_count"`
+	StreamBytes *Bigint      `json:"stream_bytes" db:"stream_bytes"`
+	TotalTxns   *Bigint      `json:"total_txns" db:"total_txns"`
+	TotalBytes  *Bigint      `json:"total_bytes" db:"total_bytes"`
+	StatsReset  *TimestampTZ `json:"stats_reset" db:"stats_reset"`
 }
 
 type PgStatReplicationSlotsPayload struct {

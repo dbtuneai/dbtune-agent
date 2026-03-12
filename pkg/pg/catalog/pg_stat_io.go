@@ -48,24 +48,24 @@ func NewPgStatIOCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVers
 
 // PgStatIORow represents a row from pg_stat_io (PG 16+).
 type PgStatIORow struct {
-	BackendType   *string  `json:"backend_type" db:"backend_type"`     // pg: text
-	Object        *string  `json:"object" db:"object"`                 // pg: text
-	Context       *string  `json:"context" db:"context"`               // pg: text
-	Reads         *int64   `json:"reads" db:"reads"`                   // pg: bigint
-	ReadTime      *float64 `json:"read_time" db:"read_time"`           // pg: double precision
-	Writes        *int64   `json:"writes" db:"writes"`                 // pg: bigint
-	WriteTime     *float64 `json:"write_time" db:"write_time"`         // pg: double precision
-	Writebacks    *int64   `json:"writebacks" db:"writebacks"`         // pg: bigint
-	WritebackTime *float64 `json:"writeback_time" db:"writeback_time"` // pg: double precision
-	Extends       *int64   `json:"extends" db:"extends"`               // pg: bigint
-	ExtendTime    *float64 `json:"extend_time" db:"extend_time"`       // pg: double precision
-	OpBytes       *int64   `json:"op_bytes" db:"op_bytes"`             // pg: bigint
-	Hits          *int64   `json:"hits" db:"hits"`                     // pg: bigint
-	Evictions     *int64   `json:"evictions" db:"evictions"`           // pg: bigint
-	Reuses        *int64   `json:"reuses" db:"reuses"`                 // pg: bigint
-	Fsyncs        *int64   `json:"fsyncs" db:"fsyncs"`                 // pg: bigint
-	FsyncTime     *float64 `json:"fsync_time" db:"fsync_time"`         // pg: double precision
-	StatsReset    *string  `json:"stats_reset" db:"stats_reset"`       // pg: timestamp with time zone
+	BackendType   *Text            `json:"backend_type" db:"backend_type"`
+	Object        *Text            `json:"object" db:"object"`
+	Context       *Text            `json:"context" db:"context"`
+	Reads         *Bigint          `json:"reads" db:"reads"`
+	ReadTime      *DoublePrecision `json:"read_time" db:"read_time"`
+	Writes        *Bigint          `json:"writes" db:"writes"`
+	WriteTime     *DoublePrecision `json:"write_time" db:"write_time"`
+	Writebacks    *Bigint          `json:"writebacks" db:"writebacks"`
+	WritebackTime *DoublePrecision `json:"writeback_time" db:"writeback_time"`
+	Extends       *Bigint          `json:"extends" db:"extends"`
+	ExtendTime    *DoublePrecision `json:"extend_time" db:"extend_time"`
+	OpBytes       *Bigint          `json:"op_bytes" db:"op_bytes"`
+	Hits          *Bigint          `json:"hits" db:"hits"`
+	Evictions     *Bigint          `json:"evictions" db:"evictions"`
+	Reuses        *Bigint          `json:"reuses" db:"reuses"`
+	Fsyncs        *Bigint          `json:"fsyncs" db:"fsyncs"`
+	FsyncTime     *DoublePrecision `json:"fsync_time" db:"fsync_time"`
+	StatsReset    *TimestampTZ     `json:"stats_reset" db:"stats_reset"`
 }
 
 type PgStatIOPayload struct {

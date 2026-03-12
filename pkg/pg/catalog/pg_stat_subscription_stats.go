@@ -12,11 +12,11 @@ import (
 
 // PgStatSubscriptionStatsRow represents a row from pg_stat_subscription_stats (PG 15+).
 type PgStatSubscriptionStatsRow struct {
-	SubID           *int64  `json:"subid" db:"subid"`                         // pg: oid
-	SubName         *string `json:"subname" db:"subname"`                     // pg: name
-	ApplyErrorCount *int64  `json:"apply_error_count" db:"apply_error_count"` // pg: bigint
-	SyncErrorCount  *int64  `json:"sync_error_count" db:"sync_error_count"`   // pg: bigint
-	StatsReset      *string `json:"stats_reset" db:"stats_reset"`             // pg: timestamp with time zone
+	SubID           *Oid         `json:"subid" db:"subid"`
+	SubName         *Name        `json:"subname" db:"subname"`
+	ApplyErrorCount *Bigint      `json:"apply_error_count" db:"apply_error_count"`
+	SyncErrorCount  *Bigint      `json:"sync_error_count" db:"sync_error_count"`
+	StatsReset      *TimestampTZ `json:"stats_reset" db:"stats_reset"`
 }
 
 type PgStatSubscriptionStatsPayload struct {

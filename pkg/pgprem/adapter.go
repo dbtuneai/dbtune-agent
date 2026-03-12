@@ -53,6 +53,7 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 		CatalogGetter: pg.CatalogGetter{
 			PGPool:         dbpool,
 			PGMajorVersion: pgMajorVersion,
+			HealthGate:     pg.NewHealthGate(dbpool, commonAgent.Logger()),
 		},
 		pgConfig:        pgConfig,
 		GuardrailConfig: guardrailSettings,

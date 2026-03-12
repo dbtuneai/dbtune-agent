@@ -37,11 +37,11 @@ const (
 //
 // UNION deduplicates across categories automatically.
 var pgStatUserIndexesQuery = fmt.Sprintf(`
-SELECT * FROM pg_stat_user_indexes ORDER BY COALESCE(idx_scan,0) DESC LIMIT %d
+(SELECT * FROM pg_stat_user_indexes ORDER BY COALESCE(idx_scan,0) DESC LIMIT %d)
 UNION
-SELECT * FROM pg_stat_user_indexes ORDER BY COALESCE(idx_tup_read,0) DESC LIMIT %d
+(SELECT * FROM pg_stat_user_indexes ORDER BY COALESCE(idx_tup_read,0) DESC LIMIT %d)
 UNION
-SELECT * FROM pg_stat_user_indexes WHERE COALESCE(idx_scan,0) = 0 ORDER BY COALESCE(idx_tup_read,0) DESC LIMIT %d
+(SELECT * FROM pg_stat_user_indexes WHERE COALESCE(idx_scan,0) = 0 ORDER BY COALESCE(idx_tup_read,0) DESC LIMIT %d)
 `, PgStatUserIndexesCategoryLimit, PgStatUserIndexesCategoryLimit, PgStatUserIndexesCategoryLimit)
 
 func CollectPgStatUserIndexes(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatUserIndexesRow, error) {
@@ -68,15 +68,15 @@ func NewPgStatUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) ag
 
 // PgStatUserIndexesRow represents a row from pg_stat_user_indexes.
 type PgStatUserIndexesRow struct {
-	RelID        *int64  `json:"relid" db:"relid"`                 // pg: oid
-	IndexRelID   *int64  `json:"indexrelid" db:"indexrelid"`       // pg: oid
-	SchemaName   *string `json:"schemaname" db:"schemaname"`       // pg: name
-	RelName      *string `json:"relname" db:"relname"`             // pg: name
-	IndexRelName *string `json:"indexrelname" db:"indexrelname"`   // pg: name
-	IdxScan      *int64  `json:"idx_scan" db:"idx_scan"`           // pg: bigint
-	LastIdxScan  *string `json:"last_idx_scan" db:"last_idx_scan"` // pg: timestamp with time zone
-	IdxTupRead   *int64  `json:"idx_tup_read" db:"idx_tup_read"`   // pg: bigint
-	IdxTupFetch  *int64  `json:"idx_tup_fetch" db:"idx_tup_fetch"` // pg: bigint
+	RelID        *Oid         `json:"relid" db:"relid"`
+	IndexRelID   *Oid         `json:"indexrelid" db:"indexrelid"`
+	SchemaName   *Name        `json:"schemaname" db:"schemaname"`
+	RelName      *Name        `json:"relname" db:"relname"`
+	IndexRelName *Name        `json:"indexrelname" db:"indexrelname"`
+	IdxScan      *Bigint      `json:"idx_scan" db:"idx_scan"`
+	LastIdxScan  *TimestampTZ `json:"last_idx_scan" db:"last_idx_scan"`
+	IdxTupRead   *Bigint      `json:"idx_tup_read" db:"idx_tup_read"`
+	IdxTupFetch  *Bigint      `json:"idx_tup_fetch" db:"idx_tup_fetch"`
 }
 
 type PgStatUserIndexesPayload struct {

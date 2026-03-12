@@ -96,6 +96,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		CatalogGetter: pg.CatalogGetter{
 			PGPool:         pgPool,
 			PGMajorVersion: pgMajorVersion,
+			HealthGate:     pg.NewHealthGate(pgPool, commonAgent.Logger()),
 		},
 		Config:            aivenConfig,
 		Client:            aivenClient,

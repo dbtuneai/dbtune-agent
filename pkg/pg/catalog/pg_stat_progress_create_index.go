@@ -12,22 +12,22 @@ import (
 
 // PgStatProgressCreateIndexRow represents a row from pg_stat_progress_create_index.
 type PgStatProgressCreateIndexRow struct {
-	PID              *int64  `json:"pid" db:"pid"`                           // pg: integer
-	DatID            *int64  `json:"datid" db:"datid"`                       // pg: oid
-	DatName          *string `json:"datname" db:"datname"`                   // pg: name
-	RelID            *int64  `json:"relid" db:"relid"`                       // pg: oid
-	IndexRelID       *int64  `json:"index_relid" db:"index_relid"`           // pg: oid
-	Command          *string `json:"command" db:"command"`                   // pg: text
-	Phase            *string `json:"phase" db:"phase"`                       // pg: text
-	LockersTotal     *int64  `json:"lockers_total" db:"lockers_total"`       // pg: bigint
-	LockersDone      *int64  `json:"lockers_done" db:"lockers_done"`         // pg: bigint
-	CurrentLockerPID *int64  `json:"current_locker_pid" db:"current_locker_pid"` // pg: bigint
-	BlocksTotal      *int64  `json:"blocks_total" db:"blocks_total"`         // pg: bigint
-	BlocksDone       *int64  `json:"blocks_done" db:"blocks_done"`           // pg: bigint
-	TuplesTotal      *int64  `json:"tuples_total" db:"tuples_total"`         // pg: bigint
-	TuplesDone       *int64  `json:"tuples_done" db:"tuples_done"`           // pg: bigint
-	PartitionsTotal  *int64  `json:"partitions_total" db:"partitions_total"` // pg: bigint
-	PartitionsDone   *int64  `json:"partitions_done" db:"partitions_done"`   // pg: bigint
+	PID              *Integer `json:"pid" db:"pid"`
+	DatID            *Oid     `json:"datid" db:"datid"`
+	DatName          *Name    `json:"datname" db:"datname"`
+	RelID            *Oid     `json:"relid" db:"relid"`
+	IndexRelID       *Oid     `json:"index_relid" db:"index_relid"`
+	Command          *Text    `json:"command" db:"command"`
+	Phase            *Text    `json:"phase" db:"phase"`
+	LockersTotal     *Bigint  `json:"lockers_total" db:"lockers_total"`
+	LockersDone      *Bigint  `json:"lockers_done" db:"lockers_done"`
+	CurrentLockerPID *Bigint  `json:"current_locker_pid" db:"current_locker_pid"`
+	BlocksTotal      *Bigint  `json:"blocks_total" db:"blocks_total"`
+	BlocksDone       *Bigint  `json:"blocks_done" db:"blocks_done"`
+	TuplesTotal      *Bigint  `json:"tuples_total" db:"tuples_total"`
+	TuplesDone       *Bigint  `json:"tuples_done" db:"tuples_done"`
+	PartitionsTotal  *Bigint  `json:"partitions_total" db:"partitions_total"`
+	PartitionsDone   *Bigint  `json:"partitions_done" db:"partitions_done"`
 }
 
 type PgStatProgressCreateIndexPayload struct {

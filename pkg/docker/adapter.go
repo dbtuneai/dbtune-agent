@@ -67,6 +67,7 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 		CatalogGetter: pg.CatalogGetter{
 			PGPool:         dbpool,
 			PGMajorVersion: pg.ParsePgMajorVersion(PGVersion),
+			HealthGate:     pg.NewHealthGate(dbpool, commonAgent.Logger()),
 		},
 		Config:            dockerConfig,
 		dockerClient:      cli,

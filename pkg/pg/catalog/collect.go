@@ -10,6 +10,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -54,7 +55,12 @@ func getScanner[T any]() *pgxutil.Scanner[T] {
 func CollectView[T any](pool *pgxpool.Pool, ctx context.Context, query string, viewName string) ([]T, error) {
 	ctx, cancel := EnsureTimeout(ctx)
 	defer cancel()
-	rows, err := utils.QueryWithPrefix(pool, ctx, query)
+	// Request text-format results. pgx's binary codecs for some PG types (oid →
+	// Uint32Codec, timestamptz → TimestamptzCodec) only support narrow Go types
+	// (uint32, time.Time). Our Row structs use broader types (*int64, *string) for
+	// JSON-friendliness. In text format, pgx's generic *string / integer parsers
+	// handle the conversion without codec restrictions.
+	rows, err := utils.QueryWithPrefix(pool, ctx, query, pgx.QueryResultFormats{pgtype.TextFormatCode})
 	if err != nil {
 		return nil, fmt.Errorf("failed to query %s: %w", viewName, err)
 	}

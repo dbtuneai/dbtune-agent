@@ -153,6 +153,17 @@ import (
 //   TestScan_PgStatActivity
 //     Another real system view to prove generality.
 //
+// ── GROUP 10: Defined types (named type aliases) ──────────────────
+//   Tests that pgx can scan into Go defined types (type Oid int64,
+//   type Name string, etc.) used by the catalog package for
+//   self-documenting, type-safe struct definitions.
+//
+//   TestScan_DefinedTypes
+//     Non-pointer defined types scan correctly from PG columns.
+//
+//   TestScan_DefinedTypePointers
+//     Pointer-to-defined-type fields handle NULL and non-NULL.
+//
 // ═══════════════════════════════════════════════════════════════════════
 
 // ── Shared types ────────────────────────────────────────────────────
@@ -1177,6 +1188,141 @@ func TestScan_PgStatActivity(t *testing.T) {
 	if !foundSelf {
 		t.Fatal("expected at least one row with a valid pid")
 	}
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// GROUP 10: Defined types (named type aliases)
+// ═════════════════════════════════════════════════════════════════════
+
+// Validates that pgx can scan PG columns into Go defined types (e.g.,
+// type Oid int64, type Name string) used by the catalog package.
+// This is the canary test for the named-type approach.
+func TestScan_DefinedTypes(t *testing.T) {
+	ctx := context.Background()
+	conn := connectForTest(t, ctx)
+	defer conn.Close(ctx)
+
+	// Named types mirroring catalog.Oid, catalog.Name, etc.
+	type Oid int64
+	type Name string
+	type Text string
+	type Integer int64
+	type Bigint int64
+	type Real float64
+	type DoublePrecision float64
+	type Boolean bool
+	type TimestampTZ string
+
+	type definedRow struct {
+		ID      Oid              `db:"id"`
+		Name    Name             `db:"name"`
+		Label   Text             `db:"label"`
+		Count   Integer          `db:"count"`
+		Total   Bigint           `db:"total"`
+		Ratio   Real             `db:"ratio"`
+		Precise DoublePrecision  `db:"precise"`
+		Active  Boolean          `db:"active"`
+	}
+	scanner := NewScanner[definedRow]()
+
+	rows, _ := conn.Query(ctx, `SELECT
+		42::oid AS id,
+		'myname'::name AS name,
+		'some text'::text AS label,
+		7::int4 AS count,
+		9999999999::int8 AS total,
+		1.5::float4 AS ratio,
+		3.14159::float8 AS precise,
+		true AS active`)
+	result, err := pgx.CollectRows(rows, scanner.Scan)
+	if err != nil {
+		t.Fatalf("unexpected error scanning into defined types: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result))
+	}
+	r := result[0]
+	if r.ID != 42 {
+		t.Errorf("ID: got %d, want 42", r.ID)
+	}
+	if r.Name != "myname" {
+		t.Errorf("Name: got %q, want %q", r.Name, "myname")
+	}
+	if r.Label != "some text" {
+		t.Errorf("Label: got %q, want %q", r.Label, "some text")
+	}
+	if r.Count != 7 {
+		t.Errorf("Count: got %d, want 7", r.Count)
+	}
+	if r.Total != 9999999999 {
+		t.Errorf("Total: got %d, want 9999999999", r.Total)
+	}
+	if r.Active != true {
+		t.Errorf("Active: got %v, want true", r.Active)
+	}
+}
+
+func TestScan_DefinedTypePointers(t *testing.T) {
+	ctx := context.Background()
+	conn := connectForTest(t, ctx)
+	defer conn.Close(ctx)
+
+	type Oid int64
+	type Name string
+	type Integer int64
+	type TimestampTZ string
+
+	type nullableRow struct {
+		ID    *Oid         `db:"id"`
+		Name  *Name        `db:"name"`
+		Count *Integer     `db:"count"`
+		TS    *TimestampTZ `db:"ts"`
+	}
+	scanner := NewScanner[nullableRow]()
+
+	t.Run("non-null values", func(t *testing.T) {
+		rows, _ := conn.Query(ctx,
+			`SELECT 1::oid AS id, 'test'::name AS name, 5::int4 AS count, now()::timestamptz::text AS ts`)
+		result, err := pgx.CollectRows(rows, scanner.Scan)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		r := result[0]
+		if r.ID == nil || *r.ID != 1 {
+			t.Errorf("ID: got %v, want 1", r.ID)
+		}
+		if r.Name == nil || *r.Name != "test" {
+			t.Errorf("Name: got %v, want 'test'", r.Name)
+		}
+		if r.Count == nil || *r.Count != 5 {
+			t.Errorf("Count: got %v, want 5", r.Count)
+		}
+		if r.TS == nil || *r.TS == "" {
+			t.Errorf("TS: got %v, want non-empty", r.TS)
+		}
+	})
+
+	t.Run("null values", func(t *testing.T) {
+		rows, _ := conn.Query(ctx,
+			`SELECT NULL::oid AS id, NULL::name AS name, NULL::int4 AS count, NULL::text AS ts`)
+		result, err := pgx.CollectRows(rows, scanner.Scan)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		r := result[0]
+		if r.ID != nil {
+			t.Errorf("ID should be nil, got %v", r.ID)
+		}
+		if r.Name != nil {
+			t.Errorf("Name should be nil, got %v", r.Name)
+		}
+		if r.Count != nil {
+			t.Errorf("Count should be nil, got %v", r.Count)
+		}
+		if r.TS != nil {
+			t.Errorf("TS should be nil, got %v", r.TS)
+		}
+	})
 }
 
 // ═════════════════════════════════════════════════════════════════════

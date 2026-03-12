@@ -49,25 +49,25 @@ ORDER BY n.nspname, t.relname, c.relname
 
 // PgIndexRow represents a row from pg_index joined with pg_class/pg_namespace.
 type PgIndexRow struct {
-	SchemaName     *string  `json:"schemaname" db:"schemaname"`         // pg: name
-	TableName      *string  `json:"tablename" db:"tablename"`           // pg: name
-	IndexName      *string  `json:"indexname" db:"indexname"`            // pg: name
-	IndexRelID     *int64   `json:"indexrelid" db:"indexrelid"`          // pg: oid
-	IndRelID       *int64   `json:"indrelid" db:"indrelid"`             // pg: oid
-	IndNatts       *int64   `json:"indnatts" db:"indnatts"`             // pg: int2
-	IndNKeyAtts    *int64   `json:"indnkeyatts" db:"indnkeyatts"`      // pg: int2
-	IndIsUnique    *bool    `json:"indisunique" db:"indisunique"`       // pg: bool
-	IndIsPrimary   *bool    `json:"indisprimary" db:"indisprimary"`     // pg: bool
-	IndIsExclusion *bool    `json:"indisexclusion" db:"indisexclusion"` // pg: bool
-	IndImmediate   *bool    `json:"indimmediate" db:"indimmediate"`     // pg: bool
-	IndIsClustered *bool    `json:"indisclustered" db:"indisclustered"` // pg: bool
-	IndIsValid     *bool    `json:"indisvalid" db:"indisvalid"`         // pg: bool
-	IndCheckXmin   *bool    `json:"indcheckxmin" db:"indcheckxmin"`     // pg: bool
-	IndIsReady     *bool    `json:"indisready" db:"indisready"`         // pg: bool
-	IndIsLive      *bool    `json:"indislive" db:"indislive"`           // pg: bool
-	IndIsReplIdent *bool    `json:"indisreplident" db:"indisreplident"` // pg: bool
-	RelTuples      *float64 `json:"reltuples" db:"reltuples"`           // pg: float4
-	IndexDef       *string  `json:"indexdef" db:"indexdef"`              // pg: text
+	SchemaName     *Name     `json:"schemaname" db:"schemaname"`
+	TableName      *Name     `json:"tablename" db:"tablename"`
+	IndexName      *Name     `json:"indexname" db:"indexname"`
+	IndexRelID     *Oid      `json:"indexrelid" db:"indexrelid"`
+	IndRelID       *Oid      `json:"indrelid" db:"indrelid"`
+	IndNatts       *Smallint `json:"indnatts" db:"indnatts"`
+	IndNKeyAtts    *Smallint `json:"indnkeyatts" db:"indnkeyatts"`
+	IndIsUnique    *Boolean  `json:"indisunique" db:"indisunique"`
+	IndIsPrimary   *Boolean  `json:"indisprimary" db:"indisprimary"`
+	IndIsExclusion *Boolean  `json:"indisexclusion" db:"indisexclusion"`
+	IndImmediate   *Boolean  `json:"indimmediate" db:"indimmediate"`
+	IndIsClustered *Boolean  `json:"indisclustered" db:"indisclustered"`
+	IndIsValid     *Boolean  `json:"indisvalid" db:"indisvalid"`
+	IndCheckXmin   *Boolean  `json:"indcheckxmin" db:"indcheckxmin"`
+	IndIsReady     *Boolean  `json:"indisready" db:"indisready"`
+	IndIsLive      *Boolean  `json:"indislive" db:"indislive"`
+	IndIsReplIdent *Boolean  `json:"indisreplident" db:"indisreplident"`
+	RelTuples      *Real     `json:"reltuples" db:"reltuples"`
+	IndexDef       *Text     `json:"indexdef" db:"indexdef"`
 }
 
 type PgIndexPayload struct {

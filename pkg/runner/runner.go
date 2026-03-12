@@ -9,6 +9,7 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/metrics"
+	"github.com/dbtuneai/agent/pkg/pg"
 
 	"github.com/sirupsen/logrus"
 )
@@ -17,6 +18,9 @@ import (
 func isRecoveryError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, pg.ErrDatabaseDown) {
+		return true
 	}
 	errMsg := strings.ToLower(err.Error())
 	return strings.Contains(errMsg, "failover detected") ||
@@ -172,6 +176,15 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 		lastDDLHash = data.Hash
 		return nil
 	})
+
+	// Start the health gate (if the adapter supports it) so catalog collectors
+	// short-circuit when the database is unreachable.
+	type healthGater interface {
+		StartHealthGate(ctx context.Context)
+	}
+	if hg, ok := adapter.(healthGater); ok {
+		hg.StartHealthGate(ctx)
+	}
 
 	// Catalog view collection goroutines — all follow the same get→send pattern.
 	// Stagger start times so their tickers are permanently offset, spreading

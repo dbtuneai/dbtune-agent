@@ -41,17 +41,17 @@ func NewPgStatBgwriterCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) agent
 
 // PgStatBgwriterRow represents a row from pg_stat_bgwriter.
 type PgStatBgwriterRow struct {
-	CheckpointsTimed    *int64   `json:"checkpoints_timed" db:"checkpoints_timed"`       // pg: bigint
-	CheckpointsReq      *int64   `json:"checkpoints_req" db:"checkpoints_req"`           // pg: bigint
-	CheckpointWriteTime *float64 `json:"checkpoint_write_time" db:"checkpoint_write_time"` // pg: double precision
-	CheckpointSyncTime  *float64 `json:"checkpoint_sync_time" db:"checkpoint_sync_time"` // pg: double precision
-	BuffersCheckpoint   *int64   `json:"buffers_checkpoint" db:"buffers_checkpoint"`     // pg: bigint
-	BuffersClean        *int64   `json:"buffers_clean" db:"buffers_clean"`               // pg: bigint
-	MaxwrittenClean     *int64   `json:"maxwritten_clean" db:"maxwritten_clean"`         // pg: bigint
-	BuffersBackend      *int64   `json:"buffers_backend" db:"buffers_backend"`           // pg: bigint
-	BuffersBackendFsync *int64   `json:"buffers_backend_fsync" db:"buffers_backend_fsync"` // pg: bigint
-	BuffersAlloc        *int64   `json:"buffers_alloc" db:"buffers_alloc"`               // pg: bigint
-	StatsReset          *string  `json:"stats_reset" db:"stats_reset"`                   // pg: timestamp with time zone
+	CheckpointsTimed    *Bigint          `json:"checkpoints_timed" db:"checkpoints_timed"`
+	CheckpointsReq      *Bigint          `json:"checkpoints_req" db:"checkpoints_req"`
+	CheckpointWriteTime *DoublePrecision `json:"checkpoint_write_time" db:"checkpoint_write_time"`
+	CheckpointSyncTime  *DoublePrecision `json:"checkpoint_sync_time" db:"checkpoint_sync_time"`
+	BuffersCheckpoint   *Bigint          `json:"buffers_checkpoint" db:"buffers_checkpoint"`
+	BuffersClean        *Bigint          `json:"buffers_clean" db:"buffers_clean"`
+	MaxwrittenClean     *Bigint          `json:"maxwritten_clean" db:"maxwritten_clean"`
+	BuffersBackend      *Bigint          `json:"buffers_backend" db:"buffers_backend"`
+	BuffersBackendFsync *Bigint          `json:"buffers_backend_fsync" db:"buffers_backend_fsync"`
+	BuffersAlloc        *Bigint          `json:"buffers_alloc" db:"buffers_alloc"`
+	StatsReset          *TimestampTZ     `json:"stats_reset" db:"stats_reset"`
 }
 
 type PgStatBgwriterPayload struct {

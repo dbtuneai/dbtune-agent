@@ -85,6 +85,7 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 		CatalogGetter: pg.CatalogGetter{
 			PGPool:         dbpool,
 			PGMajorVersion: pgMajorVersion,
+			HealthGate:     pg.NewHealthGate(dbpool, commonAgent.Logger()),
 		},
 		Config:   config,
 		pgConfig: pgConfig,

@@ -19,17 +19,17 @@ const pgStatProgressVacuumQuery = `SELECT * FROM pg_stat_progress_vacuum WHERE d
 
 // PgStatProgressVacuumRow represents a row from pg_stat_progress_vacuum.
 type PgStatProgressVacuumRow struct {
-	PID              *int64  `json:"pid" db:"pid"`                           // pg: integer
-	DatID            *int64  `json:"datid" db:"datid"`                       // pg: oid
-	DatName          *string `json:"datname" db:"datname"`                   // pg: name
-	RelID            *int64  `json:"relid" db:"relid"`                       // pg: oid
-	Phase            *string `json:"phase" db:"phase"`                       // pg: text
-	HeapBlksTotal    *int64  `json:"heap_blks_total" db:"heap_blks_total"`   // pg: bigint
-	HeapBlksScanned  *int64  `json:"heap_blks_scanned" db:"heap_blks_scanned"` // pg: bigint
-	HeapBlksVacuumed *int64  `json:"heap_blks_vacuumed" db:"heap_blks_vacuumed"` // pg: bigint
-	IndexVacuumCount *int64  `json:"index_vacuum_count" db:"index_vacuum_count"` // pg: bigint
-	MaxDeadTuples    *int64  `json:"max_dead_tuples" db:"max_dead_tuples"`   // pg: bigint
-	NumDeadTuples    *int64  `json:"num_dead_tuples" db:"num_dead_tuples"`   // pg: bigint
+	PID              *Integer `json:"pid" db:"pid"`
+	DatID            *Oid     `json:"datid" db:"datid"`
+	DatName          *Name    `json:"datname" db:"datname"`
+	RelID            *Oid     `json:"relid" db:"relid"`
+	Phase            *Text    `json:"phase" db:"phase"`
+	HeapBlksTotal    *Bigint  `json:"heap_blks_total" db:"heap_blks_total"`
+	HeapBlksScanned  *Bigint  `json:"heap_blks_scanned" db:"heap_blks_scanned"`
+	HeapBlksVacuumed *Bigint  `json:"heap_blks_vacuumed" db:"heap_blks_vacuumed"`
+	IndexVacuumCount *Bigint  `json:"index_vacuum_count" db:"index_vacuum_count"`
+	MaxDeadTuples    *Bigint  `json:"max_dead_tuples" db:"max_dead_tuples"`
+	NumDeadTuples    *Bigint  `json:"num_dead_tuples" db:"num_dead_tuples"`
 }
 
 type PgStatProgressVacuumPayload struct {
