@@ -74,7 +74,6 @@ type PatroniClusterResponse struct {
 
 // getPatroniClusterStatus queries the Patroni REST API to get the current cluster leader.
 func (adapter *PatroniAdapter) getPatroniClusterStatus(ctx context.Context) (*PatroniClusterStatus, error) {
-
 	// Create a new request with context
 	req, err := http.NewRequestWithContext(ctx, "GET", adapter.PatroniConfig.PatroniAPIURL+"/cluster", nil)
 	if err != nil {
@@ -156,7 +155,7 @@ func (adapter *PatroniAdapter) isClusterHealthy() (bool, error) {
 
 // CheckForFailover checks if a failover has occurred since last check.
 // Returns FailoverDetectedError if primary changed or cluster unhealthy, nil otherwise.
-func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
+func (adapter *PatroniAdapter) CheckForFailover(_ context.Context) error {
 	logger := adapter.Logger()
 
 	// CRITICAL: During active failover recovery, block ALL operations
@@ -264,7 +263,9 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 						ErrorType: "failover_detected",
 						Timestamp: time.Now().UTC().Format(time.RFC3339),
 					}
-					adapter.SendError(errorPayload)
+					if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+						logger.Errorf("failed to send error report: %v", sendErr)
+					}
 					logger.Info("Failover notification sent to backend (cluster status unavailable)")
 				} else {
 					logger.Info("Skipping failover notification (intentional PostgreSQL restart in progress)")
@@ -305,7 +306,9 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 					ErrorType: "failover_detected",
 					Timestamp: time.Now().UTC().Format(time.RFC3339),
 				}
-				adapter.SendError(errorPayload)
+				if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+					logger.Errorf("failed to send error report: %v", sendErr)
+				}
 				logger.Info("Failover notification sent to backend (no current primary)")
 			} else {
 				logger.Info("Skipping failover notification (intentional PostgreSQL restart in progress)")
@@ -364,7 +367,9 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 				ErrorType: "failover_detected",
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 			}
-			adapter.SendError(errorPayload)
+			if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+				logger.Errorf("failed to send error report: %v", sendErr)
+			}
 			logger.Info("Failover notification sent to backend")
 		} else {
 			logger.Info("Skipping failover notification (intentional PostgreSQL restart in progress)")

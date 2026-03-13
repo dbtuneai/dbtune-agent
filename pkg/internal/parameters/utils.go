@@ -27,7 +27,7 @@ func FindRecommendedKnob(config []agent.PGConfigRow, knob string) (agent.PGConfi
 // This ensures that either all configurations are valid and can be applied, or none are applied
 // if there's a parsing error, preventing partial configuration application.
 func ParseKnobConfigurations(proposedConfig *agent.ProposedConfigResponse) ([]ParsedKnob, error) {
-	var parsedKnobs []ParsedKnob
+	parsedKnobs := make([]ParsedKnob, 0, len(proposedConfig.KnobsOverrides))
 
 	for _, knob := range proposedConfig.KnobsOverrides {
 		knobConfig, err := FindRecommendedKnob(proposedConfig.Config, knob)

@@ -31,16 +31,16 @@ func ConfigFromViper(keyValue string) (Config, error) {
 	}
 
 	// Bind environment variables directly to keys (not nested paths)
-	dbtuneConfig.BindEnv("AWS_ACCESS_KEY_ID", "DBT_AWS_ACCESS_KEY_ID")
-	dbtuneConfig.BindEnv("AWS_SECRET_ACCESS_KEY", "DBT_AWS_SECRET_ACCESS_KEY")
-	dbtuneConfig.BindEnv("AWS_REGION", "DBT_AWS_REGION")
-	dbtuneConfig.BindEnv("RDS_PARAMETER_GROUP_NAME", "DBT_RDS_PARAMETER_GROUP_NAME")
-	dbtuneConfig.BindEnv("RDS_DATABASE_IDENTIFIER", "DBT_RDS_DATABASE_IDENTIFIER")
+	_ = dbtuneConfig.BindEnv("AWS_ACCESS_KEY_ID", "DBT_AWS_ACCESS_KEY_ID")
+	_ = dbtuneConfig.BindEnv("AWS_SECRET_ACCESS_KEY", "DBT_AWS_SECRET_ACCESS_KEY")
+	_ = dbtuneConfig.BindEnv("AWS_REGION", "DBT_AWS_REGION")
+	_ = dbtuneConfig.BindEnv("RDS_PARAMETER_GROUP_NAME", "DBT_RDS_PARAMETER_GROUP_NAME")
+	_ = dbtuneConfig.BindEnv("RDS_DATABASE_IDENTIFIER", "DBT_RDS_DATABASE_IDENTIFIER")
 
 	// Bind also global environment variables as fallback for AWS credentials
-	dbtuneConfig.BindEnv("AWS_ACCESS_KEY_ID")
-	dbtuneConfig.BindEnv("AWS_SECRET_ACCESS_KEY")
-	dbtuneConfig.BindEnv("AWS_REGION")
+	_ = dbtuneConfig.BindEnv("AWS_ACCESS_KEY_ID")
+	_ = dbtuneConfig.BindEnv("AWS_SECRET_ACCESS_KEY")
+	_ = dbtuneConfig.BindEnv("AWS_REGION")
 
 	var rdsConfig Config
 	err := dbtuneConfig.Unmarshal(&rdsConfig)

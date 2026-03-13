@@ -29,7 +29,7 @@ func ConfigFromViper(key *string) (Config, error) {
 		settingConfig = viper.New()
 	}
 
-	settingConfig.BindEnv("memory_threshold", "DBT_MEMORY_THRESHOLD")
+	_ = settingConfig.BindEnv("memory_threshold", "DBT_MEMORY_THRESHOLD")
 	settingConfig.SetDefault("memory_threshold", MEMORY_THRESHOLD_DEFAULT)
 
 	var settings Config

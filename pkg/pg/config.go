@@ -41,11 +41,11 @@ func ConfigFromViper(key *string) (Config, error) {
 		dbtuneConfig = viper.GetViper()
 	}
 
-	dbtuneConfig.BindEnv("connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
-	dbtuneConfig.BindEnv("service_name", "DBT_POSTGRESQL_SERVICE_NAME")
-	dbtuneConfig.BindEnv("include_queries", "DBT_POSTGRESQL_INCLUDE_QUERIES")
-	dbtuneConfig.BindEnv("maximum_query_text_length", "DBT_POSTGRESQL_MAXIMUM_QUERY_TEXT_LENGTH")
-	dbtuneConfig.BindEnv("allow_restart", "DBT_POSTGRESQL_ALLOW_RESTART")
+	_ = dbtuneConfig.BindEnv("connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
+	_ = dbtuneConfig.BindEnv("service_name", "DBT_POSTGRESQL_SERVICE_NAME")
+	_ = dbtuneConfig.BindEnv("include_queries", "DBT_POSTGRESQL_INCLUDE_QUERIES")
+	_ = dbtuneConfig.BindEnv("maximum_query_text_length", "DBT_POSTGRESQL_MAXIMUM_QUERY_TEXT_LENGTH")
+	_ = dbtuneConfig.BindEnv("allow_restart", "DBT_POSTGRESQL_ALLOW_RESTART")
 
 	// Set defaults
 	dbtuneConfig.SetDefault("include_queries", true)
@@ -55,20 +55,12 @@ func ConfigFromViper(key *string) (Config, error) {
 	var pgConfig Config
 
 	// If using global viper, manually extract the nested config
-	if viper.Sub(keyValue) == nil && viper.Sub("postgres") == nil {
-		// No nested config found, try to unmarshal from environment variables via global viper
-		err := dbtuneConfig.Unmarshal(&pgConfig)
-		if err != nil {
-			return Config{}, fmt.Errorf("unable to decode into struct, %v", err)
-		}
-	} else {
-		err := dbtuneConfig.Unmarshal(&pgConfig)
-		if err != nil {
-			return Config{}, fmt.Errorf("unable to decode into struct, %v", err)
-		}
+	err := dbtuneConfig.Unmarshal(&pgConfig)
+	if err != nil {
+		return Config{}, fmt.Errorf("unable to decode into struct, %v", err)
 	}
 
-	err := utils.ValidateStruct(&pgConfig)
+	err = utils.ValidateStruct(&pgConfig)
 	if err != nil {
 		return Config{}, err
 	}

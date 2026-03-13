@@ -15,7 +15,6 @@ import (
 // DockerHardwareInfo collects hardware metrics from a Docker container using the Docker API
 func DockerHardwareInfo(client *client.Client, containerName string) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-
 		// Get container stats
 		stats, err := client.ContainerStats(ctx, containerName, false)
 		if err != nil {

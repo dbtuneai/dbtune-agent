@@ -376,7 +376,7 @@ func CreateCommonAgentWithVersion(version string) *CommonAgent {
 	client.Logger = &utils.LeveledLogrus{Logger: logger}
 
 	// Intercept the request to add the API token
-	client.RequestLogHook = func(logger retryablehttp.Logger, req *http.Request, retry int) {
+	client.RequestLogHook = func(_ retryablehttp.Logger, req *http.Request, _ int) {
 		key := req.Header.Get("DBTUNE-API-KEY")
 		if key == "" {
 			req.Header.Add("DBTUNE-API-KEY", serverUrl.ApiKey)
@@ -525,8 +525,8 @@ func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
 	wg.Wait()
 
 	// Collect errors before closing the channel
-	var errors []error
-	close(errorsChan) // Close channel after all collectors are done
+	var errors []error //nolint:prealloc // size unknown, collecting from channel
+	close(errorsChan)  // Close channel after all collectors are done
 	for err := range errorsChan {
 		errors = append(errors, err)
 	}
@@ -653,7 +653,6 @@ func (a *CommonAgent) GetProposedConfig() (*ProposedConfigResponse, error) {
 	}
 
 	return nil, nil
-
 }
 
 // SendGuardrailSignal sends a guardrail signal to the DBtune server

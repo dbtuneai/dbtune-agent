@@ -149,15 +149,12 @@ func main() {
 		if aiven.DetectConfigFromEnv() {
 			log.Println("Aiven PostgreSQL adapter detected from environment variables")
 			adapter, err = aiven.CreateAivenPostgreSQLAdapter()
-
 		} else if azureflex.DetectConfigFromEnv() {
 			log.Println("Azure Flexible Server for PostgreSQL configuration detected environment variables")
 			adapter, err = azureflex.CreateAzureFlexAdapter()
-
 		} else if docker.DetectConfigFromEnv() {
 			log.Println("Docker container adapter detected from environment variables")
 			adapter, err = docker.CreateDockerContainerAdapter()
-
 		} else if rds.DetectConfigFromEnv() {
 			// NOTE: This is because they both share the same environment variables and there's
 			// no easy distinction. Theoretically we could just let this run, as they have no functional
@@ -167,31 +164,24 @@ func main() {
 				"Ambiguous configuration detected. This can happen if using environment variables, as they" +
 					" are used for both RDS and Aurora. Please specify which using `--rds` or `--aurora`.",
 			)
-
 		} else if cloudsql.DetectConfigFromEnv() {
 			log.Println("Google Cloud SQL configuration detected from environment variables")
 			adapter, err = cloudsql.CreateCloudSQLAdapter()
-
 		} else if cnpg.DetectConfigFromEnv() {
 			log.Println("CNPG configuration detected from environment variables")
 			adapter, err = cnpg.CreateCNPGAdapter()
-
 		} else if patroni.DetectConfigFromEnv() {
 			log.Println("Patroni configuration detected from environment variables")
 			adapter, err = patroni.CreatePatroniAdapter()
-
 		} else if aiven.DetectConfigFromConfigFile() {
 			log.Println("Aiven PostgreSQL configuration detected in config file")
 			adapter, err = aiven.CreateAivenPostgreSQLAdapter()
-
 		} else if azureflex.DetectConfigFromConfigFile() {
 			log.Println("Azure Flexible Server for PostgreSQL configuration detected in config file")
 			adapter, err = azureflex.CreateAzureFlexAdapter()
-
 		} else if docker.DetectConfigFromConfigFile() {
 			log.Println("Docker container configuration detected in config file")
 			adapter, err = docker.CreateDockerContainerAdapter()
-
 		} else if configType := rds.DetectConfigFromConfigFile(); configType == rds.RDS || configType == rds.Aurora {
 			switch configType {
 			case rds.RDS:
@@ -200,18 +190,18 @@ func main() {
 			case rds.Aurora:
 				log.Println("Aurora configuration detected in config file")
 				adapter, err = rds.CreateAuroraRDSAdapter()
+			case rds.None:
+				// Already filtered by the if condition above
 			}
-		} else if cloudsql.DetectConfigFromConfigFile() {
+		} else if cloudsql.DetectConfigFromConfigFile() { //nolint:gocritic // ifElseChain: cascading adapter detection
 			log.Println("Google Cloud SQL configuration detected in config file")
 			adapter, err = cloudsql.CreateCloudSQLAdapter()
 		} else if cnpg.DetectConfigFromConfigFile() {
 			log.Println("CNPG configuration detected in config file")
 			adapter, err = cnpg.CreateCNPGAdapter()
-
 		} else if patroni.DetectConfigFromConfigFile() {
 			log.Println("Patroni configuration detected in config file")
 			adapter, err = patroni.CreatePatroniAdapter()
-
 		} else {
 			// NOTE: This was the previous behavior, which is consistent with our configuration.
 			// All config files have the `postgres:` subheader, which is all the local Postgres

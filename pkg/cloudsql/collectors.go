@@ -9,7 +9,7 @@ import (
 )
 
 func CloudSQLHardwareInfo(logger *logrus.Logger, config Config, cloudMonitoringClient *CloudMonitoringClient) func(ctx context.Context, metric_state *agent.MetricsState) error {
-	return func(ctx context.Context, metric_state *agent.MetricsState) error {
+	return func(_ context.Context, metric_state *agent.MetricsState) error {
 		// CPU
 		cpuUtil, err := GetCPUUtilization(cloudMonitoringClient, config.ProjectID, config.DatabaseName)
 		if err != nil {
@@ -31,8 +31,8 @@ func CloudSQLHardwareInfo(logger *logrus.Logger, config Config, cloudMonitoringC
 			logger.Errorf("failed to get Disk IOPS Read: %v", err)
 		}
 
-		diskWriteCount := metric_state.Cache.IOCountersStat.WriteCount + uint64(diskIOPSWrite.GetInt64Value())
-		diskReadCount := metric_state.Cache.IOCountersStat.ReadCount + uint64(diskIOPSRead.GetInt64Value())
+		diskWriteCount := metric_state.Cache.IOCountersStat.WriteCount + uint64(diskIOPSWrite.GetInt64Value()) //nolint:gosec // IOPS values are always positive
+		diskReadCount := metric_state.Cache.IOCountersStat.ReadCount + uint64(diskIOPSRead.GetInt64Value())    //nolint:gosec // IOPS values are always positive
 		diskTotalCount := diskWriteCount + diskReadCount
 
 		metric_state.Cache.IOCountersStat = agent.IOCounterStat{WriteCount: diskWriteCount, ReadCount: diskReadCount}
@@ -91,14 +91,14 @@ func CloudSQLHardwareInfo(logger *logrus.Logger, config Config, cloudMonitoringC
 		if err != nil {
 			logger.Errorf("failed to get memory information: %v", err)
 		}
-		memoryUsedMetric, err := metrics.NodeMemoryUsed.AsFlatValue(components.Used)
+		memoryUsedMetric, _ := metrics.NodeMemoryUsed.AsFlatValue(components.Used)
 		metric_state.AddMetric(memoryUsedMetric)
-		memoryUsedPercentageMetric, err := metrics.NodeMemoryUsedPercentage.AsFlatValue(components.UsedPercentage)
+		memoryUsedPercentageMetric, _ := metrics.NodeMemoryUsedPercentage.AsFlatValue(components.UsedPercentage)
 		metric_state.AddMetric(memoryUsedPercentageMetric)
 
-		memoryFreeableMetric, err := metrics.NodeMemoryFreeable.AsFlatValue(components.Freeable)
+		memoryFreeableMetric, _ := metrics.NodeMemoryFreeable.AsFlatValue(components.Freeable)
 		metric_state.AddMetric(memoryFreeableMetric)
-		memoryAvailablePercentageMetric, err := metrics.NodeMemoryAvailablePercentage.AsFlatValue(components.AvailablePercentage)
+		memoryAvailablePercentageMetric, _ := metrics.NodeMemoryAvailablePercentage.AsFlatValue(components.AvailablePercentage)
 		metric_state.AddMetric(memoryAvailablePercentageMetric)
 
 		return nil

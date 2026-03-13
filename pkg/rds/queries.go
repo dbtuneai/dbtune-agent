@@ -227,15 +227,15 @@ func getLastDatapoint[T RDSDatapointConstraint](datapoints []T) (*T, error) {
 }
 
 func FetchAWSConfig(
-	AWSAccessKey string,
-	AWSSecretAccessKey string,
-	AWSRegion string,
+	awsAccessKey string,
+	awsSecretAccessKey string,
+	awsRegion string,
 	ctx context.Context,
 ) (aws.Config, error) {
-	region := config.WithRegion(AWSRegion)
-	if AWSAccessKey != "" && AWSSecretAccessKey != "" {
+	region := config.WithRegion(awsRegion)
+	if awsAccessKey != "" && awsSecretAccessKey != "" {
 		// Use static credentials if provided
-		creds := credentials.NewStaticCredentialsProvider(AWSAccessKey, AWSSecretAccessKey, "")
+		creds := credentials.NewStaticCredentialsProvider(awsAccessKey, awsSecretAccessKey, "")
 		provider := config.WithCredentialsProvider(creds)
 		return config.LoadDefaultConfig(ctx, region, provider)
 	} else {
@@ -344,7 +344,7 @@ func modifiedParametersToApply(
 	applyMethod rdsTypes.ApplyMethod,
 ) ([]rdsTypes.Parameter, error) {
 	// TODO(eddie): This is N^2 as FindRecommendedKnob does it's own loop -_-
-	var modifiedParameters []rdsTypes.Parameter
+	modifiedParameters := make([]rdsTypes.Parameter, 0, len(proposedConfig.KnobsOverrides))
 	for _, knob := range proposedConfig.KnobsOverrides {
 		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
 		if err != nil {

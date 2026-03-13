@@ -25,11 +25,11 @@ func ConfigFromViper() (Config, error) {
 		dbtuneConfig = viper.New()
 	}
 
-	dbtuneConfig.BindEnv("namespace", "DBT_CNPG_NAMESPACE")
-	dbtuneConfig.BindEnv("kubeconfig_path", "DBT_CNPG_KUBECONFIG_PATH")
-	dbtuneConfig.BindEnv("cluster_name", "DBT_CNPG_CLUSTER_NAME")
-	dbtuneConfig.BindEnv("pod_name", "DBT_CNPG_POD_NAME")
-	dbtuneConfig.BindEnv("container_name", "DBT_CNPG_CONTAINER_NAME")
+	_ = dbtuneConfig.BindEnv("namespace", "DBT_CNPG_NAMESPACE")
+	_ = dbtuneConfig.BindEnv("kubeconfig_path", "DBT_CNPG_KUBECONFIG_PATH")
+	_ = dbtuneConfig.BindEnv("cluster_name", "DBT_CNPG_CLUSTER_NAME")
+	_ = dbtuneConfig.BindEnv("pod_name", "DBT_CNPG_POD_NAME")
+	_ = dbtuneConfig.BindEnv("container_name", "DBT_CNPG_CONTAINER_NAME")
 	// Default to "postgres" which is the standard container name in CNPG pods
 	dbtuneConfig.SetDefault("container_name", "postgres")
 

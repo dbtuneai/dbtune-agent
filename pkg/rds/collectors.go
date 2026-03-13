@@ -15,7 +15,7 @@ func RDSHardwareInfo(
 	clients *AWSClients,
 	logger *logrus.Logger,
 ) func(ctx context.Context, metric_state *agent.MetricsState) error {
-	return func(ctx context.Context, metric_state *agent.MetricsState) error {
+	return func(_ context.Context, metric_state *agent.MetricsState) error {
 		// PI -> granular memory used -> node_memory_used
 		if state.DBInfo.PerformanceInsightsEnabled() {
 			resourceID, err := state.DBInfo.ResourceID()

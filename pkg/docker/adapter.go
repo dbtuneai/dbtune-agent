@@ -198,20 +198,21 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	}
 
 	// Memory info
-	memLimitMetric, err := metrics.NodeMemoryTotal.AsFlatValue(int64(statsJSON.MemoryStats.Limit))
+	memLimitMetric, err := metrics.NodeMemoryTotal.AsFlatValue(statsJSON.MemoryStats.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create memory limit metric: %w", err)
 	}
 
 	// CPU info
 	var cpuCount float64
-	if containerInfo.HostConfig.NanoCPUs > 0 {
+	switch {
+	case containerInfo.HostConfig.NanoCPUs > 0:
 		// Convert from nano CPUs to actual CPU count
 		cpuCount = float64(containerInfo.HostConfig.NanoCPUs) / 1e9
-	} else if containerInfo.HostConfig.CPUQuota > 0 && containerInfo.HostConfig.CPUPeriod > 0 {
+	case containerInfo.HostConfig.CPUQuota > 0 && containerInfo.HostConfig.CPUPeriod > 0:
 		// Convert from quota/period to CPU count
 		cpuCount = float64(containerInfo.HostConfig.CPUQuota) / float64(containerInfo.HostConfig.CPUPeriod)
-	} else {
+	default:
 		// If no limits set, use the number of CPUs available to the container
 		cpuCount = float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
 	}

@@ -226,7 +226,7 @@ func (adapter *CNPGAdapter) CheckForFailover(ctx context.Context) error {
 
 // HandleFailoverDetected is called when a failover is detected.
 // It sends an error to the backend and updates tracking to the new primary.
-func (adapter *CNPGAdapter) HandleFailoverDetected(ctx context.Context, failoverErr *FailoverDetectedError) error {
+func (adapter *CNPGAdapter) HandleFailoverDetected(_ context.Context, failoverErr *FailoverDetectedError) error {
 	logger := adapter.Logger()
 
 	logger.Errorf("Failover detected: %s", failoverErr.Error())
@@ -251,7 +251,9 @@ func (adapter *CNPGAdapter) HandleFailoverDetected(ctx context.Context, failover
 		ErrorType:    "failover_detected",
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),
 	}
-	adapter.SendError(errorPayload)
+	if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+		logger.Errorf("failed to send error report: %v", sendErr)
+	}
 
 	// Update tracking to new primary
 	// IMPORTANT: Only update if NewPrimary is a valid pod name, not a placeholder

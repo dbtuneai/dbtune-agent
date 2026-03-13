@@ -24,10 +24,10 @@ func CreateServerURLs() (ServerURLs, error) {
 		dbtuneConfig = viper.New()
 	}
 
-	dbtuneConfig.BindEnv("server_url", "DBT_DBTUNE_SERVER_URL")
+	_ = dbtuneConfig.BindEnv("server_url", "DBT_DBTUNE_SERVER_URL")
 	dbtuneConfig.SetDefault("server_url", DefaultServerURL)
-	dbtuneConfig.BindEnv("api_key", "DBT_DBTUNE_API_KEY")
-	dbtuneConfig.BindEnv("database_id", "DBT_DBTUNE_DATABASE_ID")
+	_ = dbtuneConfig.BindEnv("api_key", "DBT_DBTUNE_API_KEY")
+	_ = dbtuneConfig.BindEnv("database_id", "DBT_DBTUNE_DATABASE_ID")
 
 	if dbtuneConfig == nil {
 		return ServerURLs{}, fmt.Errorf("dbtune configuration not found")

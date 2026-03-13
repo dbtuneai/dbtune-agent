@@ -14,6 +14,8 @@ import (
 	"testing"
 )
 
+const contentTypeJSON = "application/json"
+
 type Route [2]string
 
 type Action struct {
@@ -148,7 +150,7 @@ func (st SuccessfulTrip) ActionWasCalled(t *testing.T, path string, method strin
 }
 
 func postHeartbeat(req *http.Request) (*http.Response, error) {
-	if req.Header.Get("Content-Type") != "application/json" {
+	if req.Header.Get("Content-Type") != contentTypeJSON {
 		return &http.Response{
 			Status:     "415 Unsupported Media Type",
 			StatusCode: http.StatusUnsupportedMediaType,
@@ -170,7 +172,7 @@ func postHeartbeat(req *http.Request) (*http.Response, error) {
 }
 
 func postActiveConfig(req *http.Request) (*http.Response, error) {
-	if req.Header.Get("Content-Type") != "application/json" {
+	if req.Header.Get("Content-Type") != contentTypeJSON {
 		return &http.Response{
 			Status:     "415 Unsupported Media Type",
 			StatusCode: http.StatusUnsupportedMediaType,
@@ -225,7 +227,7 @@ func getConfigurations(req *http.Request) (*http.Response, error) {
 }
 
 func postLogEntries(req *http.Request) (*http.Response, error) {
-	if req.Header.Get("Content-Type") != "application/json" {
+	if req.Header.Get("Content-Type") != contentTypeJSON {
 		return &http.Response{
 			Status:     "415 Unsupported Media Type",
 			StatusCode: http.StatusUnsupportedMediaType,
@@ -247,7 +249,7 @@ func postLogEntries(req *http.Request) (*http.Response, error) {
 }
 
 func postGuardrails(req *http.Request) (*http.Response, error) {
-	if req.Header.Get("Content-Type") != "application/json" {
+	if req.Header.Get("Content-Type") != contentTypeJSON {
 		return &http.Response{
 			Status:     "415 Unsupported Media Type",
 			StatusCode: http.StatusUnsupportedMediaType,
@@ -269,7 +271,7 @@ func postGuardrails(req *http.Request) (*http.Response, error) {
 }
 
 func postMetrics(req *http.Request) (*http.Response, error) {
-	if req.Header.Get("Content-Type") != "application/json" {
+	if req.Header.Get("Content-Type") != contentTypeJSON {
 		return &http.Response{
 			Status:     "415 Unsupported Media Type",
 			StatusCode: http.StatusUnsupportedMediaType,
@@ -291,7 +293,7 @@ func postMetrics(req *http.Request) (*http.Response, error) {
 }
 
 func putSystemInfo(req *http.Request) (*http.Response, error) {
-	if req.Header.Get("Content-Type") != "application/json" {
+	if req.Header.Get("Content-Type") != contentTypeJSON {
 		return &http.Response{
 			Status:     "415 Unsupported Media Type",
 			StatusCode: http.StatusUnsupportedMediaType,

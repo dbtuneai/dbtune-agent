@@ -98,7 +98,6 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 	}
 
 	return &adpt, nil
-
 }
 
 // initializePrimaryTracking establishes the initial primary node tracking
@@ -164,7 +163,9 @@ func (adapter *PatroniAdapter) handlePossibleFailoverError(err error, context st
 			ErrorType:    "failover_detected",
 			Timestamp:    time.Now().UTC().Format(time.RFC3339),
 		}
-		adapter.SendError(errorPayload)
+		if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+			logger.Errorf("failed to send error report: %v", sendErr)
+		}
 		logger.Info("Failover notification sent to backend")
 	}
 
@@ -206,11 +207,12 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 		if failoverErr, ok := failoverCheckErr.(*FailoverDetectedError); ok {
 			// If we're in stabilization period, allow the config application to proceed
 			// This is critical for applying baseline configuration after failover
-			if failoverErr.InStabilization {
+			switch {
+			case failoverErr.InStabilization:
 				logger.Infof("[FAILOVER_RECOVERY] In stabilization period - allowing config application to proceed (baseline revert)")
 				logger.Infof("[FAILOVER_RECOVERY] Skipping standby check during stabilization to allow baseline application")
 				// Skip standby check and continue with config application
-			} else if hadRecentFailover {
+			case hadRecentFailover:
 				// We're in grace period from a PREVIOUS failover, but a NEW failover just occurred
 				// Allow this config to proceed (it's likely baseline from the previous failover)
 				// The new failover will trigger its own baseline later
@@ -218,7 +220,7 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 				logger.Infof("[FAILOVER_RECOVERY] Allowing config application to proceed (baseline from previous failover)")
 				logger.Infof("[FAILOVER_RECOVERY] New failover will be handled in next iteration")
 				// Skip standby check and continue with config application
-			} else {
+			default:
 				// Not in stabilization or grace period - block config application
 				logger.Warnf("[FAILOVER_RECOVERY] Failover check BLOCKED config application: %s", failoverErr.Message)
 				// HandleFailoverDetected was already called by CheckForFailover
@@ -258,7 +260,9 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 				ErrorType:    "standby_node_detected",
 				Timestamp:    time.Now().UTC().Format(time.RFC3339),
 			}
-			adapter.SendError(errorPayload)
+			if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+				logger.Errorf("failed to send error report: %v", sendErr)
+			}
 			return fmt.Errorf("%s", errMsg)
 		} else if err != nil {
 			logger.Warnf("Failed to check if node is standby: %v", err)
@@ -277,7 +281,7 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 	}
 
 	// Filter out Patroni-managed parameters upfront
-	var parsedKnobs []parameters.ParsedKnob
+	parsedKnobs := make([]parameters.ParsedKnob, 0, len(allKnobs))
 	for _, knob := range allKnobs {
 		if IsPatroniManagedParameter(knob.Name) {
 			logger.Warnf("Skipping Patroni-managed parameter: %s (value: %s)", knob.Name, knob.SettingValue)
@@ -398,13 +402,14 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 
 		// Check if any parameter requires restart (context='postmaster')
 		restartRequired, err := adapter.requiresPostgreSQLRestart(ctx, paramNames)
-		if err != nil {
+		switch {
+		case err != nil:
 			logger.Errorf("Failed to check for restart-required parameters: %v", err)
 			// Continue without restart check if query fails
-		} else if restartRequired {
+		case restartRequired:
 			needsRestart = true
 			logger.Info("Detected parameters that require PostgreSQL restart (context='postmaster')")
-		} else {
+		default:
 			logger.Info("No restart-required parameters detected")
 		}
 	}
@@ -473,13 +478,14 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 
 		// Try to match expected value with actual value
 		// This handles both exact matches and unit variations
-		if actualValue == expectedValue || actualSetting == expectedValue {
+		switch {
+		case actualValue == expectedValue || actualSetting == expectedValue:
 			logger.Infof("✓ Verified parameter %s = %s", knob.Name, actualValue)
-		} else if parameters.NormalizeValue(actualValue) == parameters.NormalizeValue(expectedValue) {
+		case parameters.NormalizeValue(actualValue) == parameters.NormalizeValue(expectedValue):
 			// Values match after normalization (e.g., "16384kB" vs "16MB")
 			logger.Infof("✓ Verified parameter %s = %s (matches expected %s)",
 				knob.Name, actualValue, expectedValue)
-		} else {
+		default:
 			// True mismatch - this is a critical error
 			logger.Errorf("Parameter verification FAILED for %s: expected '%s', but got '%s' from pg_settings",
 				knob.Name, expectedValue, actualValue)
