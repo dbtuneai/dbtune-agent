@@ -140,10 +140,6 @@ type AgentLooper interface {
 	SendActiveConfig(ctx context.Context, config ConfigArraySchema) error
 	GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error)
 
-	// DDL has unique hash-based dedup logic in the runner, so it stays separate.
-	GetDDL(ctx context.Context) (*DDLPayload, error)
-	SendDDL(ctx context.Context, payload *DDLPayload) error
-
 	// CatalogCollectors returns the list of catalog collection tasks.
 	CatalogCollectors() []CatalogCollector
 	// SendCatalogPayload sends an arbitrary catalog payload to the server.
@@ -621,10 +617,6 @@ func (a *CommonAgent) SendActiveConfig(ctx context.Context, config ConfigArraySc
 	}
 
 	return nil
-}
-
-func (a *CommonAgent) SendDDL(ctx context.Context, payload *DDLPayload) error {
-	return a.SendCatalogPayload(ctx, "ddl", payload)
 }
 
 // isNilPayload checks if a payload is nil, handling both interface-nil and typed-pointer-nil.

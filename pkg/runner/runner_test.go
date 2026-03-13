@@ -57,19 +57,6 @@ func (m *MockAgentLooper) SendSystemInfo(ctx context.Context, info []metrics.Fla
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) GetDDL(ctx context.Context) (*agent.DDLPayload, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*agent.DDLPayload), args.Error(1)
-}
-
-func (m *MockAgentLooper) SendDDL(ctx context.Context, payload *agent.DDLPayload) error {
-	args := m.Called(ctx, payload)
-	return args.Error(0)
-}
-
 func (m *MockAgentLooper) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	args := m.Called(ctx)
 	return args.Get(0).(agent.ConfigArraySchema), args.Error(1)
@@ -162,8 +149,6 @@ func TestCatalogSkipUnchanged(t *testing.T) {
 		mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
 		mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 		mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
-		mockAgent.On("GetDDL", mock.Anything).Return(&agent.DDLPayload{Hash: "abc123"}, nil)
-		mockAgent.On("SendDDL", mock.Anything, mock.Anything).Return(nil)
 		mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
 		mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 		mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
@@ -214,8 +199,6 @@ func TestCatalogSkipUnchanged(t *testing.T) {
 		mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
 		mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 		mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
-		mockAgent.On("GetDDL", mock.Anything).Return(&agent.DDLPayload{Hash: "abc123"}, nil)
-		mockAgent.On("SendDDL", mock.Anything, mock.Anything).Return(nil)
 		mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
 		mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 		mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
@@ -326,8 +309,6 @@ func TestRunner(t *testing.T) {
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
 
-	mockAgent.On("GetDDL", mock.Anything).Return(&agent.DDLPayload{Hash: "abc123"}, nil)
-	mockAgent.On("SendDDL", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
@@ -362,7 +343,6 @@ func TestRunnerWithErrors(t *testing.T) {
 	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, errors.New("metrics error"))
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, errors.New("system info error"))
 
-	mockAgent.On("GetDDL", mock.Anything).Return(nil, errors.New("ddl error"))
 	mockAgent.On("SendError", mock.Anything, mock.AnythingOfType("agent.ErrorPayload")).Return(nil)
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, errors.New("config error"))
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
@@ -399,8 +379,6 @@ func TestRunnerWhenGetProposedConfigReturnsAConfigThenApplyConfigShouldBeCalled(
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
 
-	mockAgent.On("GetDDL", mock.Anything).Return(&agent.DDLPayload{Hash: "abc123"}, nil)
-	mockAgent.On("SendDDL", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
 	mockAgent.On("StartHealthGate", mock.Anything).Return()
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
@@ -437,8 +415,6 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
 
-	mockAgent.On("GetDDL", mock.Anything).Return(&agent.DDLPayload{Hash: "abc123"}, nil)
-	mockAgent.On("SendDDL", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
 	mockAgent.On("StartHealthGate", mock.Anything).Return()
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
@@ -489,9 +465,6 @@ func (s *stubAgentLooper) Guardrails(ctx context.Context) *guardrails.Signal {
 	return &guardrails.Signal{Level: guardrails.Critical, Type: guardrails.Memory}
 }
 
-func (s *stubAgentLooper) GetDDL(ctx context.Context) (*agent.DDLPayload, error) {
-	return &agent.DDLPayload{}, nil
-}
 func (s *stubAgentLooper) CatalogCollectors() []agent.CatalogCollector {
 	return nil
 }
@@ -601,8 +574,6 @@ func TestRunner_CallsStartHealthGate(t *testing.T) {
 	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
-	mockAgent.On("GetDDL", mock.Anything).Return(&agent.DDLPayload{Hash: "abc123"}, nil)
-	mockAgent.On("SendDDL", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
