@@ -611,28 +611,6 @@ func TestCatalogCollectors_NilHealthGate_NoWrapping(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CatalogGetter.GetDDL — health gate short-circuit
-// ---------------------------------------------------------------------------
-
-func TestGetDDL_HealthGateDown_ReturnsErrDatabaseDown(t *testing.T) {
-	hg := &HealthGate{logger: testLogger()}
-	hg.down.Store(true)
-
-	g := &CatalogGetter{
-		HealthGate: hg,
-		// pool is nil — we should never reach it because the gate is down.
-	}
-
-	data, err := g.GetDDL(context.Background())
-	if !errors.Is(err, ErrDatabaseDown) {
-		t.Fatalf("expected ErrDatabaseDown, got %v", err)
-	}
-	if data != nil {
-		t.Fatalf("expected nil data, got %v", data)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // ErrDatabaseDown sentinel
 // ---------------------------------------------------------------------------
 

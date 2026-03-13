@@ -2,6 +2,7 @@ package pg
 
 import (
 	"context"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/pg/catalog"
@@ -43,26 +44,28 @@ func (g *CatalogGetter) StartHealthGate(ctx context.Context) {
 	}
 }
 
-func (g *CatalogGetter) GetDDL(ctx context.Context) (*agent.DDLPayload, error) {
-	ctx, err := g.prepareCtx(ctx)
-	if err != nil {
-		return nil, err
-	}
-	ddl, err := CollectDDL(g.PGPool, ctx)
-	if err != nil {
-		if g.HealthGate != nil {
-			g.HealthGate.ReportError(err)
-		}
-		return nil, err
-	}
-	return &agent.DDLPayload{DDL: ddl, Hash: HashDDL(ddl)}, nil
-}
-
 // CatalogCollectors returns all catalog collection tasks.
 func (g *CatalogGetter) CatalogCollectors() []agent.CatalogCollector {
 	p := catalog.PrepareCtx(g.prepareCtx)
 
+	pool := g.PGPool
 	collectors := []agent.CatalogCollector{
+		{
+			Name:          "ddl",
+			Interval:      1 * time.Minute,
+			SkipUnchanged: true,
+			Collect: func(ctx context.Context) (any, error) {
+				ctx, err := p(ctx)
+				if err != nil {
+					return nil, err
+				}
+				ddl, err := CollectDDL(pool, ctx)
+				if err != nil {
+					return nil, err
+				}
+				return &agent.DDLPayload{DDL: ddl, Hash: HashDDL(ddl)}, nil
+			},
+		},
 		catalog.NewPgStatsCollector(g.PGPool, p),
 		catalog.NewPgStatUserTablesCollector(g.PGPool, p),
 		catalog.NewPgClassCollector(g.PGPool, p),

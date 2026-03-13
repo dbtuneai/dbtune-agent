@@ -160,23 +160,6 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 		return nil
 	})
 
-	// DDL collection goroutine
-	var lastDDLHash string
-	go runWithTicker(ctx, 1*time.Minute, "ddl", logger, false, func(ctx context.Context) error {
-		data, err := adapter.GetDDL(ctx)
-		if err != nil {
-			return handleGetError(ctx, adapter, logger, "ddl", err)
-		}
-		if data.Hash == lastDDLHash {
-			return nil
-		}
-		if err := adapter.SendDDL(ctx, data); err != nil {
-			return err
-		}
-		lastDDLHash = data.Hash
-		return nil
-	})
-
 	// Start the health gate (if the adapter supports it) so catalog collectors
 	// short-circuit when the database is unreachable.
 	type healthGater interface {
