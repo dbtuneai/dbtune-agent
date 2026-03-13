@@ -814,7 +814,10 @@ func (adapter *PatroniAdapter) Collectors() []agent.MetricCollector {
 			Key:       "database_transactions_per_second",
 			Collector: pg.TransactionsPerSecond(pool),
 		},
-
+		{
+			Key:       "database_connections",
+			Collector: pg.Connections(pool),
+		},
 		{
 			Key:       "system_db_size",
 			Collector: pg.DatabaseSize(pool),
@@ -834,6 +837,18 @@ func (adapter *PatroniAdapter) Collectors() []agent.MetricCollector {
 		{
 			Key:       "pg_user_tables",
 			Collector: pg.PGStatUserTables(pool),
+		},
+		{
+			Key:       "pg_class",
+			Collector: pg.PGClass(pool),
+		},
+		{
+			Key:       "pg_stat_progress_vacuum",
+			Collector: pg.PGStatProgressVacuum(pool),
+		},
+		{
+			Key:       "pg_old_transactions",
+			Collector: pg.PGOldTransactions(pool),
 		},
 		{
 			Key:       "pg_bgwriter",
