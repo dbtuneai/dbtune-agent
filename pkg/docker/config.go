@@ -29,7 +29,7 @@ func ConfigFromViper(key *string) (Config, error) {
 		dbtuneConfig = viper.New()
 	}
 
-	dbtuneConfig.BindEnv("container_name", "DBT_DOCKER_CONTAINER_NAME")
+	_ = dbtuneConfig.BindEnv("container_name", "DBT_DOCKER_CONTAINER_NAME")
 
 	var dockerConfig Config
 	err := dbtuneConfig.Unmarshal(&dockerConfig)

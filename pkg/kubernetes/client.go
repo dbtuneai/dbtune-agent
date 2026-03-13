@@ -697,7 +697,6 @@ func (cc *ContainerClient) LoadAverage(ctx context.Context) (float64, error) {
 		if strings.HasPrefix(line, "machine_load_average") {
 			value := extractMetricValue(line)
 			if value >= 0 {
-
 				return value, nil
 			}
 		}
@@ -765,7 +764,7 @@ func (cc *ContainerClient) GetContainerSystemInfo(ctx context.Context) ([]metric
 	// Get disk info (total size is static)
 	diskInfo, err := cc.DiskInfo(ctx)
 	if err == nil {
-		diskSizeMetric, err := metrics.NodeDiskSize.AsFlatValue(int64(diskInfo.TotalBytes))
+		diskSizeMetric, err := metrics.NodeDiskSize.AsFlatValue(diskInfo.TotalBytes)
 		if err == nil {
 			systemInfo = append(systemInfo, diskSizeMetric)
 		}
@@ -814,7 +813,8 @@ func parseContainerIOMetrics(metricsData []byte, containerName, podName, namespa
 		}
 
 		// Extract metric name and value, accumulating across all devices
-		if strings.HasPrefix(line, "container_fs_reads_total{") {
+		switch {
+		case strings.HasPrefix(line, "container_fs_reads_total{"):
 			if val := extractMetricValue(line); val >= 0 {
 				stats.ReadsTotal += uint64(val)
 				// Capture timestamp from first matching metric
@@ -823,7 +823,7 @@ func parseContainerIOMetrics(metricsData []byte, containerName, podName, namespa
 				}
 				found = true
 			}
-		} else if strings.HasPrefix(line, "container_fs_writes_total{") {
+		case strings.HasPrefix(line, "container_fs_writes_total{"):
 			if val := extractMetricValue(line); val >= 0 {
 				stats.WritesTotal += uint64(val)
 				// Capture timestamp from first matching metric
@@ -832,12 +832,12 @@ func parseContainerIOMetrics(metricsData []byte, containerName, podName, namespa
 				}
 				found = true
 			}
-		} else if strings.HasPrefix(line, "container_blkio_device_usage_total{") && strings.Contains(line, `operation="Read"`) {
+		case strings.HasPrefix(line, "container_blkio_device_usage_total{") && strings.Contains(line, `operation="Read"`):
 			if val := extractMetricValue(line); val >= 0 {
 				stats.ReadBytesTotal += uint64(val)
 				found = true
 			}
-		} else if strings.HasPrefix(line, "container_blkio_device_usage_total{") && strings.Contains(line, `operation="Write"`) {
+		case strings.HasPrefix(line, "container_blkio_device_usage_total{") && strings.Contains(line, `operation="Write"`):
 			if val := extractMetricValue(line); val >= 0 {
 				stats.WriteBytesTotal += uint64(val)
 				found = true
@@ -873,22 +873,23 @@ func parseContainerNetworkMetrics(metricsData []byte, containerName, podName, na
 		}
 
 		// Extract network metrics, accumulating across all interfaces
-		if strings.HasPrefix(line, "container_network_receive_bytes_total{") {
+		switch {
+		case strings.HasPrefix(line, "container_network_receive_bytes_total{"):
 			if val := extractMetricValue(line); val >= 0 {
 				stats.ReceiveBytesTotal += uint64(val)
 				found = true
 			}
-		} else if strings.HasPrefix(line, "container_network_transmit_bytes_total{") {
+		case strings.HasPrefix(line, "container_network_transmit_bytes_total{"):
 			if val := extractMetricValue(line); val >= 0 {
 				stats.TransmitBytesTotal += uint64(val)
 				found = true
 			}
-		} else if strings.HasPrefix(line, "container_network_receive_packets_total{") {
+		case strings.HasPrefix(line, "container_network_receive_packets_total{"):
 			if val := extractMetricValue(line); val >= 0 {
 				stats.ReceivePacketsTotal += uint64(val)
 				found = true
 			}
-		} else if strings.HasPrefix(line, "container_network_transmit_packets_total{") {
+		case strings.HasPrefix(line, "container_network_transmit_packets_total{"):
 			if val := extractMetricValue(line); val >= 0 {
 				stats.TransmitPacketsTotal += uint64(val)
 				found = true

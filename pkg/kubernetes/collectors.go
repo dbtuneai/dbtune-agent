@@ -138,10 +138,11 @@ func CollectContainerMetrics(ctx context.Context, containerClient ContainerClien
 	state.AddMetric(memUsagePercentMetric)
 
 	// Collect I/O stats
-	ioStats, err := containerClient.IOStats(ctx)
-	if err != nil {
+	ioStats, ioErr := containerClient.IOStats(ctx)
+	switch {
+	case ioErr != nil:
 		// Might be blank on first pass
-	} else if cache.Initialized && !cache.PreviousTimestamp.IsZero() {
+	case cache.Initialized && !cache.PreviousTimestamp.IsZero():
 		// Check if cAdvisor metrics have been updated since last collection
 		// If timestamp hasn't changed, skip reporting to avoid zero deltas from stale data
 		if ioStats.Timestamp != 0 && ioStats.Timestamp == cache.PreviousCAdvisorTimestamp {
@@ -195,7 +196,7 @@ func CollectContainerMetrics(ctx context.Context, containerClient ContainerClien
 			cache.PreviousWriteBytesTotal = ioStats.WriteBytesTotal
 			cache.PreviousCAdvisorTimestamp = ioStats.Timestamp
 		}
-	} else {
+	default:
 		// First run - just store the values for next time
 		cache.PreviousReadsTotal = ioStats.ReadsTotal
 		cache.PreviousWritesTotal = ioStats.WritesTotal
@@ -205,10 +206,11 @@ func CollectContainerMetrics(ctx context.Context, containerClient ContainerClien
 	}
 
 	// Collect network stats
-	networkStats, err := containerClient.NetworkStats(ctx)
-	if err != nil {
+	networkStats, networkErr := containerClient.NetworkStats(ctx)
+	switch {
+	case networkErr != nil:
 		// Network stats might not be available
-	} else if cache.Initialized && !cache.PreviousTimestamp.IsZero() {
+	case cache.Initialized && !cache.PreviousTimestamp.IsZero():
 		// Calculate deltas for network operations
 		receiveDelta := networkStats.ReceiveBytesTotal - cache.PreviousNetworkReceiveBytes
 		sendDelta := networkStats.TransmitBytesTotal - cache.PreviousNetworkSendBytes
@@ -240,19 +242,15 @@ func CollectContainerMetrics(ctx context.Context, containerClient ContainerClien
 		// Update cache with current network values
 		cache.PreviousNetworkReceiveBytes = networkStats.ReceiveBytesTotal
 		cache.PreviousNetworkSendBytes = networkStats.TransmitBytesTotal
-	} else if networkStats != nil {
+	case networkStats != nil:
 		// First run - just store the values for next time
 		cache.PreviousNetworkReceiveBytes = networkStats.ReceiveBytesTotal
 		cache.PreviousNetworkSendBytes = networkStats.TransmitBytesTotal
 	}
 
 	// Collect disk usage (size is in system info, only usage percentage here)
-	diskInfo, err := containerClient.DiskInfo(ctx)
-	if err != nil {
-		// Disk info might not be available
-	} else {
+	if diskInfo, diskErr := containerClient.DiskInfo(ctx); diskErr == nil {
 		// Note: Disk size is now collected in PodSystemInfoCollector as it's static
-
 		// Add disk usage percentage metric (dynamic)
 		if diskUsageMetric, err := metrics.NodeDiskUsedPercentage.AsFlatValue(diskInfo.UsedPercent); err == nil {
 			state.AddMetric(diskUsageMetric)
@@ -260,10 +258,7 @@ func CollectContainerMetrics(ctx context.Context, containerClient ContainerClien
 	}
 
 	// Collect load average
-	loadAvg, err := containerClient.LoadAverage(ctx)
-	if err != nil {
-		// Load average might not be available
-	} else {
+	if loadAvg, loadErr := containerClient.LoadAverage(ctx); loadErr == nil {
 		if loadAvgMetric, err := metrics.NodeLoadAverage.AsFlatValue(loadAvg); err == nil {
 			state.AddMetric(loadAvgMetric)
 		}

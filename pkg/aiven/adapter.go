@@ -301,7 +301,6 @@ func (adapter *AivenPostgreSQLAdapter) waitForServiceState(state service.Service
 // Aiven only provides 30 second resolution data for hardware info, which we
 // need for guardrails.
 func (adapter *AivenPostgreSQLAdapter) Guardrails() *guardrails.Signal {
-
 	timeSinceLastGuardrailCheck := time.Since(adapter.State.LastGuardrailCheck)
 	if timeSinceLastGuardrailCheck < adapter.Config.MetricResolution {
 		adapter.Logger().Debugf(
@@ -606,7 +605,6 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 		} else {
 			configRows = append(configRows, row)
 		}
-
 	}
 
 	// Query for non-numeric types

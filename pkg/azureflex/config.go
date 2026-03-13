@@ -22,9 +22,9 @@ func ConfigFromViper() (Config, error) {
 		dbtuneConfig = viper.New()
 	}
 
-	dbtuneConfig.BindEnv("subscription_id", "DBT_AZURE_FLEX_SUBSCRIPTION_ID")
-	dbtuneConfig.BindEnv("resource_group_name", "DBT_AZURE_FLEX_RESOURCE_GROUP_NAME")
-	dbtuneConfig.BindEnv("server_name", "DBT_AZURE_FLEX_SERVER_NAME")
+	_ = dbtuneConfig.BindEnv("subscription_id", "DBT_AZURE_FLEX_SUBSCRIPTION_ID")
+	_ = dbtuneConfig.BindEnv("resource_group_name", "DBT_AZURE_FLEX_RESOURCE_GROUP_NAME")
+	_ = dbtuneConfig.BindEnv("server_name", "DBT_AZURE_FLEX_SERVER_NAME")
 
 	var config Config
 

@@ -10,24 +10,26 @@ import (
 	"github.com/jaypipes/ghw"
 )
 
+const unknownDiskType = "UNKNOWN"
+
 func GetDiskType(pgDriver *pgxpool.Pool) (string, error) {
 	// First we query PostgreSQL to get data directory mount point
 	dataDir, err := pg.DataDirectory(pgDriver)
 	if err != nil {
-		return "UNKNOWN", err
+		return unknownDiskType, err
 	}
 
 	// Resolve symlinks and get absolute path
 	realPath, err := filepath.EvalSymlinks(dataDir)
 	if err != nil {
-		return "UNKNOWN", err
+		return unknownDiskType, err
 	}
 
 	// Get device name using df
 	cmd := exec.Command("df", realPath)
 	output, err := cmd.Output()
 	if err != nil {
-		return "UNKNOWN", err
+		return unknownDiskType, err
 	}
 
 	// Parse df output - skip header line and get first field
@@ -43,7 +45,7 @@ func GetDiskType(pgDriver *pgxpool.Pool) (string, error) {
 	// Get block storage information using ghw
 	block, err := ghw.Block()
 	if err != nil {
-		return "UNKNOWN", err
+		return unknownDiskType, err
 	}
 
 	// Find the disk type for the device
@@ -71,5 +73,5 @@ func GetDiskType(pgDriver *pgxpool.Pool) (string, error) {
 		}
 	}
 
-	return "UNKNOWN", nil
+	return unknownDiskType, nil
 }

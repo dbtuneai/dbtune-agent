@@ -12,7 +12,7 @@ import (
 )
 
 func HardwareInfoPatroni() func(ctx context.Context, state *agent.MetricsState) error {
-	return func(ctx context.Context, state *agent.MetricsState) error {
+	return func(_ context.Context, state *agent.MetricsState) error {
 		cpuPercentage, _ := cpu.Percent(time.Millisecond*100, false) // Report the average CPU usage over 100ms
 		cpuModelMetric, _ := metrics.NodeCPUUsage.AsFlatValue(cpuPercentage[0])
 		state.AddMetric(cpuModelMetric)

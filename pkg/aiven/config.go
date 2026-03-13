@@ -38,23 +38,23 @@ func ConfigFromViper(key *string) (Config, error) {
 	}
 
 	// Bind requirement variables
-	dbtuneConfig.BindEnv("AIVEN_API_TOKEN", "DBT_AIVEN_API_TOKEN")
-	dbtuneConfig.BindEnv("AIVEN_PROJECT_NAME", "DBT_AIVEN_PROJECT_NAME")
-	dbtuneConfig.BindEnv("AIVEN_SERVICE_NAME", "DBT_AIVEN_SERVICE_NAME")
+	_ = dbtuneConfig.BindEnv("AIVEN_API_TOKEN", "DBT_AIVEN_API_TOKEN")
+	_ = dbtuneConfig.BindEnv("AIVEN_PROJECT_NAME", "DBT_AIVEN_PROJECT_NAME")
+	_ = dbtuneConfig.BindEnv("AIVEN_SERVICE_NAME", "DBT_AIVEN_SERVICE_NAME")
 
 	// This parameter is required to activate our hack to
 	// force session restarts. We do not document this.
 	// Ideally we can remove this once we get more support from
 	// Aiven's API for `random_page_cost`, `seq_page_cost` and
 	// `effective_io_concurrency`.
-	dbtuneConfig.BindEnv("AIVEN_DATABASE_NAME", "DBT_AIVEN_DATABASE_NAME")
+	_ = dbtuneConfig.BindEnv("AIVEN_DATABASE_NAME", "DBT_AIVEN_DATABASE_NAME")
 
 	// These are some lower level configuration variables we do not document.
 	// They control some behaviours of the agent w.r.t guardrails and define
 	// the resolution at which Aiven will give us metrics. This resolution
 	// prevents us from spamming their API where we do not get any new information.
 	dbtuneConfig.SetDefault("metric_resolution_seconds", DEFAULT_METRIC_RESOLUTION_SECONDS)
-	dbtuneConfig.BindEnv("AIVEN_METRIC_RESOLUTION_SECONDS", "DBT_AIVEN_METRIC_RESOLUTION_SECONDS")
+	_ = dbtuneConfig.BindEnv("AIVEN_METRIC_RESOLUTION_SECONDS", "DBT_AIVEN_METRIC_RESOLUTION_SECONDS")
 	var config Config
 	err := dbtuneConfig.Unmarshal(&config)
 	if err != nil {
@@ -68,7 +68,7 @@ func ConfigFromViper(key *string) (Config, error) {
 
 	// Since we are specifying in units of seconds, but a raw int such as 30
 	// is interpreted as nanoseconds, we need to convert it
-	config.MetricResolution = time.Duration(config.MetricResolution) * time.Second
+	config.MetricResolution *= time.Second
 	return config, nil
 }
 

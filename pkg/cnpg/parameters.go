@@ -132,7 +132,7 @@ var memoryParameterUnits = map[string]string{
 // CNPG expects memory values like "2GB", "256MB" instead of raw block counts like "262144".
 //
 // For non-memory parameters, returns the original value unchanged.
-func ConvertToCNPGFormat(name string, value string, knobConfig *agent.PGConfigRow) string {
+func ConvertToCNPGFormat(name string, value string, _ *agent.PGConfigRow) string {
 	unit, isMemoryParam := memoryParameterUnits[name]
 	if !isMemoryParam {
 		return value

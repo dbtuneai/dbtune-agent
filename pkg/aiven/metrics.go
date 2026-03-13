@@ -76,7 +76,7 @@ func asKnownMetric(name string) (MetricKnownName, error) {
 
 // FetchedHardwareMetrics is a struct that contains the latest values for each metric
 // and the maximum known timestamp. In theory the `MaximumKnownTimestamp` is the same for
-// all metrics, but we store it separately for each metric as this is not gauranteed.
+// all metrics, but we store it separately for each metric as this is not guaranteed.
 type ParsedMetric struct {
 	Name      MetricKnownName
 	Value     any

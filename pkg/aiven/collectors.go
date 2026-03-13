@@ -17,19 +17,19 @@ func AivenHardwareInfo(
 	projectName string,
 	serviceName string,
 	metricResolution time.Duration,
-	config Config,
-	State *State,
+	_ Config,
+	state *State,
 	logger *logrus.Logger,
 ) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, metricState *agent.MetricsState) error {
-		if time.Since(State.Hardware.LastChecked) < metricResolution {
+		if time.Since(state.Hardware.LastChecked) < metricResolution {
 			logger.Debugf(
 				"Hardware info already fetched in the last %s, skipping",
 				metricResolution,
 			)
 			return nil
 		}
-		State.LastHardwareInfoTime = time.Now()
+		state.LastHardwareInfoTime = time.Now()
 		fetchedMetrics, err := GetFetchedMetrics(ctx, FetchedMetricsIn{
 			Client:      client,
 			ProjectName: projectName,
@@ -89,8 +89,8 @@ func AivenHardwareInfo(
 		if okMem && memAvailable.Value != nil && memAvailable.Error == nil {
 			// NOTE: We don't need to return an error for this, it's not a critical issue,
 			// and the next call or Guardrails() will fetch the metrics again.
-			State.LastMemoryAvailablePercentage = memAvailable.ParsedMetric.Value.(float64)
-			State.LastMemoryAvailableTime = memAvailable.ParsedMetric.Timestamp
+			state.LastMemoryAvailablePercentage = memAvailable.ParsedMetric.Value.(float64)
+			state.LastMemoryAvailableTime = memAvailable.ParsedMetric.Timestamp
 		} else {
 			logger.Warnf("Failed to get memory available metric: %v", memAvailable.Error)
 		}

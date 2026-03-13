@@ -21,8 +21,8 @@ func ConfigFromViper() (Config, error) {
 		dbtuneConfig = viper.New()
 	}
 
-	dbtuneConfig.BindEnv("project_id", "DBT_GCP_PROJECT_ID")
-	dbtuneConfig.BindEnv("database_name", "DBT_GCP_DATABASE_NAME")
+	_ = dbtuneConfig.BindEnv("project_id", "DBT_GCP_PROJECT_ID")
+	_ = dbtuneConfig.BindEnv("database_name", "DBT_GCP_DATABASE_NAME")
 
 	var config Config
 

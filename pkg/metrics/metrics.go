@@ -77,7 +77,6 @@ func validatePgssDeltaItems(value interface{}) error {
 
 // NewMetric creates a new Metric object based on the provided key, value, and type.
 func NewMetric(key string, value interface{}, typeStr MetricType) (FlatValue, error) {
-
 	// Determine the type based on the provided type string
 	switch typeStr {
 	case "int", "bytes", "time":

@@ -73,7 +73,9 @@ func Runner(adapter agent.AgentLooper) {
 				ErrorType:    "metrics_error",
 				Timestamp:    time.Now().UTC().Format(time.RFC3339),
 			}
-			adapter.SendError(errorPayload)
+			if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+				logger.Errorf("failed to send error report: %v", sendErr)
+			}
 			return err
 		}
 		return adapter.SendMetrics(data)
@@ -93,7 +95,9 @@ func Runner(adapter agent.AgentLooper) {
 				ErrorType:    "system_info_error",
 				Timestamp:    time.Now().UTC().Format(time.RFC3339),
 			}
-			adapter.SendError(errorPayload)
+			if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+				logger.Errorf("failed to send error report: %v", sendErr)
+			}
 			return err
 		}
 		return adapter.SendSystemInfo(data)
@@ -113,7 +117,9 @@ func Runner(adapter agent.AgentLooper) {
 				ErrorType:    "config_error",
 				Timestamp:    time.Now().UTC().Format(time.RFC3339),
 			}
-			adapter.SendError(errorPayload)
+			if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+				logger.Errorf("failed to send error report: %v", sendErr)
+			}
 			return err
 		}
 
@@ -135,7 +141,9 @@ func Runner(adapter agent.AgentLooper) {
 					ErrorType:    errorType,
 					Timestamp:    time.Now().UTC().Format(time.RFC3339),
 				}
-				adapter.SendError(errorPayload)
+				if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+					logger.Errorf("failed to send error report: %v", sendErr)
+				}
 				return err
 			}
 

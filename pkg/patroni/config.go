@@ -28,11 +28,11 @@ func ConfigFromViper() (Config, error) {
 	}
 
 	// Bind environment variables
-	dbtuneConfig.BindEnv("node_name", "DBT_PATRONI_NODE_NAME")
-	dbtuneConfig.BindEnv("patroni_api_url", "DBT_PATRONI_API_URL")
-	dbtuneConfig.BindEnv("cluster_name", "DBT_PATRONI_CLUSTER_NAME")
-	dbtuneConfig.BindEnv("node_host", "DBT_PATRONI_NODE_HOST")
-	dbtuneConfig.BindEnv("node_port", "DBT_PATRONI_NODE_PORT")
+	_ = dbtuneConfig.BindEnv("node_name", "DBT_PATRONI_NODE_NAME")
+	_ = dbtuneConfig.BindEnv("patroni_api_url", "DBT_PATRONI_API_URL")
+	_ = dbtuneConfig.BindEnv("cluster_name", "DBT_PATRONI_CLUSTER_NAME")
+	_ = dbtuneConfig.BindEnv("node_host", "DBT_PATRONI_NODE_HOST")
+	_ = dbtuneConfig.BindEnv("node_port", "DBT_PATRONI_NODE_PORT")
 
 	// Set defaults
 	dbtuneConfig.SetDefault("node_port", DEFAULT_API_PORT)

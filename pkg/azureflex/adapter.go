@@ -21,6 +21,8 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+var parseSKURegex = regexp.MustCompile("([B,D,E])([0-9]+)(ds|ads|s|ms)(?:_v([0-9]+))?")
+
 type AzureFlexAdapter struct {
 	agent.CommonAgent
 	AzureFlexConfig Config
@@ -213,15 +215,14 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	sku := *serverInfo.SKU.Name
 
 	// TODO: separate out SKU handling and test
-	parseSKU, err := regexp.Compile("([B,D,E])([0-9]+)(ds|ads|s|ms)(?:_v([0-9]+))?")
-	matches := parseSKU.FindStringSubmatch(sku)
+	matches := parseSKURegex.FindStringSubmatch(sku)
 
 	// first elements of matches will be the whole string, so we want that plus 4 more
 	if len(matches) != 5 {
 		return nil, fmt.Errorf("Could not parse Azure SKU for System Info")
 	}
 	machineSeries := matches[1]
-	nCores, err := strconv.Atoi(matches[2])
+	nCores, _ := strconv.Atoi(matches[2])
 	machineSubSeries := matches[3]
 
 	var memGb int
@@ -381,7 +382,7 @@ func (adapter *AzureFlexAdapter) Collectors() []agent.MetricCollector {
 }
 
 func AsCollector(metricGetter func() (float64, error), metric metrics.MetricDef) func(ctx context.Context, metric_state *agent.MetricsState) error {
-	return func(ctx context.Context, metric_state *agent.MetricsState) error {
+	return func(_ context.Context, metric_state *agent.MetricsState) error {
 		metricResult, err := metricGetter()
 		if err != nil {
 			return err

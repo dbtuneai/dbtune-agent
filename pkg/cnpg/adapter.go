@@ -347,7 +347,7 @@ func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResp
 
 // getClusterName returns the CNPG cluster name from config
 // This is reliable even during failover when pods may be deleted/recreated
-func (adapter *CNPGAdapter) getClusterName(ctx context.Context) (string, error) {
+func (adapter *CNPGAdapter) getClusterName(_ context.Context) (string, error) {
 	if adapter.Config.ClusterName == "" {
 		return "", fmt.Errorf("cluster name not configured")
 	}
@@ -408,7 +408,9 @@ func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 					ErrorType:    "failover_detected",
 					Timestamp:    time.Now().UTC().Format(time.RFC3339),
 				}
-				adapter.SendError(errorPayload)
+				if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+					logger.Errorf("failed to send error report: %v", sendErr)
+				}
 			}
 
 			// Return FailoverDetectedError - runner will skip sending error and config
@@ -565,7 +567,7 @@ func (adapter *CNPGAdapter) Guardrails() *guardrails.Signal {
 			// Only call HandleFailoverDetected for NEW failovers, not during recovery status checks
 			if adapter.State.TimeSinceLastFailover() == 0 {
 				// NEW failover detected
-				adapter.HandleFailoverDetected(ctx, failoverErr)
+				adapter.HandleFailoverDetected(ctx, failoverErr) //nolint:errcheck // always returns the failoverErr as a signal, already logged internally
 			}
 			// Return nil signal since guardrails can't continue during failover
 			return nil
@@ -629,7 +631,7 @@ func (adapter *CNPGAdapter) Guardrails() *guardrails.Signal {
 	return nil
 }
 
-func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName string, containerName string, PGVersion string, logger *log.Logger) []agent.MetricCollector {
+func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName string, containerName string, pgVersion string, logger *log.Logger) []agent.MetricCollector {
 	// Get PG config for query settings
 	pgConfig, _ := pg.ConfigFromViper(nil)
 
@@ -691,11 +693,11 @@ func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName st
 	}
 
 	// Add pg_checkpointer for PostgreSQL 17+
-	majorVersion := strings.Split(PGVersion, ".")
+	majorVersion := strings.Split(pgVersion, ".")
 	if len(majorVersion) > 0 {
 		intMajorVersion, err := strconv.Atoi(majorVersion[0])
 		if err != nil {
-			logger.Warn("Failed to parse PostgreSQL major version, skipping pg_checkpointer collector", "version", PGVersion, "error", err)
+			logger.Warn("Failed to parse PostgreSQL major version, skipping pg_checkpointer collector", "version", pgVersion, "error", err)
 		} else if intMajorVersion >= 17 {
 			collectors = append(collectors, agent.MetricCollector{
 				Key:       "pg_checkpointer",
@@ -783,7 +785,10 @@ func (adapter *CNPGAdapter) CheckRestartRequired(ctx context.Context, changedPar
 	logger := adapter.Logger()
 	for rows.Next() {
 		var paramName string
-		rows.Scan(&paramName)
+		if err := rows.Scan(&paramName); err != nil {
+			logger.Errorf("failed to scan restart parameter: %v", err)
+			continue
+		}
 		logger.Infof("Parameter '%s' requires restart (context=postmaster)", paramName)
 		restartParams = append(restartParams, paramName)
 	}
