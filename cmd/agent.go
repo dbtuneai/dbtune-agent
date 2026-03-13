@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -69,7 +70,8 @@ func main() {
 
 	// Read the configuration file
 	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+		var configNotFoundErr viper.ConfigFileNotFoundError
+		if errors.As(err, &configNotFoundErr) {
 			// Config file not found; ignore the error
 			log.Println("No config file found, proceeding with environment variables only.")
 		} else {

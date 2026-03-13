@@ -56,7 +56,7 @@ func MaxConnections(pgPool *pgxpool.Pool) (uint32, error) {
 	var maxConnections uint32
 	err := utils.QueryRowWithPrefix(pgPool, context.Background(), MaxConnectionsQuery).Scan(&maxConnections)
 	if err != nil {
-		return 0, fmt.Errorf("error getting max connections: %v", err)
+		return 0, fmt.Errorf("error getting max connections: %w", err)
 	}
 
 	return maxConnections, nil

@@ -37,14 +37,14 @@ func FetchDBInfo(
 ) (DBInfo, error) {
 	rdsInstanceInfo, err := fetchRDSDBInstance(databaseIdentifier, clients, ctx)
 	if err != nil {
-		return DBInfo{}, fmt.Errorf("failed to fetch RDS instance info: %v", err)
+		return DBInfo{}, fmt.Errorf("failed to fetch RDS instance info: %w", err)
 	}
 
 	instanceClass := rdsInstanceInfo.DBInstanceClass
 	instanceType := strings.TrimPrefix(*instanceClass, "db.")
 	ec2InstanceTypeInfo, err := fetchEC2InstanceTypeInfo(ec2types.InstanceType(instanceType), clients, ctx)
 	if err != nil {
-		return DBInfo{}, fmt.Errorf("failed to fetch EC2 instance info: %v", err)
+		return DBInfo{}, fmt.Errorf("failed to fetch EC2 instance info: %w", err)
 	}
 
 	dbInfo := DBInfo{
@@ -142,7 +142,7 @@ func fetchRDSDBInstance(
 	args := &rds.DescribeDBInstancesInput{DBInstanceIdentifier: aws.String(rdsDatabaseIdentifier)}
 	describeDBInstances, err := clients.RDSClient.DescribeDBInstances(ctx, args)
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe database instance: %v", err)
+		return nil, fmt.Errorf("failed to describe database instance: %w", err)
 	}
 
 	if len(describeDBInstances.DBInstances) == 0 {
@@ -163,7 +163,7 @@ func fetchEC2InstanceTypeInfo(
 	args := &ec2.DescribeInstanceTypesInput{InstanceTypes: []ec2types.InstanceType{instanceType}}
 	describeInstanceTypes, err := clients.EC2Client.DescribeInstanceTypes(ctx, args)
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe instance type: %v", err)
+		return nil, fmt.Errorf("failed to describe instance type: %w", err)
 	}
 
 	if len(describeInstanceTypes.InstanceTypes) == 0 {

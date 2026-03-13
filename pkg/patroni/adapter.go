@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -133,7 +134,8 @@ func isRestartAlreadyInProgress(err error) bool {
 func (adapter *PatroniAdapter) checkFailoverBeforeOperation(ctx context.Context, operation string) error {
 	logger := adapter.Logger()
 	if err := adapter.CheckForFailover(ctx); err != nil {
-		if failoverErr, ok := err.(*FailoverDetectedError); ok {
+		var failoverErr *FailoverDetectedError
+		if errors.As(err, &failoverErr) {
 			logger.Infof("[FAILOVER_RECOVERY] Operations blocked during recovery: %s", failoverErr.Message)
 			return failoverErr
 		}
@@ -204,7 +206,8 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 	// This ensures we don't apply tuning parameters after a failover has occurred
 	failoverCheckErr := adapter.CheckForFailover(ctx)
 	if failoverCheckErr != nil {
-		if failoverErr, ok := failoverCheckErr.(*FailoverDetectedError); ok {
+		var failoverErr *FailoverDetectedError
+		if errors.As(failoverCheckErr, &failoverErr) {
 			// If we're in stabilization period, allow the config application to proceed
 			// This is critical for applying baseline configuration after failover
 			switch {
@@ -498,7 +501,8 @@ func (adapter *PatroniAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigR
 
 	// Final failover check after applying configuration
 	if err := adapter.CheckForFailover(ctx); err != nil {
-		if failoverErr, ok := err.(*FailoverDetectedError); ok {
+		var failoverErr *FailoverDetectedError
+		if errors.As(err, &failoverErr) {
 			// Failover detected after config application
 			// CheckForFailover already sent notification and updated LastKnownPrimary
 			return failoverErr

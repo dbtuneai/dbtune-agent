@@ -35,7 +35,7 @@ func ConfigFromViper(key *string) (Config, error) {
 	var settings Config
 	err := settingConfig.Unmarshal(&settings)
 	if err != nil {
-		return Config{}, fmt.Errorf("unable to decode into struct, %v", err)
+		return Config{}, fmt.Errorf("unable to decode into struct, %w", err)
 	}
 
 	err = utils.ValidateStruct(&settings)

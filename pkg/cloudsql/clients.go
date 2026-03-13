@@ -2,6 +2,7 @@ package cloudsql
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -29,7 +30,7 @@ func (client *SqlAdminClient) ApplyFlags(projectId string, databaseName string, 
 	// get current flag values (so we don't unset any that are already set!)
 	inst, err := client.client.Instances.Get(projectId, databaseName).Do()
 	if err != nil {
-		return fmt.Errorf("Failed to get instance settings! %v", err)
+		return fmt.Errorf("Failed to get instance settings! %w", err)
 	}
 
 	// convert those into a map for easier merging
@@ -108,16 +109,18 @@ func applyPatch(service *sqladmin.Service, projectId string, databaseName string
 
 	for !patchSuccessful {
 		_, err := service.Instances.Patch(projectId, databaseName, database).Do()
-		if e, ok := err.(*googleapi.Error); ok {
+		var e *googleapi.Error
+		switch {
+		case errors.As(err, &e):
 			if e.Errors[0].Reason == "operationInProgress" {
 				fmt.Printf("Failed to patch %s as operation in progress. Waiting 1 second...\n", databaseName)
 				time.Sleep(1 * time.Second)
 			} else {
 				return fmt.Errorf("Failed to patch %s with unrecoverable error: %v\n", databaseName, e.Errors[0].Reason)
 			}
-		} else if err != nil {
-			return fmt.Errorf("Failed to patch %s with unrecoverable error: %v\n", databaseName, err)
-		} else {
+		case err != nil:
+			return fmt.Errorf("Failed to patch %s with unrecoverable error: %w", databaseName, err)
+		default:
 			patchSuccessful = true
 		}
 	}

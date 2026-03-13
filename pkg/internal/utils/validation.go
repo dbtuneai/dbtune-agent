@@ -22,12 +22,17 @@ func ValidateStruct(s interface{}) error {
 
 	err := validate.Struct(s)
 	if err != nil {
-		if _, ok := err.(*validator.InvalidValidationError); ok {
-			return fmt.Errorf("invalid validation: %v", err)
+		var invalidErr *validator.InvalidValidationError
+		if errors.As(err, &invalidErr) {
+			return fmt.Errorf("invalid validation: %w", err)
 		}
 
+		var validationErrs validator.ValidationErrors
+		if !errors.As(err, &validationErrs) {
+			return fmt.Errorf("unexpected validation error: %w", err)
+		}
 		var errMsgs []string
-		for _, err := range err.(validator.ValidationErrors) {
+		for _, err := range validationErrs {
 			fieldName := err.Field()
 
 			// Try to get the mapstructure tag to use as field name

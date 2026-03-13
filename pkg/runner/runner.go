@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -133,7 +134,8 @@ func Runner(adapter agent.AgentLooper) {
 			err := adapter.ApplyConfig(proposedConfig)
 			if err != nil {
 				errorType := "config_apply_error"
-				if _, ok := err.(*agent.RestartNotAllowedError); ok {
+				var restartErr *agent.RestartNotAllowedError
+				if errors.As(err, &restartErr) {
 					errorType = "restart_not_allowed"
 				}
 				errorPayload := agent.ErrorPayload{
