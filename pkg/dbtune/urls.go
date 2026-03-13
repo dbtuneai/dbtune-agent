@@ -12,9 +12,9 @@ const (
 )
 
 type ServerURLs struct {
-	ServerUrl string `mapstructure:"server_url" validate:"required"`
-	ApiKey    string `mapstructure:"api_key" validate:"required"`
-	DbID      string `mapstructure:"database_id" validate:"required"`
+	ServerUrl string `mapstructure:"server_url" validate:"required,url"`
+	ApiKey    string `mapstructure:"api_key" validate:"required,uuid"`
+	DbID      string `mapstructure:"database_id" validate:"required,uuid"`
 }
 
 func CreateServerURLs() (ServerURLs, error) {
