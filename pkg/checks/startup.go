@@ -8,6 +8,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/dbtune"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -43,7 +44,7 @@ func CheckStartupRequirements() error {
 		return fmt.Errorf("unable to ping PostgreSQL database: %w", err)
 	}
 
-	err = pg.CheckPGStatStatements(dbpool)
+	err = queries.CheckPGStatStatements(dbpool)
 	if err != nil {
 		return fmt.Errorf("failed to query pg_stat_statements table: %w", err)
 	}

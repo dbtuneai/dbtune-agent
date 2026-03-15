@@ -19,6 +19,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/host"
@@ -27,7 +28,7 @@ import (
 
 type PatroniAdapter struct {
 	agent.CommonAgent
-	pg.CatalogGetter
+	agent.CatalogGetter
 	PatroniConfig   Config
 	PGDriver        *pgxpool.Pool
 	GuardrailConfig guardrails.Config
@@ -55,7 +56,7 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 		return nil, fmt.Errorf("failed to create PG driver: %w", err)
 	}
 
-	pgVersion, err := pg.PGVersion(pgPool)
+	pgVersion, err := queries.PGVersion(pgPool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
@@ -77,9 +78,10 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 		State:           &State{},
 	}
 
-	adpt.CatalogGetter = pg.CatalogGetter{
+	adpt.CatalogGetter = agent.CatalogGetter{
 		PGPool:         pgPool,
 		PGMajorVersion: pg.ParsePgMajorVersion(pgVersion),
+		PGConfig:       pgConfig,
 		HealthGate:     pg.NewHealthGate(pgPool, common.Logger()),
 		PrepareContext: func(ctx context.Context) (context.Context, error) {
 			opsCtx := adpt.State.GetOperationsContext()
@@ -317,7 +319,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 	logger.Info("Clearing postgresql.auto.conf by resetting parameters...")
 	for _, knob := range parsedKnobs {
 		logger.Infof("Resetting parameter: %s", knob.Name)
-		if err := pg.AlterSystemReset(adapter.PGDriver, knob.Name); err != nil {
+		if err := queries.AlterSystemReset(adapter.PGDriver, knob.Name); err != nil {
 			logger.Errorf("Failed to reset parameter %s: %v", knob.Name, err)
 			return fmt.Errorf("failed to reset parameter %s: %w", knob.Name, err)
 		}
@@ -325,7 +327,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 
 	// Reload configuration after reset
 	logger.Info("Reloading PostgreSQL configuration after reset...")
-	if err := pg.ReloadConfig(adapter.PGDriver); err != nil {
+	if err := queries.ReloadConfig(adapter.PGDriver); err != nil {
 		logger.Errorf("Failed to reload configuration: %v", err)
 		return fmt.Errorf("failed to reload configuration after reset: %w", err)
 	}
@@ -707,7 +709,7 @@ func (adapter *PatroniAdapter) GetActiveConfig(ctx context.Context) (agent.Confi
 	// currently active configuration. The Patroni DCS can have stale data or not
 	// reflect local overrides in postgresql.auto.conf, so we must query PostgreSQL directly.
 	logger.Info("Fetching active configuration from PostgreSQL")
-	config, err := pg.GetActiveConfig(adapter.PGDriver, opsCtx, logger)
+	config, err := queries.CollectPgSettings(adapter.PGDriver, opsCtx, logger)
 	if err != nil {
 		if failoverErr := adapter.handlePossibleFailoverError(ctx, err, "in GetActiveConfig"); failoverErr != nil {
 			logger.Infof("[FAILOVER_RECOVERY] Returning failover error to prevent empty data being sent")
@@ -720,17 +722,11 @@ func (adapter *PatroniAdapter) GetActiveConfig(ctx context.Context) (agent.Confi
 	// These parameters are managed by Patroni (e.g., during failover) and should not trigger
 	// backend notifications about configuration drift
 	filteredConfig := make(agent.ConfigArraySchema, 0, len(config))
-	for _, param := range config {
-		// Type assert to PGConfigRow to access the Name field
-		if row, ok := param.(agent.PGConfigRow); ok {
-			if !IsPatroniManagedParameter(row.Name) {
-				filteredConfig = append(filteredConfig, param)
-			} else {
-				logger.Debugf("Filtering out Patroni-managed parameter from active config: %s", row.Name)
-			}
+	for _, row := range config {
+		if !IsPatroniManagedParameter(row.Name) {
+			filteredConfig = append(filteredConfig, row)
 		} else {
-			// If type assertion fails, include the parameter to be safe
-			filteredConfig = append(filteredConfig, param)
+			logger.Debugf("Filtering out Patroni-managed parameter from active config: %s", row.Name)
 		}
 	}
 
@@ -746,7 +742,7 @@ func (adapter *PatroniAdapter) GetSystemInfo(ctx context.Context) ([]metrics.Fla
 		return nil, err
 	}
 
-	pgVersion, err := pg.PGVersion(adapter.PGDriver)
+	pgVersion, err := queries.PGVersion(adapter.PGDriver)
 	if err != nil {
 		if failoverErr := adapter.handlePossibleFailoverError(ctx, err, "in GetSystemInfo (PGVersion)"); failoverErr != nil {
 			return nil, failoverErr
@@ -754,7 +750,7 @@ func (adapter *PatroniAdapter) GetSystemInfo(ctx context.Context) ([]metrics.Fla
 		return nil, err
 	}
 
-	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
+	maxConnections, err := queries.MaxConnections(adapter.PGDriver)
 	if err != nil {
 		if failoverErr := adapter.handlePossibleFailoverError(ctx, err, "in GetSystemInfo (MaxConnections)"); failoverErr != nil {
 			return nil, failoverErr
@@ -827,7 +823,7 @@ func (adapter *PatroniAdapter) Guardrails(ctx context.Context) *guardrails.Signa
 }
 
 func (adapter *PatroniAdapter) Collectors() []agent.MetricCollector {
-	collectors := pg.DefaultMetricCollectors(adapter.PGDriver, adapter.pgConfig)
+	collectors := agent.DefaultMetricCollectors(adapter.PGDriver, adapter.pgConfig)
 	return append(collectors, agent.MetricCollector{
 		Key:       "hardware",
 		Collector: HardwareInfoPatroni(),

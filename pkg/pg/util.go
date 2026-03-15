@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -34,7 +35,7 @@ func WaitPostgresReady(pgPool *pgxpool.Pool) error {
 			return fmt.Errorf("timeout waiting for PostgreSQL to come back online")
 		case <-time.After(1 * time.Second):
 			// Try to execute a simple query
-			_, err := utils.ExecWithPrefix(pgPool, ctx, Select1Query)
+			_, err := utils.ExecWithPrefix(pgPool, ctx, queries.Select1Query)
 			if err == nil {
 				return nil
 			}

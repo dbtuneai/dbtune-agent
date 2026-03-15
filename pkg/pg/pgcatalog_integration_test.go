@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/pg/catalog"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -75,6 +75,7 @@ func TestMain(m *testing.M) {
 			postgres.WithInitScripts(seedPath),
 			testcontainers.CustomizeRequest(testcontainers.GenericContainerRequest{
 				ContainerRequest: testcontainers.ContainerRequest{
+					Cmd: []string{"-c", "shared_preload_libraries=pg_stat_statements"},
 					HostConfigModifier: func(hc *container.HostConfig) {
 						hc.PortBindings = nat.PortMap{
 							"5432/tcp": []nat.PortBinding{
@@ -182,48 +183,198 @@ func runVersionGatedTest[T any](
 }
 
 func TestSimpleCollectors(t *testing.T) {
-	runSimpleCollectorTest(t, "pg_stats", func(pool *pgxpool.Pool, ctx context.Context) ([]catalog.PgStatsRow, error) {
-		return catalog.CollectPgStats(pool, ctx, catalog.PgStatsBackfillQuery(catalog.PgStatsBackfillBatchSize, 0))
+	runSimpleCollectorTest(t, "pg_stats", func(pool *pgxpool.Pool, ctx context.Context) ([]queries.PgStatsRow, error) {
+		return queries.CollectPgStats(pool, ctx, queries.PgStatsBackfillQuery(queries.PgStatsBackfillBatchSize, 0))
 	}, true)
-	runSimpleCollectorTest(t, "pg_stat_user_tables", catalog.CollectPgStatUserTables, true)
-	runSimpleCollectorTest(t, "pg_class", func(pool *pgxpool.Pool, ctx context.Context) ([]catalog.PgClassRow, error) {
-		return catalog.CollectPgClass(pool, ctx, catalog.PgClassBackfillQuery(catalog.PgClassBackfillBatchSize, 0))
+	runSimpleCollectorTest(t, "pg_stat_user_tables", queries.CollectPgStatUserTables, true)
+	runSimpleCollectorTest(t, "pg_class", func(pool *pgxpool.Pool, ctx context.Context) ([]queries.PgClassRow, error) {
+		return queries.CollectPgClass(pool, ctx, queries.PgClassBackfillQuery(queries.PgClassBackfillBatchSize, 0))
 	}, true)
-	runSimpleCollectorTest(t, "pg_stat_activity", catalog.CollectPgStatActivity, true)
-	runSimpleCollectorTest(t, "pg_stat_database", catalog.CollectPgStatDatabase, true)
-	runSimpleCollectorTest(t, "pg_stat_database_conflicts", catalog.CollectPgStatDatabaseConflicts, true)
-	runSimpleCollectorTest(t, "pg_stat_archiver", catalog.CollectPgStatArchiver, true)
-	runSimpleCollectorTest(t, "pg_stat_bgwriter", catalog.CollectPgStatBgwriter, true)
-	runSimpleCollectorTest(t, "pg_stat_replication", catalog.CollectPgStatReplication, false)
-	runSimpleCollectorTest(t, "pg_stat_slru", catalog.CollectPgStatSlru, true)
-	runSimpleCollectorTest(t, "pg_stat_user_indexes", catalog.CollectPgStatUserIndexes, true)
-	runSimpleCollectorTest(t, "pg_statio_user_tables", catalog.CollectPgStatioUserTables, false)
-	runSimpleCollectorTest(t, "pg_statio_user_indexes", catalog.CollectPgStatioUserIndexes, false)
-	runSimpleCollectorTest(t, "pg_stat_user_functions", catalog.CollectPgStatUserFunctions, false)
-	runSimpleCollectorTest(t, "pg_locks", catalog.CollectPgLocks, false)
-	runSimpleCollectorTest(t, "pg_stat_progress_vacuum", catalog.CollectPgStatProgressVacuum, false)
-	runSimpleCollectorTest(t, "pg_stat_progress_analyze", catalog.CollectPgStatProgressAnalyze, false)
-	runSimpleCollectorTest(t, "pg_stat_progress_create_index", catalog.CollectPgStatProgressCreateIndex, false)
-	runSimpleCollectorTest(t, "pg_prepared_xacts", catalog.CollectPgPreparedXacts, false)
-	runSimpleCollectorTest(t, "pg_replication_slots", catalog.CollectPgReplicationSlots, false)
-	runSimpleCollectorTest(t, "pg_index", catalog.CollectPgIndex, true)
-	runSimpleCollectorTest(t, "pg_stat_wal_receiver", catalog.CollectPgStatWalReceiver, false)
-	runSimpleCollectorTest(t, "pg_stat_subscription", catalog.CollectPgStatSubscription, false)
+	runSimpleCollectorTest(t, "pg_stat_activity", queries.CollectPgStatActivity, true)
+	runSimpleCollectorTest(t, "pg_stat_database", queries.CollectPgStatDatabase, true)
+	runSimpleCollectorTest(t, "pg_stat_database_conflicts", queries.CollectPgStatDatabaseConflicts, true)
+	runSimpleCollectorTest(t, "pg_stat_archiver", queries.CollectPgStatArchiver, true)
+	runSimpleCollectorTest(t, "pg_stat_bgwriter", queries.CollectPgStatBgwriter, true)
+	runSimpleCollectorTest(t, "pg_stat_replication", queries.CollectPgStatReplication, false)
+	runSimpleCollectorTest(t, "pg_stat_slru", queries.CollectPgStatSlru, true)
+	runSimpleCollectorTest(t, "pg_stat_user_indexes", queries.CollectPgStatUserIndexes, true)
+	runSimpleCollectorTest(t, "pg_statio_user_tables", queries.CollectPgStatioUserTables, false)
+	runSimpleCollectorTest(t, "pg_statio_user_indexes", queries.CollectPgStatioUserIndexes, false)
+	runSimpleCollectorTest(t, "pg_stat_user_functions", queries.CollectPgStatUserFunctions, false)
+	runSimpleCollectorTest(t, "pg_locks", queries.CollectPgLocks, false)
+	runSimpleCollectorTest(t, "pg_stat_progress_vacuum", queries.CollectPgStatProgressVacuum, false)
+	runSimpleCollectorTest(t, "pg_stat_progress_analyze", queries.CollectPgStatProgressAnalyze, false)
+	runSimpleCollectorTest(t, "pg_stat_progress_create_index", queries.CollectPgStatProgressCreateIndex, false)
+	runSimpleCollectorTest(t, "pg_prepared_xacts", queries.CollectPgPreparedXacts, false)
+	runSimpleCollectorTest(t, "pg_replication_slots", queries.CollectPgReplicationSlots, false)
+	runSimpleCollectorTest(t, "pg_index", queries.CollectPgIndex, true)
+	runSimpleCollectorTest(t, "pg_stat_wal_receiver", queries.CollectPgStatWalReceiver, false)
+	runSimpleCollectorTest(t, "pg_stat_subscription", queries.CollectPgStatSubscription, false)
 }
 
 func TestVersionGatedCollectors(t *testing.T) {
-	runVersionGatedTest(t, "pg_stat_checkpointer", 17, catalog.CollectPgStatCheckpointer)
-	runVersionGatedTest(t, "pg_stat_wal", 14, catalog.CollectPgStatWal)
-	runVersionGatedTest(t, "pg_stat_io", 16, catalog.CollectPgStatIO)
-	runVersionGatedTest(t, "pg_stat_replication_slots", 14, catalog.CollectPgStatReplicationSlots)
-	runVersionGatedTest(t, "pg_stat_recovery_prefetch", 15, catalog.CollectPgStatRecoveryPrefetch)
-	runVersionGatedTest(t, "pg_stat_subscription_stats", 15, catalog.CollectPgStatSubscriptionStats)
+	runVersionGatedTest(t, "pg_stat_checkpointer", 17, queries.CollectPgStatCheckpointer)
+	runVersionGatedTest(t, "pg_stat_wal", 14, queries.CollectPgStatWal)
+	runVersionGatedTest(t, "pg_stat_io", 16, queries.CollectPgStatIO)
+	runVersionGatedTest(t, "pg_stat_replication_slots", 14, queries.CollectPgStatReplicationSlots)
+	runVersionGatedTest(t, "pg_stat_recovery_prefetch", 15, queries.CollectPgStatRecoveryPrefetch)
+	runVersionGatedTest(t, "pg_stat_subscription_stats", 15, queries.CollectPgStatSubscriptionStats)
+}
+
+func TestPgStatStatementsCollector(t *testing.T) {
+	for _, pg := range pgInstances {
+		t.Run(fmt.Sprintf("pg%d", pg.version), func(t *testing.T) {
+			ctx := context.Background()
+			prepareCtx := func(ctx context.Context) (context.Context, error) { return ctx, nil }
+
+			// Test with query text included
+			collector := queries.PgStatStatementsCollector(pg.pool, prepareCtx, true, 1000, pg.version)
+			assert.Equal(t, "pg_stat_statements", collector.Name)
+
+			// First tick: should return rows but no deltas
+			result1, err := collector.Collect(ctx)
+			require.NoError(t, err)
+			payload1, ok := result1.(*queries.PgStatStatementsPayload)
+			require.True(t, ok, "expected *PgStatStatementsPayload")
+			assert.NotEmpty(t, payload1.Rows, "first tick should have rows on PG %d", pg.version)
+			assert.Empty(t, payload1.Deltas, "first tick should have no deltas")
+			assert.Zero(t, payload1.DeltaCount)
+
+			// Verify rows are JSON-marshalable and have required fields
+			for i, row := range payload1.Rows {
+				assert.NotNil(t, row.UserID, "userid should not be nil, row %d", i)
+				assert.NotNil(t, row.DbID, "dbid should not be nil, row %d", i)
+				assert.NotNil(t, row.QueryID, "queryid should not be nil, row %d", i)
+				assert.NotNil(t, row.Calls, "calls should not be nil, row %d", i)
+				_, err := json.Marshal(row)
+				require.NoError(t, err, "json.Marshal failed for row %d on PG %d", i, pg.version)
+			}
+
+			// Generate some query activity between snapshots
+			for i := 0; i < 5; i++ {
+				_, _ = pg.pool.Exec(ctx, fmt.Sprintf("SELECT count(*) FROM orders WHERE customer_id = %d", i+1))
+			}
+
+			// Second tick: should have both rows and deltas
+			result2, err := collector.Collect(ctx)
+			require.NoError(t, err)
+			payload2, ok := result2.(*queries.PgStatStatementsPayload)
+			require.True(t, ok)
+			assert.NotEmpty(t, payload2.Rows, "second tick should have rows on PG %d", pg.version)
+			// Deltas should exist since we ran queries between ticks
+			assert.NotEmpty(t, payload2.Deltas, "second tick should have deltas on PG %d", pg.version)
+			assert.Greater(t, payload2.DeltaCount, 0)
+			assert.Greater(t, payload2.AverageQueryRuntime, 0.0)
+
+			// Verify delta rows have positive diff fields
+			for _, delta := range payload2.Deltas {
+				assert.NotNil(t, delta.Calls)
+				assert.NotNil(t, delta.TotalExecTime)
+				assert.NotNil(t, delta.Rows)
+				assert.Greater(t, int64(*delta.Calls), int64(0), "delta calls should be positive")
+				assert.Greater(t, float64(*delta.TotalExecTime), 0.0, "delta exec time should be positive")
+				assert.Greater(t, int64(*delta.Rows), int64(0), "delta rows should be positive")
+			}
+
+			// Full payload should marshal cleanly
+			_, err = json.Marshal(payload2)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestPgStatStatementsCollectorNoQueryText(t *testing.T) {
+	for _, pg := range pgInstances {
+		t.Run(fmt.Sprintf("pg%d", pg.version), func(t *testing.T) {
+			ctx := context.Background()
+			prepareCtx := func(ctx context.Context) (context.Context, error) { return ctx, nil }
+
+			collector := queries.PgStatStatementsCollector(pg.pool, prepareCtx, false, 1000, pg.version)
+			result, err := collector.Collect(ctx)
+			require.NoError(t, err)
+			payload, ok := result.(*queries.PgStatStatementsPayload)
+			require.True(t, ok)
+			assert.NotEmpty(t, payload.Rows)
+
+			// When includeQueries=false, query and query_len should be nil
+			for i, row := range payload.Rows {
+				assert.Nil(t, row.Query, "query should be nil when includeQueries=false, row %d", i)
+				assert.Nil(t, row.QueryLen, "query_len should be nil when includeQueries=false, row %d", i)
+			}
+		})
+	}
+}
+
+func TestPgStatStatementsQueryTruncation(t *testing.T) {
+	for _, pg := range pgInstances {
+		t.Run(fmt.Sprintf("pg%d", pg.version), func(t *testing.T) {
+			ctx := context.Background()
+			prepareCtx := func(ctx context.Context) (context.Context, error) { return ctx, nil }
+
+			// Use a very short max length to test truncation
+			collector := queries.PgStatStatementsCollector(pg.pool, prepareCtx, true, 10, pg.version)
+			result, err := collector.Collect(ctx)
+			require.NoError(t, err)
+			payload, ok := result.(*queries.PgStatStatementsPayload)
+			require.True(t, ok)
+			assert.NotEmpty(t, payload.Rows)
+
+			for _, row := range payload.Rows {
+				if row.Query != nil {
+					assert.LessOrEqual(t, len(string(*row.Query)), 10,
+						"query text should be truncated to max length")
+				}
+			}
+		})
+	}
+}
+
+func TestPgStatStatementsVersionSpecificFields(t *testing.T) {
+	for _, pg := range pgInstances {
+		t.Run(fmt.Sprintf("pg%d", pg.version), func(t *testing.T) {
+			ctx := context.Background()
+			prepareCtx := func(ctx context.Context) (context.Context, error) { return ctx, nil }
+
+			collector := queries.PgStatStatementsCollector(pg.pool, prepareCtx, true, 1000, pg.version)
+			result, err := collector.Collect(ctx)
+			require.NoError(t, err)
+			payload, ok := result.(*queries.PgStatStatementsPayload)
+			require.True(t, ok)
+			require.NotEmpty(t, payload.Rows)
+
+			row := payload.Rows[0]
+
+			// All versions should have shared_blk_read_time (aliased from blk_read_time on PG13-16)
+			assert.NotNil(t, row.SharedBlkReadTime, "shared_blk_read_time should be present on PG %d", pg.version)
+			assert.NotNil(t, row.SharedBlkWriteTime, "shared_blk_write_time should be present on PG %d", pg.version)
+
+			// PG14+ should have toplevel
+			if pg.version >= 14 {
+				assert.NotNil(t, row.TopLevel, "toplevel should be present on PG %d", pg.version)
+			}
+
+			// PG15+ should have temp_blk_read_time and JIT fields
+			if pg.version >= 15 {
+				assert.NotNil(t, row.TempBlkReadTime, "temp_blk_read_time should be present on PG %d", pg.version)
+				assert.NotNil(t, row.TempBlkWriteTime, "temp_blk_write_time should be present on PG %d", pg.version)
+			}
+
+			// PG17+ should have local_blk_read_time/local_blk_write_time
+			if pg.version >= 17 {
+				assert.NotNil(t, row.LocalBlkReadTime, "local_blk_read_time should be present on PG %d", pg.version)
+				assert.NotNil(t, row.LocalBlkWriteTime, "local_blk_write_time should be present on PG %d", pg.version)
+			} else {
+				assert.Nil(t, row.LocalBlkReadTime, "local_blk_read_time should be nil on PG %d", pg.version)
+				assert.Nil(t, row.LocalBlkWriteTime, "local_blk_write_time should be nil on PG %d", pg.version)
+			}
+		})
+	}
 }
 
 func TestCollectDDL(t *testing.T) {
 	for _, pg := range pgInstances {
 		t.Run(fmt.Sprintf("pg%d", pg.version), func(t *testing.T) {
-			ddl, err := CollectDDL(pg.pool, context.Background())
+			ddl, err := queries.CollectDDL(pg.pool, context.Background())
 			require.NoError(t, err)
 			assert.Contains(t, ddl, "CREATE TABLE orders")
 			assert.Contains(t, ddl, "CREATE TABLE customers")
@@ -234,8 +385,34 @@ func TestCollectDDL(t *testing.T) {
 			assert.Contains(t, ddl, "UNIQUE")
 
 			// Hash should be a 64-char hex SHA-256
-			hash := HashDDL(ddl)
+			hash := queries.HashDDL(ddl)
 			assert.Len(t, hash, 64)
+		})
+	}
+}
+
+// TestCollectDDL_WithoutPgCatalogOnSearchPath verifies that the DDL query
+// works even when pg_catalog is not on the search_path, which happens in
+// some managed PG environments. This caught a real bug where unqualified
+// pg_format_type() failed to resolve.
+func TestCollectDDL_WithoutPgCatalogOnSearchPath(t *testing.T) {
+	for _, pg := range pgInstances {
+		t.Run(fmt.Sprintf("pg%d", pg.version), func(t *testing.T) {
+			ctx := context.Background()
+
+			// Pin a single connection so SET applies to our query.
+			conn, err := pg.pool.Acquire(ctx)
+			require.NoError(t, err)
+			defer conn.Release()
+
+			// Remove pg_catalog from search_path for this session
+			_, err = conn.Exec(ctx, "SET search_path = 'public'")
+			require.NoError(t, err)
+
+			var ddl string
+			err = conn.QueryRow(ctx, queries.CollectDDLQuery).Scan(&ddl)
+			require.NoError(t, err)
+			assert.Contains(t, ddl, "CREATE TABLE orders")
 		})
 	}
 }

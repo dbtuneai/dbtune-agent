@@ -233,10 +233,10 @@ func TestIntegration_HealthGate_MultipleCollectorsBlocked(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CatalogGetter.prepareCtx integration with real pool
+// HealthGate.Check integration with real pool
 // ---------------------------------------------------------------------------
 
-func TestIntegration_CatalogGetter_PrepareCtx_GatedByHealthGate(t *testing.T) {
+func TestIntegration_HealthGate_Check_GatesAccess(t *testing.T) {
 	require.NotEmpty(t, pgInstances, "no pgInstances available from TestMain")
 
 	inst := pgInstances[0]
@@ -246,29 +246,15 @@ func TestIntegration_CatalogGetter_PrepareCtx_GatedByHealthGate(t *testing.T) {
 	hg.Start(ctx)
 	defer hg.Stop()
 
-	var prepareCalled bool
-	g := &CatalogGetter{
-		PGPool:         inst.pool,
-		PGMajorVersion: inst.version,
-		HealthGate:     hg,
-		PrepareContext: func(ctx context.Context) (context.Context, error) {
-			prepareCalled = true
-			return ctx, nil
-		},
-	}
-
-	// Gate open — prepareCtx should call PrepareContext.
-	_, err := g.prepareCtx(ctx)
+	// Gate open — Check should pass.
+	err := hg.Check()
 	require.NoError(t, err)
-	assert.True(t, prepareCalled, "PrepareContext should be called when gate is open")
 
-	// Manually close the gate.
-	hg.down.Store(true)
-	prepareCalled = false
+	// Trip the gate via ReportError with a connection error, then verify Check fails.
+	hg.ReportError(&pgconn.ConnectError{})
 
-	_, err = g.prepareCtx(ctx)
+	err = hg.Check()
 	assert.ErrorIs(t, err, ErrDatabaseDown)
-	assert.False(t, prepareCalled, "PrepareContext should NOT be called when gate is closed")
 }
 
 // ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -26,7 +27,7 @@ const (
 // AivenPostgreSQLAdapter represents an adapter for connecting to Aiven PostgreSQL services
 type AivenPostgreSQLAdapter struct {
 	agent.CommonAgent
-	pg.CatalogGetter
+	agent.CatalogGetter
 	Config            Config
 	Client            aivenclient.Client
 	State             *State
@@ -85,7 +86,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 
 	commonAgent := agent.CreateCommonAgent()
 
-	PGVersion, err := pg.PGVersion(pgPool)
+	PGVersion, err := queries.PGVersion(pgPool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
@@ -93,9 +94,10 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 	// Create adapter
 	adapter := &AivenPostgreSQLAdapter{
 		CommonAgent: *commonAgent,
-		CatalogGetter: pg.CatalogGetter{
+		CatalogGetter: agent.CatalogGetter{
 			PGPool:         pgPool,
 			PGMajorVersion: pgMajorVersion,
+			PGConfig:       pgConfig,
 			HealthGate:     pg.NewHealthGate(pgPool, commonAgent.Logger()),
 		},
 		Config:            aivenConfig,
@@ -146,12 +148,12 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]met
 	}
 
 	// Get PostgreSQL version and max connections from database
-	pgVersion, err := pg.PGVersion(adapter.PGPool)
+	pgVersion, err := queries.PGVersion(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
 
-	maxConnections, err := pg.MaxConnections(adapter.PGPool)
+	maxConnections, err := queries.MaxConnections(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
@@ -384,7 +386,7 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails(ctx context.Context) *guardrai
 
 // AivenCollectors returns the metrics collectors for Aiven PostgreSQL
 func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
-	collectors := pg.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
+	collectors := agent.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
 	return append(collectors, agent.MetricCollector{
 		Key: "hardware",
 		Collector: AivenHardwareInfo(
@@ -506,21 +508,20 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (age
 		Context: "service",
 	})
 
-	numericRows, err := utils.QueryWithPrefix(adapter.PGPool, ctx, pg.SELECT_NUMERIC_SETTINGS)
-
+	rows, err := utils.QueryWithPrefix(adapter.PGPool, ctx, queries.SelectAllSettings)
 	if err != nil {
 		return nil, err
 	}
 
-	for numericRows.Next() {
+	for rows.Next() {
 		var row agent.PGConfigRow
-		err := numericRows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
+		err := rows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
 		if err != nil {
-			adapter.Logger().Error("Error scanning numeric row", err)
+			adapter.Logger().Error("Error scanning pg_settings row", err)
 			continue
 		}
 
-		row.Setting = pg.InferNumericType(row.Setting)
+		row.Setting = queries.InferNumericType(row.Setting)
 
 		if row.Name == "work_mem" {
 			var workMemKb int64
@@ -550,22 +551,6 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (age
 		} else {
 			configRows = append(configRows, row)
 		}
-	}
-
-	// Query for non-numeric types
-	nonNumericRows, err := utils.QueryWithPrefix(adapter.PGPool, ctx, pg.SELECT_NON_NUMERIC_SETTINGS)
-	if err != nil {
-		return nil, err
-	}
-
-	for nonNumericRows.Next() {
-		var row agent.PGConfigRow
-		err := nonNumericRows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
-		if err != nil {
-			adapter.Logger().Error("Error scanning non-numeric row", err)
-			continue
-		}
-		configRows = append(configRows, row)
 	}
 
 	return configRows, nil

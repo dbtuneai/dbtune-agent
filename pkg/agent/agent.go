@@ -11,7 +11,6 @@ import (
 	"path"
 	"reflect"
 	"runtime"
-	"strconv"
 	"sync"
 	"time"
 
@@ -21,6 +20,7 @@ import (
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/dbtuneai/agent/pkg/version"
 
 	"github.com/google/uuid"
@@ -42,87 +42,19 @@ func GetAgentID() string {
 	return sharedAgentID
 }
 
+// ConfigArraySchema is the transport type for sending configuration to the API.
 type ConfigArraySchema []any
 
-// TODO: extract PostgreSQL specific types + methods to utils/separate place
-type PGConfigRow struct {
-	Name    string      `json:"name"`
-	Setting interface{} `json:"setting"`
-	Unit    interface{} `json:"unit"`
-	Vartype string      `json:"vartype"`
-	Context string      `json:"context"`
-}
-
-// GetSettingValue returns the setting value in its appropriate type and format
-// This is needed for cases like Aurora RDS when modifying parameters
-func (p PGConfigRow) GetSettingValue() (string, error) {
-	switch p.Vartype {
-	case "integer":
-		// Handle both string and number JSON representations
-		var val int64
-		switch v := p.Setting.(type) {
-		case int:
-			val = int64(v)
-		case int64:
-			val = v
-		case float64:
-			val = int64(v)
-		case string:
-			parsed, err := strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				return "", fmt.Errorf("failed to parse integer setting: %w", err)
-			}
-			val = parsed
-		default:
-			return "", fmt.Errorf("unexpected type for integer setting: %T", p.Setting)
-		}
-		return fmt.Sprintf("%d", val), nil
-
-	case "real":
-		// Handle both string and number JSON representations
-		var val float64
-		switch v := p.Setting.(type) {
-		case float64:
-			val = v
-		case int:
-			val = float64(v)
-		case int64:
-			val = float64(v)
-		case string:
-			parsed, err := strconv.ParseFloat(v, 64)
-			if err != nil {
-				return "", fmt.Errorf("failed to parse real setting: %w", err)
-			}
-			val = parsed
-		default:
-			return "", fmt.Errorf("unexpected type for real setting: %T", p.Setting)
-		}
-		return fmt.Sprintf("%.6g", val), nil
-
-	case "bool":
-		return fmt.Sprintf("%v", p.Setting), nil
-
-	case "string", "enum":
-		return fmt.Sprintf("%v", p.Setting), nil
-
-	default:
-		return fmt.Sprintf("%v", p.Setting), nil
-	}
-}
-
+// ProposedConfigResponse represents configuration recommendations from the server.
 type ProposedConfigResponse struct {
-	Config          []PGConfigRow `json:"config"`
-	KnobsOverrides  []string      `json:"knobs_overrides"`
-	KnobApplication string        `json:"knob_application"`
+	Config          []queries.PGConfigRow `json:"config"`
+	KnobsOverrides  []string              `json:"knobs_overrides"`
+	KnobApplication string                `json:"knob_application"`
 }
 
-// CatalogCollector defines a periodic catalog collection task.
-type CatalogCollector struct {
-	Name          string
-	Interval      time.Duration
-	Collect       func(ctx context.Context) (any, error)
-	SkipUnchanged bool // When true, skip send if JSON hash matches previous
-}
+// Type aliases — canonical definitions live in pkg/pg/queries.
+type PGConfigRow = queries.PGConfigRow
+type CatalogCollector = queries.CatalogCollector
 
 type AgentLooper interface {
 	// SendHeartbeat sends a heartbeat to the DBtune server
