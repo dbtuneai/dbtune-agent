@@ -12,13 +12,14 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/api/sqladmin/v1"
 )
 
 type CloudSQLAdapter struct {
 	agent.CommonAgent
-	pg.CatalogGetter
+	agent.CatalogGetter
 	State                 *State
 	CloudSQLConfig        Config
 	CloudMonitoringClient *CloudMonitoringClient
@@ -62,7 +63,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		return nil, fmt.Errorf("failed to validate settings for guardrails %w", err)
 	}
 
-	PGVersion, err := pg.PGVersion(pgPool)
+	PGVersion, err := queries.PGVersion(pgPool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
@@ -70,9 +71,10 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 	pgMajorVersion := pg.ParsePgMajorVersion(PGVersion)
 	c := &CloudSQLAdapter{
 		CommonAgent: *commonAgent,
-		CatalogGetter: pg.CatalogGetter{
+		CatalogGetter: agent.CatalogGetter{
 			PGPool:         pgPool,
 			PGMajorVersion: pgMajorVersion,
+			PGConfig:       pgConfig,
 			HealthGate:     pg.NewHealthGate(pgPool, commonAgent.Logger()),
 		},
 		State:          &State{LastGuardrailCheck: time.Now()},
@@ -132,7 +134,7 @@ func (adapter *CloudSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig 
 func (adapter *CloudSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	adapter.Logger().Debugf("Getting Active Config")
 
-	config, err := pg.GetActiveConfig(adapter.PGPool, ctx, adapter.Logger())
+	config, err := queries.CollectPgSettings(adapter.PGPool, ctx, adapter.Logger())
 	if err != nil {
 		return nil, err
 	}
@@ -140,16 +142,11 @@ func (adapter *CloudSQLAdapter) GetActiveConfig(ctx context.Context) (agent.Conf
 	// some config rows are marked as internal, we cannot control these at all and
 	// they change in a way we can't predict and so can cause tuning to fail
 	filteredConfig := make(agent.ConfigArraySchema, 0, len(config))
-
-	for _, knob := range config {
-		if k, ok := knob.(agent.PGConfigRow); ok {
-			if k.Context != "internal" {
-				filteredConfig = append(filteredConfig, k)
-			} else {
-				adapter.Logger().Debugf("Internal config option filtered out: %s", k.Name)
-			}
+	for _, row := range config {
+		if row.Context != "internal" {
+			filteredConfig = append(filteredConfig, row)
 		} else {
-			adapter.Logger().Errorf("Unexpected Config Type: %T", knob)
+			adapter.Logger().Debugf("Internal config option filtered out: %s", row.Name)
 		}
 	}
 
@@ -160,12 +157,12 @@ func (adapter *CloudSQLAdapter) GetSystemInfo(ctx context.Context) ([]metrics.Fl
 	adapter.Logger().Debugf("Getting System Info")
 
 	// Get PostgreSQL version and max connections from database
-	pgVersion, err := pg.PGVersion(adapter.PGPool)
+	pgVersion, err := queries.PGVersion(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
 
-	maxConnections, err := pg.MaxConnections(adapter.PGPool)
+	maxConnections, err := queries.MaxConnections(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +244,7 @@ func (adapter *CloudSQLAdapter) Guardrails(ctx context.Context) *guardrails.Sign
 }
 
 func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
-	collectors := pg.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
+	collectors := agent.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
 	return append(collectors, agent.MetricCollector{
 		Key:       "hardware",
 		Collector: CloudSQLHardwareInfo(adapter.Logger(), adapter.CloudSQLConfig, adapter.CloudMonitoringClient),

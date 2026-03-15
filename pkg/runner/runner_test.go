@@ -519,6 +519,136 @@ func TestRunnerCallsAllAPIActions(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Additional catalog dedup edge cases
+// ---------------------------------------------------------------------------
+
+func TestCatalogSkipUnchanged_NilDataSkipsSend(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+
+	mockAgent := new(MockAgentLooper)
+	mockAgent.On("Logger").Return(logger)
+	mockAgent.On("SendHeartbeat", mock.Anything).Return(nil)
+	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
+	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.On("StartHealthGate", mock.Anything).Return()
+
+	mockAgent.On("CatalogCollectors").Return([]agent.CatalogCollector{
+		{
+			Name:     "test_nil_data",
+			Interval: 10 * time.Millisecond,
+			Collect: func(ctx context.Context) (any, error) {
+				return nil, nil
+			},
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go Runner(ctx, mockAgent)
+	time.Sleep(200 * time.Millisecond)
+
+	mockAgent.AssertNotCalled(t, "SendCatalogPayload", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestCatalogSkipUnchanged_ErrorOnCollectSkipsSend(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+
+	mockAgent := new(MockAgentLooper)
+	mockAgent.On("Logger").Return(logger)
+	mockAgent.On("SendHeartbeat", mock.Anything).Return(nil)
+	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
+	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.On("StartHealthGate", mock.Anything).Return()
+	mockAgent.On("SendError", mock.Anything, mock.AnythingOfType("agent.ErrorPayload")).Return(nil)
+
+	mockAgent.On("CatalogCollectors").Return([]agent.CatalogCollector{
+		{
+			Name:     "test_error_collect",
+			Interval: 10 * time.Millisecond,
+			Collect: func(ctx context.Context) (any, error) {
+				return nil, errors.New("db connection lost")
+			},
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go Runner(ctx, mockAgent)
+	time.Sleep(200 * time.Millisecond)
+
+	mockAgent.AssertNotCalled(t, "SendCatalogPayload", mock.Anything, mock.Anything, mock.Anything)
+	mockAgent.AssertCalled(t, "SendError", mock.Anything, mock.AnythingOfType("agent.ErrorPayload"))
+}
+
+func TestCatalogSkipUnchanged_SendFailureDoesNotUpdateHash(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+
+	var sendCount int
+	var mu sync.Mutex
+
+	mockAgent := new(MockAgentLooper)
+	mockAgent.On("Logger").Return(logger)
+	mockAgent.On("SendHeartbeat", mock.Anything).Return(nil)
+	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
+	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.On("StartHealthGate", mock.Anything).Return()
+
+	// Return same data every time, with SkipUnchanged enabled.
+	// SendCatalogPayload always returns an error, so the hash should NOT be
+	// updated, causing every subsequent tick to retry the send.
+	mockAgent.On("CatalogCollectors").Return([]agent.CatalogCollector{
+		{
+			Name:          "test_send_fail",
+			Interval:      10 * time.Millisecond,
+			SkipUnchanged: true,
+			Collect: func(ctx context.Context) (any, error) {
+				return map[string]string{"key": "value"}, nil
+			},
+		},
+	})
+	mockAgent.On("SendCatalogPayload", mock.Anything, "test_send_fail", mock.Anything).
+		Run(func(args mock.Arguments) {
+			mu.Lock()
+			sendCount++
+			mu.Unlock()
+		}).Return(errors.New("server unavailable"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go Runner(ctx, mockAgent)
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	// Because send fails, hash is never updated, so every tick retries.
+	assert.Greater(t, sendCount, 1, "SendCatalogPayload should be retried when it fails (hash not updated)")
+}
+
+// ---------------------------------------------------------------------------
 // isRecoveryError — ErrDatabaseDown integration
 // ---------------------------------------------------------------------------
 

@@ -10,6 +10,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/docker/docker/api/types/container"
@@ -21,7 +22,7 @@ import (
 // number of CPUs available and memory limit
 type DockerContainerAdapter struct {
 	agent.CommonAgent
-	pg.CatalogGetter
+	agent.CatalogGetter
 	Config            Config
 	dockerClient      *client.Client
 	GuardrailSettings guardrails.Config
@@ -58,15 +59,16 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 	}
 
 	commonAgent := agent.CreateCommonAgent()
-	PGVersion, err := pg.PGVersion(dbpool)
+	PGVersion, err := queries.PGVersion(dbpool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
 	dockerAdapter := &DockerContainerAdapter{
 		CommonAgent: *commonAgent,
-		CatalogGetter: pg.CatalogGetter{
+		CatalogGetter: agent.CatalogGetter{
 			PGPool:         dbpool,
 			PGMajorVersion: pg.ParsePgMajorVersion(PGVersion),
+			PGConfig:       pgConfig,
 			HealthGate:     pg.NewHealthGate(dbpool, commonAgent.Logger()),
 		},
 		Config:            dockerConfig,
@@ -84,7 +86,7 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 // DockerCollectors returns the list of collectors for Docker, replacing system metrics
 // with Docker-specific ones while keeping database-specific collectors
 func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
-	collectors := pg.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
+	collectors := agent.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
 	return append(collectors, agent.MetricCollector{
 		Key:       "hardware",
 		Collector: DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
@@ -98,13 +100,13 @@ func (d *DockerContainerAdapter) GetSystemInfo(ctx context.Context) ([]metrics.F
 
 	// Get PostgreSQL version using the existing collector
 	pgDriver := d.PGPool
-	pgVersion, err := pg.PGVersion(pgDriver)
+	pgVersion, err := queries.PGVersion(pgDriver)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get max connections from PostgreSQL
-	maxConnections, err := pg.MaxConnections(pgDriver)
+	maxConnections, err := queries.MaxConnections(pgDriver)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +232,15 @@ func (d *DockerContainerAdapter) Guardrails(ctx context.Context) *guardrails.Sig
 }
 
 func (d *DockerContainerAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(d.PGPool, ctx, d.Logger())
+	rows, err := queries.CollectPgSettings(d.PGPool, ctx, d.Logger())
+	if err != nil {
+		return nil, err
+	}
+	config := make(agent.ConfigArraySchema, len(rows))
+	for i, r := range rows {
+		config[i] = r
+	}
+	return config, nil
 }
 
 func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
@@ -242,7 +252,7 @@ func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig
 	}
 
 	for _, knob := range parsedKnobs {
-		err := pg.AlterSystem(d.PGPool, knob.Name, knob.SettingValue)
+		err := queries.AlterSystem(d.PGPool, knob.Name, knob.SettingValue)
 		if err != nil {
 			return fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)
 		}
@@ -269,7 +279,7 @@ func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig
 		}
 	} else {
 		// Reload database when everything is applied
-		err := pg.ReloadConfig(d.PGPool)
+		err := queries.ReloadConfig(d.PGPool)
 		if err != nil {
 			return err
 		}

@@ -1,3 +1,6 @@
+-- Enable pg_stat_statements (shared_preload_libraries must be set at server start)
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
 -- Enable function call tracking so pg_stat_user_functions has data
 ALTER SYSTEM SET track_functions = 'all';
 SELECT pg_reload_conf();

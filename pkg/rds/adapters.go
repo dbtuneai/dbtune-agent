@@ -9,12 +9,13 @@ import (
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type RDSAdapter struct {
 	agent.CommonAgent
-	pg.CatalogGetter
+	agent.CatalogGetter
 	Config            Config
 	GuardrailSettings guardrails.Config
 	pgConfig          pg.Config
@@ -75,16 +76,17 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 
 	commonAgent := agent.CreateCommonAgent()
 	// PGVersion
-	PGVersion, err := pg.PGVersion(dbpool)
+	PGVersion, err := queries.PGVersion(dbpool)
 	if err != nil {
 		return nil, err
 	}
 	pgMajorVersion := pg.ParsePgMajorVersion(PGVersion)
 	adapter := &RDSAdapter{
 		CommonAgent: *commonAgent,
-		CatalogGetter: pg.CatalogGetter{
+		CatalogGetter: agent.CatalogGetter{
 			PGPool:         dbpool,
 			PGMajorVersion: pgMajorVersion,
+			PGConfig:       pgConfig,
 			HealthGate:     pg.NewHealthGate(dbpool, commonAgent.Logger()),
 		},
 		Config:   config,
@@ -131,7 +133,7 @@ func (adapter *RDSAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatVal
 	}
 
 	// PGVersion
-	pgVersion, err := pg.PGVersion(adapter.PGPool)
+	pgVersion, err := queries.PGVersion(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +146,7 @@ func (adapter *RDSAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatVal
 	info = append(info, version)
 
 	// MaxConnections
-	maxConnections, err := pg.MaxConnections(adapter.PGPool)
+	maxConnections, err := queries.MaxConnections(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +162,15 @@ func (adapter *RDSAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatVal
 }
 
 func (adapter *RDSAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(adapter.PGPool, ctx, adapter.Logger())
+	rows, err := queries.CollectPgSettings(adapter.PGPool, ctx, adapter.Logger())
+	if err != nil {
+		return nil, err
+	}
+	config := make(agent.ConfigArraySchema, len(rows))
+	for i, r := range rows {
+		config[i] = r
+	}
+	return config, nil
 }
 
 func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
@@ -202,7 +212,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 }
 
 func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
-	collectors := pg.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
+	collectors := agent.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
 	return append(collectors, agent.MetricCollector{
 		Key: "hardware",
 		Collector: RDSHardwareInfo(

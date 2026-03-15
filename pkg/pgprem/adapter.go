@@ -10,6 +10,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -19,7 +20,7 @@ import (
 
 type DefaultPostgreSQLAdapter struct {
 	agent.CommonAgent
-	pg.CatalogGetter
+	agent.CatalogGetter
 	pgConfig        pg.Config
 	GuardrailConfig guardrails.Config
 	PGVersion       string
@@ -42,7 +43,7 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 	}
 
 	commonAgent := agent.CreateCommonAgent()
-	PGVersion, err := pg.PGVersion(dbpool)
+	PGVersion, err := queries.PGVersion(dbpool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
@@ -50,9 +51,10 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 	pgMajorVersion := pg.ParsePgMajorVersion(PGVersion)
 	c := &DefaultPostgreSQLAdapter{
 		CommonAgent: *commonAgent,
-		CatalogGetter: pg.CatalogGetter{
+		CatalogGetter: agent.CatalogGetter{
 			PGPool:         dbpool,
 			PGMajorVersion: pgMajorVersion,
+			PGConfig:       pgConfig,
 			HealthGate:     pg.NewHealthGate(dbpool, commonAgent.Logger()),
 		},
 		pgConfig:        pgConfig,
@@ -66,7 +68,7 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 }
 
 func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollector {
-	collectors := pg.DefaultMetricCollectors(pgAdapter.PGPool, pgAdapter.pgConfig)
+	collectors := agent.DefaultMetricCollectors(pgAdapter.PGPool, pgAdapter.pgConfig)
 	return append(collectors, agent.MetricCollector{
 		Key:       "hardware",
 		Collector: HardwareInfoOnPremise(),
@@ -77,12 +79,12 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]m
 	adapter.Logger().Println("Collecting system info")
 
 	pgDriver := adapter.PGPool
-	pgVersion, err := pg.PGVersion(pgDriver)
+	pgVersion, err := queries.PGVersion(pgDriver)
 	if err != nil {
 		return nil, err
 	}
 
-	maxConnections, err := pg.MaxConnections(pgDriver)
+	maxConnections, err := queries.MaxConnections(pgDriver)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +137,15 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]m
 }
 
 func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(adapter.PGPool, ctx, adapter.Logger())
+	rows, err := queries.CollectPgSettings(adapter.PGPool, ctx, adapter.Logger())
+	if err != nil {
+		return nil, err
+	}
+	config := make(agent.ConfigArraySchema, len(rows))
+	for i, r := range rows {
+		config[i] = r
+	}
+	return config, nil
 }
 
 func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
@@ -154,7 +164,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 	}
 
 	for _, knob := range parsedKnobs {
-		err = pg.AlterSystem(adapter.PGPool, knob.Name, knob.SettingValue)
+		err = queries.AlterSystem(adapter.PGPool, knob.Name, knob.SettingValue)
 		if err != nil {
 			return fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)
 		}
@@ -189,7 +199,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 		}
 	case "reload":
 		// Reload database when everything is applied
-		err := pg.ReloadConfig(adapter.PGPool)
+		err := queries.ReloadConfig(adapter.PGPool)
 		if err != nil {
 			return err
 		}
@@ -197,7 +207,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 		// TODO(eddie): We should make this more explicit somehow.
 		// This happens when nothing is sent from the backend about this.
 		// We should send an explicit string instead of leaving it blank.
-		err := pg.ReloadConfig(adapter.PGPool)
+		err := queries.ReloadConfig(adapter.PGPool)
 		if err != nil {
 			return err
 		}

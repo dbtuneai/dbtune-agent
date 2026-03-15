@@ -16,6 +16,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
 )
@@ -24,7 +25,7 @@ var parseSKURegex = regexp.MustCompile("([B,D,E])([0-9]+)(ds|ads|s|ms)(?:_v([0-9
 
 type AzureFlexAdapter struct {
 	agent.CommonAgent
-	pg.CatalogGetter
+	agent.CatalogGetter
 	AzureFlexConfig Config
 	GuardrailConfig guardrails.Config
 	pgConfig        pg.Config
@@ -48,7 +49,7 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 		return nil, err
 	}
 
-	pgVersion, err := pg.PGVersion(pgPool)
+	pgVersion, err := queries.PGVersion(pgPool)
 	if err != nil {
 		return nil, err
 	}
@@ -62,9 +63,10 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 	pgMajorVersion := pg.ParsePgMajorVersion(pgVersion)
 	adpt := AzureFlexAdapter{
 		CommonAgent: *common,
-		CatalogGetter: pg.CatalogGetter{
+		CatalogGetter: agent.CatalogGetter{
 			PGPool:         pgPool,
 			PGMajorVersion: pgMajorVersion,
+			PGConfig:       pgConfig,
 			HealthGate:     pg.NewHealthGate(pgPool, common.Logger()),
 		},
 		AzureFlexConfig: config,
@@ -188,12 +190,15 @@ func ApplyParameter(ctx context.Context, logger *logrus.Logger, paramsClient *ar
 }
 
 func (adapter *AzureFlexAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
-	config, err := pg.GetActiveConfig(adapter.PGPool, ctx, adapter.Logger())
+	rows, err := queries.CollectPgSettings(adapter.PGPool, ctx, adapter.Logger())
 	if err != nil {
 		return nil, err
 	}
-
-	return config, err
+	config := make(agent.ConfigArraySchema, len(rows))
+	for i, r := range rows {
+		config[i] = r
+	}
+	return config, nil
 }
 
 func (adapter *AzureFlexAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
@@ -254,12 +259,12 @@ func (adapter *AzureFlexAdapter) GetSystemInfo(ctx context.Context) ([]metrics.F
 		}
 	}
 
-	maxConnections, err := pg.MaxConnections(adapter.PGPool)
+	maxConnections, err := queries.MaxConnections(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
 
-	pgVersion, err := pg.PGVersion(adapter.PGPool)
+	pgVersion, err := queries.PGVersion(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +316,7 @@ func (adapter *AzureFlexAdapter) Guardrails(ctx context.Context) *guardrails.Sig
 }
 
 func (adapter *AzureFlexAdapter) Collectors() []agent.MetricCollector {
-	collectors := pg.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
+	collectors := agent.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
 	return append(collectors,
 		agent.MetricCollector{
 			Key:       "cpu_utilization",
