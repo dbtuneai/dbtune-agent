@@ -2,6 +2,7 @@ package cnpg
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -143,7 +144,8 @@ func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResp
 	// Check for failover before applying new configuration
 	// This ensures we don't apply tuning parameters after a failover has occurred
 	if err := adapter.CheckForFailover(ctx); err != nil {
-		if failoverErr, ok := err.(*FailoverDetectedError); ok {
+		var failoverErr *FailoverDetectedError
+		if errors.As(err, &failoverErr) {
 			logger.Warnf("[FAILOVER_RECOVERY] Failover check BLOCKED config application: %s", failoverErr.Message)
 			// Return error to block this config application
 			return failoverErr
@@ -361,7 +363,8 @@ func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 	// During recovery, PostgreSQL may be unavailable or unreliable
 	if err := adapter.CheckForFailover(context.Background()); err != nil {
 		// Block operation for ANY error from CheckForFailover
-		if failoverErr, ok := err.(*FailoverDetectedError); ok {
+		var failoverErr *FailoverDetectedError
+		if errors.As(err, &failoverErr) {
 			logger.Infof("[FAILOVER_RECOVERY] Operations blocked during recovery: %s", failoverErr.Message)
 			return agent.ConfigArraySchema{}, failoverErr
 		}
@@ -437,7 +440,8 @@ func (adapter *CNPGAdapter) GetMetrics() ([]metrics.FlatValue, error) {
 	// During recovery, PostgreSQL and primary pod may be unavailable
 	if err := adapter.CheckForFailover(context.Background()); err != nil {
 		// Block operation for ANY error from CheckForFailover
-		if failoverErr, ok := err.(*FailoverDetectedError); ok {
+		var failoverErr *FailoverDetectedError
+		if errors.As(err, &failoverErr) {
 			logger.Infof("[FAILOVER_RECOVERY] Operations blocked during recovery: %s", failoverErr.Message)
 			// Return FailoverDetectedError - runner will skip sending error and metrics
 			return []metrics.FlatValue{}, failoverErr
@@ -459,7 +463,8 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	// During recovery, PostgreSQL and primary pod may be unavailable
 	if err := adapter.CheckForFailover(context.Background()); err != nil {
 		// Block operation for ANY error from CheckForFailover
-		if failoverErr, ok := err.(*FailoverDetectedError); ok {
+		var failoverErr *FailoverDetectedError
+		if errors.As(err, &failoverErr) {
 			logger.Infof("[FAILOVER_RECOVERY] Operations blocked during recovery: %s", failoverErr.Message)
 			// Return FailoverDetectedError - runner will skip sending error and system info
 			return []metrics.FlatValue{}, failoverErr
@@ -563,7 +568,8 @@ func (adapter *CNPGAdapter) Guardrails() *guardrails.Signal {
 
 	// This provides continuous failover detection even when ApplyConfig isn't running
 	if err := adapter.CheckForFailover(ctx); err != nil {
-		if failoverErr, ok := err.(*FailoverDetectedError); ok {
+		var failoverErr *FailoverDetectedError
+		if errors.As(err, &failoverErr) {
 			// Only call HandleFailoverDetected for NEW failovers, not during recovery status checks
 			if adapter.State.TimeSinceLastFailover() == 0 {
 				// NEW failover detected

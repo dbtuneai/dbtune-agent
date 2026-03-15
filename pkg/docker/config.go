@@ -34,7 +34,7 @@ func ConfigFromViper(key *string) (Config, error) {
 	var dockerConfig Config
 	err := dbtuneConfig.Unmarshal(&dockerConfig)
 	if err != nil {
-		return Config{}, fmt.Errorf("unable to decode into struct, %v", err)
+		return Config{}, fmt.Errorf("unable to decode into struct, %w", err)
 	}
 
 	err = utils.ValidateStruct(&dockerConfig)

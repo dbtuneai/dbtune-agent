@@ -45,7 +45,7 @@ func ConfigFromViper(keyValue string) (Config, error) {
 	var rdsConfig Config
 	err := dbtuneConfig.Unmarshal(&rdsConfig)
 	if err != nil {
-		return Config{}, fmt.Errorf("unable to decode into struct: %v", err)
+		return Config{}, fmt.Errorf("unable to decode into struct: %w", err)
 	}
 
 	// Validate required configuration

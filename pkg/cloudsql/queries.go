@@ -1,6 +1,7 @@
 package cloudsql
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -127,7 +128,7 @@ func getLatestMetricValue(cloudMonitoringClient *CloudMonitoringClient, projectI
 
 	// we expect there to be exactly one result
 	resp, err := it.Next()
-	if err == iterator.Done {
+	if errors.Is(err, iterator.Done) {
 		return monitoringpb.TypedValue{}, fmt.Errorf("Oh no, we didn't get any results!")
 	}
 	// TODO: what other errors can this actually return?
@@ -138,7 +139,7 @@ func getLatestMetricValue(cloudMonitoringClient *CloudMonitoringClient, projectI
 	// the iterator should end here as our filters should give a single time series
 	// per call to the API
 	_, err = it.Next()
-	if err != iterator.Done {
+	if !errors.Is(err, iterator.Done) {
 		return monitoringpb.TypedValue{}, fmt.Errorf("Too many metrics returned")
 	}
 

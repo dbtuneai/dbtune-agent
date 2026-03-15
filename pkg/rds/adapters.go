@@ -55,7 +55,7 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 		ctx,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("unable to load AWS config: %v", err)
+		return nil, fmt.Errorf("unable to load AWS config: %w", err)
 	}
 	clients := NewAWSClients(cfg)
 
@@ -176,7 +176,7 @@ func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigRespo
 		context.Background(),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to apply config: %v", err)
+		return fmt.Errorf("failed to apply config: %w", err)
 	}
 
 	// TODO(eddie): validate if this below comment is the case or
@@ -191,7 +191,7 @@ func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigRespo
 	adapter.Logger().Info("Waiting for PostgreSQL to come back online...")
 	err = pg.WaitPostgresReady(adapter.PGDriver)
 	if err != nil {
-		return fmt.Errorf("error waiting for PostgreSQL to come back online: %v", err)
+		return fmt.Errorf("error waiting for PostgreSQL to come back online: %w", err)
 	}
 
 	adapter.State.LastAppliedConfig = time.Now()

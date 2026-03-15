@@ -162,19 +162,19 @@ func GetFetchedMetrics(
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get metrics: %v", err)
+		return nil, fmt.Errorf("failed to get metrics: %w", err)
 	}
 
 	metricsJSON, err := json.Marshal(metrics)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal metrics: %v", err)
+		return nil, fmt.Errorf("failed to marshal metrics: %w", err)
 	}
 
 	// in.Logger.Infof("Raw metrics JSON: %s", string(metricsJSON))
 
 	var metricData FetchMetricsJSONScheme
 	if err := json.Unmarshal(metricsJSON, &metricData); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal metrics: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal metrics: %w", err)
 	}
 
 	// Create a map to store the latest values for each metric

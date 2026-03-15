@@ -45,7 +45,7 @@ func GetMemoryUsageFromPI(
 	output, err := clients.PIClient.GetResourceMetrics(context.Background(), input)
 	if err != nil {
 		logger.Warnf("PI Input: %+v", input)
-		return 0, fmt.Errorf("failed to get PI metrics: %v", err)
+		return 0, fmt.Errorf("failed to get PI metrics: %w", err)
 	}
 
 	if len(output.MetricList) == 0 {
@@ -101,7 +101,7 @@ func GetFreeableMemoryFromCW(
 
 	output, err := clients.CloudwatchClient.GetMetricStatistics(context.Background(), input)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get CloudWatch metrics: %v", err)
+		return 0, fmt.Errorf("failed to get CloudWatch metrics: %w", err)
 	}
 
 	if len(output.Datapoints) == 0 {
@@ -274,7 +274,7 @@ func ApplyConfig(
 
 	modifiedParameters, err := modifiedParametersToApply(proposedConfig, applyMethod)
 	if err != nil {
-		return fmt.Errorf("failed to get modified parameters: %v", err)
+		return fmt.Errorf("failed to get modified parameters: %w", err)
 	}
 
 	// Nothing to change, assume we just go ahead
@@ -292,14 +292,14 @@ func ApplyConfig(
 	// TODO(eddie): We should actuall verify in the response that it worked
 	_, err = clients.RDSClient.ModifyDBParameterGroup(ctx, args)
 	if err != nil {
-		return fmt.Errorf("failed to modify parameter group: %v", err)
+		return fmt.Errorf("failed to modify parameter group: %w", err)
 	}
 
 	// Wait for parameter group changes to be processed
 	logger.Info("Waiting for parameter group changes to be processed...")
 	err = waitRDSInstanceAvailable(clients, databaseIdentifier, parameterGroupName, ctx)
 	if err != nil {
-		return fmt.Errorf("error waiting for parameter group changes to be processed: %v", err)
+		return fmt.Errorf("error waiting for parameter group changes to be processed: %w", err)
 	}
 
 	// If restart is required and specified
@@ -312,7 +312,7 @@ func ApplyConfig(
 		args := &rds.RebootDBInstanceInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
 		_, err = clients.RDSClient.RebootDBInstance(ctx, args)
 		if err != nil {
-			return fmt.Errorf("failed to reboot RDS instance: %v", err)
+			return fmt.Errorf("failed to reboot RDS instance: %w", err)
 		}
 	}
 
@@ -321,7 +321,7 @@ func ApplyConfig(
 	dbWaiterArgs := &rds.DescribeDBInstancesInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
 	err = waiter.Wait(ctx, dbWaiterArgs, 15*time.Minute)
 	if err != nil {
-		return fmt.Errorf("error waiting for instance: %v", err)
+		return fmt.Errorf("error waiting for instance: %w", err)
 	}
 
 	return nil
@@ -348,11 +348,11 @@ func modifiedParametersToApply(
 	for _, knob := range proposedConfig.KnobsOverrides {
 		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
 		if err != nil {
-			return nil, fmt.Errorf("failed to find recommended knob: %v", err)
+			return nil, fmt.Errorf("failed to find recommended knob: %w", err)
 		}
 		fmtValue, err := knobConfig.GetSettingValue()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get setting value: %v", err)
+			return nil, fmt.Errorf("failed to get setting value: %w", err)
 		}
 
 		param := rdsTypes.Parameter{
@@ -447,7 +447,7 @@ func getAverageMetricValue(
 
 	output, err := clients.CloudwatchClient.GetMetricStatistics(context.Background(), input)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get CloudWatch metrics: %v", err)
+		return 0, fmt.Errorf("failed to get CloudWatch metrics: %w", err)
 	}
 
 	latestDatapoint, err := getLastDatapoint(output.Datapoints)

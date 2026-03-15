@@ -99,11 +99,11 @@ func (adapter *CloudSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfig
 	for _, knob := range proposedConfig.KnobsOverrides {
 		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
 		if err != nil {
-			return fmt.Errorf("failed to find recommended knob: %v", err)
+			return fmt.Errorf("failed to find recommended knob: %w", err)
 		}
 		fmtValue, err := knobConfig.GetSettingValue()
 		if err != nil {
-			return fmt.Errorf("failed to get setting value: %v", err)
+			return fmt.Errorf("failed to get setting value: %w", err)
 		}
 
 		param := &sqladmin.DatabaseFlags{
@@ -121,7 +121,7 @@ func (adapter *CloudSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfig
 
 	err = pg.WaitPostgresReady(adapter.PGDriver)
 	if err != nil {
-		return fmt.Errorf("Error waiting for PostgreSQL to come back online: %v", err)
+		return fmt.Errorf("Error waiting for PostgreSQL to come back online: %w", err)
 	}
 	return nil
 }

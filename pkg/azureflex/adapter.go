@@ -265,19 +265,19 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 
 	version, err := metrics.PGVersion.AsFlatValue(pgVersion)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to convert version: %v", err)
+		return nil, fmt.Errorf("Failed to convert version: %w", err)
 	}
 	maxConnectionsMetric, err := metrics.PGMaxConnections.AsFlatValue(maxConnections)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to convert connections: %v", err)
+		return nil, fmt.Errorf("Failed to convert connections: %w", err)
 	}
 	cpuCountMetric, err := metrics.NodeCPUCount.AsFlatValue(nCores)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to convert cpu count: %v", err)
+		return nil, fmt.Errorf("Failed to convert cpu count: %w", err)
 	}
 	memoryTotalMetric, err := metrics.NodeMemoryTotal.AsFlatValue(memGb * 1024 * 1024 * 1024)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to convert memory total: %v", err)
+		return nil, fmt.Errorf("Failed to convert memory total: %w", err)
 	}
 
 	systemInfo := []metrics.FlatValue{

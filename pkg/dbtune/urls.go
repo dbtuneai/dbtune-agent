@@ -36,7 +36,7 @@ func CreateServerURLs() (ServerURLs, error) {
 	var servTest ServerURLs
 	err := dbtuneConfig.Unmarshal(&servTest)
 	if err != nil {
-		return ServerURLs{}, fmt.Errorf("unable to decode into struct, %v", err)
+		return ServerURLs{}, fmt.Errorf("unable to decode into struct, %w", err)
 	}
 
 	err = utils.ValidateStruct(&servTest)

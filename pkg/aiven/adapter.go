@@ -63,7 +63,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 	// Create Aiven client
 	aivenClient, err := aivenclient.NewClient(aivenclient.TokenOpt(aivenConfig.APIToken))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Aiven client: %v", err)
+		return nil, fmt.Errorf("failed to create Aiven client: %w", err)
 	}
 
 	initialServiceLevelParameters, err := getInitialServiceLevelParameters(
@@ -72,7 +72,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		aivenConfig.ServiceName,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get initial values: %v", err)
+		return nil, fmt.Errorf("failed to get initial values: %w", err)
 	}
 	state := &State{
 		InitialSharedBuffersPercentage: initialServiceLevelParameters.InitialSharedBuffersPercentage,
@@ -121,7 +121,7 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, err
 	)
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get service info: %v", err)
+		return nil, fmt.Errorf("failed to get service info: %w", err)
 	}
 
 	numCPUs := *service.NodeCpuCount
@@ -208,7 +208,7 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 	for _, knob := range proposedConfig.KnobsOverrides {
 		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
 		if err != nil {
-			return fmt.Errorf("failed to find recommended knob: %v", err)
+			return fmt.Errorf("failed to find recommended knob: %w", err)
 		}
 
 		adapter.Logger().Debugf("Knob config: %+v", knobConfig)
@@ -245,7 +245,7 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 			&service.ServiceUpdateIn{UserConfig: &userConfig, Powered: boolPtr(true)},
 		)
 		if err != nil {
-			return fmt.Errorf("failed to update PostgreSQL parameters: %v", err)
+			return fmt.Errorf("failed to update PostgreSQL parameters: %w", err)
 		}
 	} else {
 		adapter.Logger().Warnf("ApplyConfig was called with no changes to apply")
@@ -472,7 +472,7 @@ func getInitialServiceLevelParameters(client *aivenclient.Client, projectName st
 		[2]string{"include_secrets", "false"},
 	)
 	if err != nil {
-		return InitialServiceLevelParameters{}, fmt.Errorf("failed to get service info: %v", err)
+		return InitialServiceLevelParameters{}, fmt.Errorf("failed to get service info: %w", err)
 	}
 
 	userConfig := service.UserConfig

@@ -11,6 +11,8 @@ linters:
     - prealloc
     - whitespace
     - nolintlint
+    - errorlint
+    - bodyclose
 
 linters-settings:
   goconst:
