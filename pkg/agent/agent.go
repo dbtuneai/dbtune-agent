@@ -2,14 +2,15 @@ package agent
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"path"
+	"reflect"
 	"runtime"
-	"strconv"
 	"sync"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/dbtuneai/agent/pkg/version"
 
 	"github.com/google/uuid"
@@ -40,135 +42,54 @@ func GetAgentID() string {
 	return sharedAgentID
 }
 
+// ConfigArraySchema is the transport type for sending configuration to the API.
 type ConfigArraySchema []any
 
-// TODO: extract PostgreSQL specific types + methods to utils/separate place
-type PGConfigRow struct {
-	Name    string      `json:"name"`
-	Setting interface{} `json:"setting"`
-	Unit    interface{} `json:"unit"`
-	Vartype string      `json:"vartype"`
-	Context string      `json:"context"`
-}
-
-// GetSettingValue returns the setting value in its appropriate type and format
-// This is needed for cases like Aurora RDS when modifying parameters
-func (p PGConfigRow) GetSettingValue() (string, error) {
-	switch p.Vartype {
-	case "integer":
-		// Handle both string and number JSON representations
-		var val int64
-		switch v := p.Setting.(type) {
-		case int:
-			val = int64(v)
-		case int64:
-			val = v
-		case float64:
-			val = int64(v)
-		case string:
-			parsed, err := strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				return "", fmt.Errorf("failed to parse integer setting: %w", err)
-			}
-			val = parsed
-		default:
-			return "", fmt.Errorf("unexpected type for integer setting: %T", p.Setting)
-		}
-		return fmt.Sprintf("%d", val), nil
-
-	case "real":
-		// Handle both string and number JSON representations
-		var val float64
-		switch v := p.Setting.(type) {
-		case float64:
-			val = v
-		case int:
-			val = float64(v)
-		case int64:
-			val = float64(v)
-		case string:
-			parsed, err := strconv.ParseFloat(v, 64)
-			if err != nil {
-				return "", fmt.Errorf("failed to parse real setting: %w", err)
-			}
-			val = parsed
-		default:
-			return "", fmt.Errorf("unexpected type for real setting: %T", p.Setting)
-		}
-		return fmt.Sprintf("%.6g", val), nil
-
-	case "bool":
-		return fmt.Sprintf("%v", p.Setting), nil
-
-	case "string", "enum":
-		return fmt.Sprintf("%v", p.Setting), nil
-
-	default:
-		return fmt.Sprintf("%v", p.Setting), nil
-	}
-}
-
+// ProposedConfigResponse represents configuration recommendations from the server.
 type ProposedConfigResponse struct {
-	Config          []PGConfigRow `json:"config"`
-	KnobsOverrides  []string      `json:"knobs_overrides"`
-	KnobApplication string        `json:"knob_application"`
+	Config          []queries.PGConfigRow `json:"config"`
+	KnobsOverrides  []string              `json:"knobs_overrides"`
+	KnobApplication string                `json:"knob_application"`
 }
+
+// Type aliases — canonical definitions live in pkg/pg/queries.
+type PGConfigRow = queries.PGConfigRow
+type CatalogCollector = queries.CatalogCollector
 
 type AgentLooper interface {
 	// SendHeartbeat sends a heartbeat to the DBtune server
-	SendHeartbeat() error
+	SendHeartbeat(ctx context.Context) error
 
 	// GetMetrics returns the metrics for the agent
-	// The metrics should have a format of:
-	// {
-	//   "no_cpu": { "type": "int", "value": 4 },
-	//   "available_memory": { "type": "bytes", "value": 1024 },
-	// }
-	// The current implementation of GetMetrics is following a concurrent collection
-	// approach, where the collectors are executed in parallel and the errors are
-	// collected in a channel. The channel is then closed and the results are
-	// returned. Uses the errgroup package to delegate the concurrent execution.
-	GetMetrics() ([]metrics.FlatValue, error)
-	SendMetrics([]metrics.FlatValue) error
+	GetMetrics(ctx context.Context) ([]metrics.FlatValue, error)
+	SendMetrics(ctx context.Context, ms []metrics.FlatValue) error
 
 	// GetSystemInfo returns the system info of the PostgresSQL server
-	// Example of system info:
-	// {
-	//   "no_cpu": { "type": "int", "value": 4 },
-	//   "total_memory": { "type": "bytes", "value": 1024 },
-	// }
-	// Importantly, you should never return a partial view of the SystemInfo, that is
-	// if one step fails, you should abort and not return any metrics, just an error.
-	// This is because if only a partial amount of the SystemInfo can be observed, then
-	// it means that DBtune will detect this as the system information having been changed
-	// and potentially abort an inprogress tuning session.
-	GetSystemInfo() ([]metrics.FlatValue, error)
-	SendSystemInfo([]metrics.FlatValue) error
+	GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error)
+	SendSystemInfo(ctx context.Context, systemInfo []metrics.FlatValue) error
 
-	GetActiveConfig() (ConfigArraySchema, error)
-	SendActiveConfig(ConfigArraySchema) error
-	GetProposedConfig() (*ProposedConfigResponse, error)
+	GetActiveConfig(ctx context.Context) (ConfigArraySchema, error)
+	SendActiveConfig(ctx context.Context, config ConfigArraySchema) error
+	GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error)
+
+	// CatalogCollectors returns the list of catalog collection tasks.
+	CatalogCollectors() []CatalogCollector
+	// SendCatalogPayload sends an arbitrary catalog payload to the server.
+	SendCatalogPayload(ctx context.Context, name string, payload any) error
 
 	// ApplyConfig applies the configuration to the PostgresSQL server
-	// The configuration is applied with the appropriate method, either with a
-	// restart or a reload operation
-	ApplyConfig(knobs *ProposedConfigResponse) error
+	ApplyConfig(ctx context.Context, knobs *ProposedConfigResponse) error
 
 	// Guardrails is responsible for triggering a signal to the DBtune server
 	// that something is heading towards a failure.
-	// An example failure could be memory above a certain threshold (90%)
-	// or a rate of disk growth that is more than usual and not acceptable.
-	// Returns nil if no guardrail is triggered, otherwise returns the type of guardrail
-	// and the metric that is monitored.
-	Guardrails() *guardrails.Signal
+	Guardrails(ctx context.Context) *guardrails.Signal
 	// SendGuardrailSignal sends a signal to the DBtune server that something is heading towards a failure.
-	// The signal will be send maximum once every 15 seconds.
-	SendGuardrailSignal(signal guardrails.Signal) error
+	SendGuardrailSignal(ctx context.Context, signal guardrails.Signal) error
 
 	// SendError sends an error report to the DBtune server
-	SendError(payload ErrorPayload) error
+	SendError(ctx context.Context, payload ErrorPayload) error
 
-	// GetLogger returns the logger for the agent
+	// Logger returns the logger for the agent
 	Logger() *log.Logger
 }
 
@@ -416,8 +337,9 @@ func (a *CommonAgent) WithLogger(logger *log.Logger) {
 // SendHeartbeat sends a heartbeat to the DBtune server
 // to indicate that the agent is running.
 // This method does not need to be overridden by any adapter
-func (a *CommonAgent) SendHeartbeat() error {
-	a.Logger().Infof("Sending heartbeat to %s", a.ServerURLs.PostHeartbeat())
+func (a *CommonAgent) SendHeartbeat(ctx context.Context) error {
+	url := a.ServerURLs.AgentURL("heartbeat")
+	a.Logger().Infof("Sending heartbeat to %s", url)
 
 	payload := AgentPayload{
 		AgentVersion:   a.Version,
@@ -433,10 +355,10 @@ func (a *CommonAgent) SendHeartbeat() error {
 	}
 
 	// Add a timeout context to avoid hanging
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", a.ServerURLs.PostHeartbeat(), bytes.NewBuffer(jsonData))
+	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		a.Logger().Errorf("Failed to create heartbeat request: %v", err)
 		return err
@@ -452,7 +374,7 @@ func (a *CommonAgent) SendHeartbeat() error {
 
 	if resp.StatusCode != 204 {
 		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Errorf("Failed to send heartbeat to %s, status: %d, body: %s", a.ServerURLs.PostHeartbeat(), resp.StatusCode, string(body))
+		a.Logger().Errorf("Failed to send heartbeat to %s, status: %d, body: %s", url, resp.StatusCode, string(body))
 		return fmt.Errorf("heartbeat failed with status code %d", resp.StatusCode)
 	}
 
@@ -468,14 +390,14 @@ func (a *CommonAgent) InitCollectors(collectors []MetricCollector) {
 // GetMetrics will have a default implementation to handle gracefully
 // error and send partial metrics rather than failing.
 // It is discouraged for every adapter overriding this one.
-func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
+func (a *CommonAgent) GetMetrics(ctx context.Context) ([]metrics.FlatValue, error) {
 	a.Logger().Println("Staring metric collection")
 
 	// Cleanup metrics from the previous heartbeat
 	a.MetricsState.Metrics = []metrics.FlatValue{}
 
 	// Create context with configured timeout
-	ctx, cancel := context.WithTimeout(context.Background(), a.CollectionTimeout)
+	ctx, cancel := context.WithTimeout(ctx, a.CollectionTimeout)
 	defer cancel()
 
 	// Use WaitGroup to wait for all collectors
@@ -517,6 +439,7 @@ func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
 				}
 			case <-collectorCtx.Done():
 				errorsChan <- fmt.Errorf("collector %s timed out", c.Key)
+				a.Logger().Warnf("collector %s did not respect context cancellation — goroutine leaked", c.Key)
 			}
 		}()
 	}
@@ -543,7 +466,7 @@ func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
 	return a.MetricsState.Metrics, nil
 }
 
-func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
+func (a *CommonAgent) SendMetrics(ctx context.Context, ms []metrics.FlatValue) error {
 	a.Logger().Println("Sending metrics to server")
 
 	formattedMetrics := metrics.FormatMetrics(ms)
@@ -553,7 +476,7 @@ func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.PostMetrics(), "application/json", jsonData)
+	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL("metrics"), "application/json", jsonData)
 	if err != nil {
 		return err
 	}
@@ -568,7 +491,7 @@ func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
 	return nil
 }
 
-func (a *CommonAgent) SendSystemInfo(systemInfo []metrics.FlatValue) error {
+func (a *CommonAgent) SendSystemInfo(ctx context.Context, systemInfo []metrics.FlatValue) error {
 	a.Logger().Println("Sending system info to server")
 
 	formattedMetrics := metrics.FormatSystemInfo(systemInfo)
@@ -578,7 +501,7 @@ func (a *CommonAgent) SendSystemInfo(systemInfo []metrics.FlatValue) error {
 		return err
 	}
 
-	req, _ := retryablehttp.NewRequest("PUT", a.ServerURLs.PostSystemInfo(), bytes.NewBuffer(jsonData))
+	req, _ := retryablehttp.NewRequest("PUT", a.ServerURLs.AgentURL("system-info"), bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := a.APIClient.Do(req)
@@ -596,7 +519,7 @@ func (a *CommonAgent) SendSystemInfo(systemInfo []metrics.FlatValue) error {
 	return nil
 }
 
-func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
+func (a *CommonAgent) SendActiveConfig(ctx context.Context, config ConfigArraySchema) error {
 	a.Logger().Println("Sending active configuration to server")
 
 	type Payload struct {
@@ -613,7 +536,7 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 
 	a.Logger().Debugf("Active config payload: %s", string(jsonData))
 
-	resp, err := a.APIClient.Post(a.ServerURLs.PostActiveConfig(), "application/json", jsonData)
+	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL("configurations"), "application/json", jsonData)
 	if err != nil {
 		return err
 	}
@@ -628,7 +551,69 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 	return nil
 }
 
-func (a *CommonAgent) GetProposedConfig() (*ProposedConfigResponse, error) {
+// isNilPayload checks if a payload is nil, handling both interface-nil and typed-pointer-nil.
+// This is necessary because Go interfaces are nil only when both type and value are nil.
+// A typed nil pointer (e.g., (*PgStatCheckpointerPayload)(nil)) passed as interface{} is NOT == nil.
+func isNilPayload(payload any) bool {
+	if payload == nil {
+		return true
+	}
+	v := reflect.ValueOf(payload)
+	return v.Kind() == reflect.Ptr && v.IsNil()
+}
+
+// gzipJSON marshals the payload to JSON and gzip-compresses the result.
+// It returns the uncompressed JSON size (for logging) and a buffer containing
+// the gzipped data.
+func gzipJSON(payload any) (jsonSize int, buf *bytes.Buffer, err error) {
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return 0, nil, err
+	}
+	buf = &bytes.Buffer{}
+	gz := gzip.NewWriter(buf)
+	if _, err := gz.Write(jsonData); err != nil {
+		return 0, nil, fmt.Errorf("gzip write: %w", err)
+	}
+	if err := gz.Close(); err != nil {
+		return 0, nil, fmt.Errorf("gzip close: %w", err)
+	}
+	return len(jsonData), buf, nil
+}
+
+func (a *CommonAgent) SendCatalogPayload(ctx context.Context, name string, payload any) error {
+	a.Logger().Printf("Sending %s to server", name)
+	if isNilPayload(payload) {
+		return fmt.Errorf("%s payload is nil", name)
+	}
+	jsonSize, buf, err := gzipJSON(payload)
+	if err != nil {
+		return err
+	}
+	a.Logger().Printf("%s payload: %d bytes -> %d bytes gzipped", name, jsonSize, buf.Len())
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	url := a.ServerURLs.AgentURL(name)
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, url, buf)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	resp, err := a.APIClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		a.Logger().Errorf("Failed to send %s. Response body: %s", name, string(body))
+		return fmt.Errorf("failed to send %s, code: %d", name, resp.StatusCode)
+	}
+	return nil
+}
+
+func (a *CommonAgent) GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error) {
 	a.Logger().Println("Fetching proposed configurations")
 
 	resp, err := a.APIClient.Get(a.ServerURLs.GetKnobRecommendations())
@@ -657,7 +642,7 @@ func (a *CommonAgent) GetProposedConfig() (*ProposedConfigResponse, error) {
 
 // SendGuardrailSignal sends a guardrail signal to the DBtune server
 // that something is heading towards a failure.
-func (a *CommonAgent) SendGuardrailSignal(signal guardrails.Signal) error {
+func (a *CommonAgent) SendGuardrailSignal(ctx context.Context, signal guardrails.Signal) error {
 	a.Logger().Warnf("🚨 Sending Guardrail, level: %s, type: %s", signal.Level, signal.Type)
 
 	jsonData, err := json.Marshal(signal)
@@ -665,7 +650,7 @@ func (a *CommonAgent) SendGuardrailSignal(signal guardrails.Signal) error {
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.PostGuardrailSignal(), "application/json", jsonData)
+	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL("guardrails"), "application/json", jsonData)
 	if err != nil {
 		return err
 	}
@@ -680,7 +665,7 @@ func (a *CommonAgent) SendGuardrailSignal(signal guardrails.Signal) error {
 	return nil
 }
 
-func (a *CommonAgent) SendError(payload ErrorPayload) error {
+func (a *CommonAgent) SendError(ctx context.Context, payload ErrorPayload) error {
 	a.Logger().Errorf("🚨 Sending Error Report, type: %s, message: %s", payload.ErrorType, payload.ErrorMessage)
 
 	jsonData, err := json.Marshal(payload)
@@ -688,7 +673,7 @@ func (a *CommonAgent) SendError(payload ErrorPayload) error {
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.PostError(), "application/json", jsonData)
+	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL("log-entries"), "application/json", jsonData)
 	if err != nil {
 		return err
 	}

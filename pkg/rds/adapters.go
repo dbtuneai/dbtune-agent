@@ -3,25 +3,24 @@ package rds
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type RDSAdapter struct {
 	agent.CommonAgent
+	agent.CatalogGetter
 	Config            Config
 	GuardrailSettings guardrails.Config
 	pgConfig          pg.Config
 	State             State
 	AWSClients        AWSClients
-	PGDriver          *pgxpool.Pool
 	PGVersion         string
 }
 
@@ -77,20 +76,26 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 
 	commonAgent := agent.CreateCommonAgent()
 	// PGVersion
-	PGVersion, err := pg.PGVersion(dbpool)
+	PGVersion, err := queries.PGVersion(dbpool)
 	if err != nil {
 		return nil, err
 	}
+	pgMajorVersion := pg.ParsePgMajorVersion(PGVersion)
 	adapter := &RDSAdapter{
 		CommonAgent: *commonAgent,
-		Config:      config,
-		pgConfig:    pgConfig,
+		CatalogGetter: agent.CatalogGetter{
+			PGPool:         dbpool,
+			PGMajorVersion: pgMajorVersion,
+			PGConfig:       pgConfig,
+			HealthGate:     pg.NewHealthGate(dbpool, commonAgent.Logger()),
+		},
+		Config:   config,
+		pgConfig: pgConfig,
 		State: State{
 			DBInfo: &dbInfo,
 		},
 		AWSClients:        clients,
 		GuardrailSettings: guardrailSettings,
-		PGDriver:          dbpool,
 		PGVersion:         PGVersion,
 	}
 	return adapter, nil
@@ -101,19 +106,19 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	collectors := rdsAdapter.Collectors(false)
+	collectors := rdsAdapter.Collectors()
 	rdsAdapter.InitCollectors(collectors)
 	return rdsAdapter, nil
 }
 
-func (adapter *RDSAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *RDSAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	adapter.Logger().Info("Collecting system info")
 
 	// Refreshes self
 	dbInfo, err := FetchDBInfo(
 		adapter.Config.RDSDatabaseIdentifier,
 		&adapter.AWSClients,
-		context.Background(),
+		ctx,
 	)
 	if err != nil {
 		return nil, err
@@ -128,7 +133,7 @@ func (adapter *RDSAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	}
 
 	// PGVersion
-	pgVersion, err := pg.PGVersion(adapter.PGDriver)
+	pgVersion, err := queries.PGVersion(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +146,7 @@ func (adapter *RDSAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	info = append(info, version)
 
 	// MaxConnections
-	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
+	maxConnections, err := queries.MaxConnections(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
@@ -156,11 +161,19 @@ func (adapter *RDSAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return info, nil
 }
 
-func (adapter *RDSAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(adapter.PGDriver, context.Background(), adapter.Logger())
+func (adapter *RDSAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
+	rows, err := queries.CollectPgSettings(adapter.PGPool, ctx, adapter.Logger())
+	if err != nil {
+		return nil, err
+	}
+	config := make(agent.ConfigArraySchema, len(rows))
+	for i, r := range rows {
+		config[i] = r
+	}
+	return config, nil
 }
 
-func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	// If the last applied config is less than 1 minute ago, return
 	if adapter.State.LastAppliedConfig.Add(1 * time.Minute).After(time.Now()) {
 		adapter.Logger().Info("Last applied config is less than 1 minute ago, skipping")
@@ -173,7 +186,7 @@ func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigRespo
 		adapter.Config.RDSParameterGroupName,
 		adapter.Config.RDSDatabaseIdentifier,
 		adapter.Logger(),
-		context.Background(),
+		ctx,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to apply config: %w", err)
@@ -189,7 +202,7 @@ func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigRespo
 
 	// Instance is online, we validate that PostgreSQL is back online also
 	adapter.Logger().Info("Waiting for PostgreSQL to come back online...")
-	err = pg.WaitPostgresReady(adapter.PGDriver)
+	err = pg.WaitPostgresReady(adapter.PGPool)
 	if err != nil {
 		return fmt.Errorf("error waiting for PostgreSQL to come back online: %w", err)
 	}
@@ -198,83 +211,21 @@ func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigRespo
 	return nil
 }
 
-func (adapter *RDSAdapter) Collectors(aurora bool) []agent.MetricCollector {
-	pool := adapter.PGDriver
-	collectors := []agent.MetricCollector{
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pool, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pool),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pool),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pool),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pool),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pool),
-		},
-		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pool),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pool),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pool),
-		},
-		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pool),
-		},
-		{
-			Key: "hardware",
-			Collector: RDSHardwareInfo(
-				adapter.Config.RDSDatabaseIdentifier,
-				&adapter.State,
-				&adapter.AWSClients,
-				adapter.Logger(),
-			),
-		},
-	}
-	majorVersion := strings.Split(adapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_checkpointer",
-			Collector: pg.PGStatCheckpointer(pool),
-		})
-	}
-	if !aurora {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pool),
-		})
-	}
-
-	return collectors
+func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
+	collectors := agent.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
+	return append(collectors, agent.MetricCollector{
+		Key: "hardware",
+		Collector: RDSHardwareInfo(
+			adapter.Config.RDSDatabaseIdentifier,
+			&adapter.State,
+			&adapter.AWSClients,
+			adapter.Logger(),
+		),
+	})
 }
 
 // Guardrails checks memory utilization and returns Critical if thresholds are exceeded
-func (adapter *RDSAdapter) Guardrails() *guardrails.Signal {
+func (adapter *RDSAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	if time.Since(adapter.State.LastGuardrailCheck) < 5*time.Second {
 		return nil
 	}
@@ -348,7 +299,7 @@ func CreateAuroraRDSAdapter() (*AuroraRDSAdapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AuroraRDS adapter: %w", err)
 	}
-	collectors := rdsAdapter.Collectors(true)
+	collectors := rdsAdapter.Collectors()
 	rdsAdapter.InitCollectors(collectors)
 	return &AuroraRDSAdapter{*rdsAdapter}, nil
 }

@@ -4,14 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"strconv"
-	"strings"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -21,7 +20,7 @@ import (
 
 type DefaultPostgreSQLAdapter struct {
 	agent.CommonAgent
-	pgDriver        *pgPool.Pool
+	agent.CatalogGetter
 	pgConfig        pg.Config
 	GuardrailConfig guardrails.Config
 	PGVersion       string
@@ -44,14 +43,20 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 	}
 
 	commonAgent := agent.CreateCommonAgent()
-	PGVersion, err := pg.PGVersion(dbpool)
+	PGVersion, err := queries.PGVersion(dbpool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
 
+	pgMajorVersion := pg.ParsePgMajorVersion(PGVersion)
 	c := &DefaultPostgreSQLAdapter{
-		CommonAgent:     *commonAgent,
-		pgDriver:        dbpool,
+		CommonAgent: *commonAgent,
+		CatalogGetter: agent.CatalogGetter{
+			PGPool:         dbpool,
+			PGMajorVersion: pgMajorVersion,
+			PGConfig:       pgConfig,
+			HealthGate:     pg.NewHealthGate(dbpool, commonAgent.Logger()),
+		},
 		pgConfig:        pgConfig,
 		GuardrailConfig: guardrailSettings,
 		PGVersion:       PGVersion,
@@ -63,82 +68,23 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 }
 
 func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollector {
-	pgDriver := pgAdapter.pgDriver
-	collectors := []agent.MetricCollector{
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pgDriver, pgAdapter.pgConfig.IncludeQueries, pgAdapter.pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pgDriver),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pgDriver),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pgDriver),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pgDriver),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pgDriver),
-		},
-		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pgDriver),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pgDriver),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pgDriver),
-		},
-		{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pgDriver),
-		},
-		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pgDriver),
-		},
-		{
-			Key:       "hardware",
-			Collector: HardwareInfoOnPremise(),
-		},
-	}
-	majorVersion := strings.Split(pgAdapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		pgAdapter.Logger().Warnf("Could not parse major version from version string %s: %v", pgAdapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_checkpointer",
-			Collector: pg.PGStatCheckpointer(pgDriver),
-		})
-	}
-	return collectors
+	collectors := agent.DefaultMetricCollectors(pgAdapter.PGPool, pgAdapter.pgConfig)
+	return append(collectors, agent.MetricCollector{
+		Key:       "hardware",
+		Collector: HardwareInfoOnPremise(),
+	})
 }
 
-func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	adapter.Logger().Println("Collecting system info")
 
-	pgDriver := adapter.pgDriver
-	pgVersion, err := pg.PGVersion(pgDriver)
+	pgDriver := adapter.PGPool
+	pgVersion, err := queries.PGVersion(pgDriver)
 	if err != nil {
 		return nil, err
 	}
 
-	maxConnections, err := pg.MaxConnections(pgDriver)
+	maxConnections, err := queries.MaxConnections(pgDriver)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +104,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, e
 		return nil, err
 	}
 
-	diskType, err := GetDiskType(adapter.pgDriver)
+	diskType, err := GetDiskType(adapter.PGPool)
 	if err != nil {
 		adapter.Logger().Warnf("Error getting disk type: %v", err)
 	}
@@ -190,11 +136,19 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, e
 	return systemInfo, nil
 }
 
-func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(adapter.pgDriver, context.Background(), adapter.Logger())
+func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
+	rows, err := queries.CollectPgSettings(adapter.PGPool, ctx, adapter.Logger())
+	if err != nil {
+		return nil, err
+	}
+	config := make(agent.ConfigArraySchema, len(rows))
+	for i, r := range rows {
+		config[i] = r
+	}
+	return config, nil
 }
 
-func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	adapter.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
 	if proposedConfig.KnobApplication == "restart" {
@@ -210,7 +164,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 	}
 
 	for _, knob := range parsedKnobs {
-		err = pg.AlterSystem(adapter.pgDriver, knob.Name, knob.SettingValue)
+		err = queries.AlterSystem(adapter.PGPool, knob.Name, knob.SettingValue)
 		if err != nil {
 			return fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)
 		}
@@ -239,13 +193,13 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 			adapter.Logger().Warn("Service restarted.")
 		}
 
-		err := pg.WaitPostgresReady(adapter.pgDriver)
+		err := pg.WaitPostgresReady(adapter.PGPool)
 		if err != nil {
 			return fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)
 		}
 	case "reload":
 		// Reload database when everything is applied
-		err := pg.ReloadConfig(adapter.pgDriver)
+		err := queries.ReloadConfig(adapter.PGPool)
 		if err != nil {
 			return err
 		}
@@ -253,7 +207,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 		// TODO(eddie): We should make this more explicit somehow.
 		// This happens when nothing is sent from the backend about this.
 		// We should send an explicit string instead of leaving it blank.
-		err := pg.ReloadConfig(adapter.pgDriver)
+		err := queries.ReloadConfig(adapter.PGPool)
 		if err != nil {
 			return err
 		}
@@ -265,7 +219,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 // 1. Checks if the total memory is set. If not fetches it from the system and sets it in cache.
 // 2. Fetches current memory usage
 // 3. If memory usage is greater than 90% of total memory, triggers a critical guardrail
-func (adapter *DefaultPostgreSQLAdapter) Guardrails() *guardrails.Signal {
+func (adapter *DefaultPostgreSQLAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	// Get memory info
 	memoryInfo, err := mem.VirtualMemory()
 	if err != nil {

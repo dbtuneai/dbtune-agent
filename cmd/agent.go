@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -215,5 +216,6 @@ func main() {
 			log.Fatalf("Failed to create adapter: %v", err)
 		}
 	}
-	runner.Runner(adapter)
+	ctx := context.Background()
+	runner.Runner(ctx, adapter)
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"strings"
 	"time"
 
 	aivenclient "github.com/aiven/go-client-codegen"
@@ -16,6 +15,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -27,12 +27,12 @@ const (
 // AivenPostgreSQLAdapter represents an adapter for connecting to Aiven PostgreSQL services
 type AivenPostgreSQLAdapter struct {
 	agent.CommonAgent
+	agent.CatalogGetter
 	Config            Config
 	Client            aivenclient.Client
 	State             *State
 	GuardrailSettings guardrails.Config
 	pgConfig          pg.Config
-	PGDriver          *pgPool.Pool
 	PGVersion         string
 }
 
@@ -86,19 +86,25 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 
 	commonAgent := agent.CreateCommonAgent()
 
-	PGVersion, err := pg.PGVersion(pgPool)
+	PGVersion, err := queries.PGVersion(pgPool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
+	pgMajorVersion := pg.ParsePgMajorVersion(PGVersion)
 	// Create adapter
 	adapter := &AivenPostgreSQLAdapter{
-		CommonAgent:       *commonAgent,
+		CommonAgent: *commonAgent,
+		CatalogGetter: agent.CatalogGetter{
+			PGPool:         pgPool,
+			PGMajorVersion: pgMajorVersion,
+			PGConfig:       pgConfig,
+			HealthGate:     pg.NewHealthGate(pgPool, commonAgent.Logger()),
+		},
 		Config:            aivenConfig,
 		Client:            aivenClient,
 		State:             state,
 		GuardrailSettings: guardrailSettings,
 		pgConfig:          pgConfig,
-		PGDriver:          pgPool,
 		PGVersion:         PGVersion,
 	}
 
@@ -109,12 +115,12 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 }
 
 // GetSystemInfo returns system information for the Aiven PostgreSQL service
-func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *AivenPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	adapter.Logger().Info("Collecting Aiven system info")
 
 	// Get service information from Aiven API
 	service, err := adapter.Client.ServiceGet(
-		context.Background(),
+		ctx,
 		adapter.Config.ProjectName,
 		adapter.Config.ServiceName,
 		[2]string{"include_secrets", "false"},
@@ -142,12 +148,12 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, err
 	}
 
 	// Get PostgreSQL version and max connections from database
-	pgVersion, err := pg.PGVersion(adapter.PGDriver)
+	pgVersion, err := queries.PGVersion(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
 
-	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
+	maxConnections, err := queries.MaxConnections(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +202,7 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, err
 }
 
 // ApplyConfig applies configuration changes to the Aiven PostgreSQL service
-func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	adapter.Logger().Infof("Applying config")
 
 	// List of knobs to be applied
@@ -239,7 +245,7 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 
 		// Apply the configuration update
 		_, err := adapter.Client.ServiceUpdate(
-			context.Background(),
+			ctx,
 			adapter.Config.ProjectName,
 			adapter.Config.ServiceName,
 			&service.ServiceUpdateIn{UserConfig: &userConfig, Powered: boolPtr(true)},
@@ -300,7 +306,7 @@ func (adapter *AivenPostgreSQLAdapter) waitForServiceState(state service.Service
 // Guardrails implements resource usage guardrails
 // Aiven only provides 30 second resolution data for hardware info, which we
 // need for guardrails.
-func (adapter *AivenPostgreSQLAdapter) Guardrails() *guardrails.Signal {
+func (adapter *AivenPostgreSQLAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	timeSinceLastGuardrailCheck := time.Since(adapter.State.LastGuardrailCheck)
 	if timeSinceLastGuardrailCheck < adapter.Config.MetricResolution {
 		adapter.Logger().Debugf(
@@ -330,7 +336,7 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *guardrails.Signal {
 			adapter.Config.MetricResolution,
 		)
 		metrics, err := GetFetchedMetrics(
-			context.Background(),
+			ctx,
 			FetchedMetricsIn{
 				Client:      &adapter.Client,
 				ProjectName: adapter.Config.ProjectName,
@@ -380,78 +386,19 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *guardrails.Signal {
 
 // AivenCollectors returns the metrics collectors for Aiven PostgreSQL
 func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
-	pgDriver := adapter.PGDriver
-	collectors := []agent.MetricCollector{
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pgDriver, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pgDriver),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pgDriver),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pgDriver), // Use standard collector for consistency
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pgDriver),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pgDriver),
-		},
-		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pgDriver),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pgDriver),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pgDriver),
-		},
-		{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pgDriver),
-		},
-		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pgDriver),
-		},
-		{
-			Key: "hardware",
-			Collector: AivenHardwareInfo(
-				&adapter.Client,
-				adapter.Config.ProjectName,
-				adapter.Config.ServiceName,
-				adapter.Config.MetricResolution,
-				adapter.Config,
-				adapter.State,
-				adapter.Logger(),
-			),
-		},
-	}
-	majorVersion := strings.Split(adapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_checkpointer",
-			Collector: pg.PGStatCheckpointer(pgDriver),
-		})
-	}
-	return collectors
+	collectors := agent.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
+	return append(collectors, agent.MetricCollector{
+		Key: "hardware",
+		Collector: AivenHardwareInfo(
+			&adapter.Client,
+			adapter.Config.ProjectName,
+			adapter.Config.ServiceName,
+			adapter.Config.MetricResolution,
+			adapter.Config,
+			adapter.State,
+			adapter.Logger(),
+		),
+	})
 }
 
 func boolPtr(b bool) *bool {
@@ -507,7 +454,7 @@ func getInitialServiceLevelParameters(client *aivenclient.Client, projectName st
 
 // GetActiveConfig returns the active configuration for the Aiven API
 // as well as through PostgreSQL
-func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
+func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	// Main differences from the PostgreSQL version:
 	// * We need to query Aiven's service for the `shared_buffers_percentage` parameter.
 	// The problem here is that until we modify `shared_buffers_percentage`, we don't get
@@ -519,7 +466,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 	logger.Debug("Getting active config for Aiven PostgreSQL")
 	var configRows agent.ConfigArraySchema
 	service, err := adapter.Client.ServiceGet(
-		context.Background(),
+		ctx,
 		adapter.Config.ProjectName,
 		adapter.Config.ServiceName,
 		[2]string{"include_secrets", "false"},
@@ -561,21 +508,20 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 		Context: "service",
 	})
 
-	numericRows, err := utils.QueryWithPrefix(adapter.PGDriver, context.Background(), pg.SELECT_NUMERIC_SETTINGS)
-
+	rows, err := utils.QueryWithPrefix(adapter.PGPool, ctx, queries.SelectAllSettings)
 	if err != nil {
 		return nil, err
 	}
 
-	for numericRows.Next() {
+	for rows.Next() {
 		var row agent.PGConfigRow
-		err := numericRows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
+		err := rows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
 		if err != nil {
-			adapter.Logger().Error("Error scanning numeric row", err)
+			adapter.Logger().Error("Error scanning pg_settings row", err)
 			continue
 		}
 
-		row.Setting = pg.InferNumericType(row.Setting)
+		row.Setting = queries.InferNumericType(row.Setting)
 
 		if row.Name == "work_mem" {
 			var workMemKb int64
@@ -605,22 +551,6 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 		} else {
 			configRows = append(configRows, row)
 		}
-	}
-
-	// Query for non-numeric types
-	nonNumericRows, err := utils.QueryWithPrefix(adapter.PGDriver, context.Background(), pg.SELECT_NON_NUMERIC_SETTINGS)
-	if err != nil {
-		return nil, err
-	}
-
-	for nonNumericRows.Next() {
-		var row agent.PGConfigRow
-		err := nonNumericRows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
-		if err != nil {
-			adapter.Logger().Error("Error scanning non-numeric row", err)
-			continue
-		}
-		configRows = append(configRows, row)
 	}
 
 	return configRows, nil

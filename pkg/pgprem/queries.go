@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jaypipes/ghw"
 )
@@ -14,7 +14,7 @@ const unknownDiskType = "UNKNOWN"
 
 func GetDiskType(pgDriver *pgxpool.Pool) (string, error) {
 	// First we query PostgreSQL to get data directory mount point
-	dataDir, err := pg.DataDirectory(pgDriver)
+	dataDir, err := queries.DataDirectory(pgDriver)
 	if err != nil {
 		return unknownDiskType, err
 	}

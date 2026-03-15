@@ -51,37 +51,13 @@ func CreateServerURLs() (ServerURLs, error) {
 	}, nil
 }
 
-// PostHeartbeat generates the URL for posting a heartbeat.
-func (s ServerURLs) PostHeartbeat() string {
-	return fmt.Sprintf("%s/api/v1/agent/heartbeat?uuid=%s", s.ServerUrl, s.DbID)
-}
-
-// PostSystemInfo generates the URL for posting system info.
-func (s ServerURLs) PostSystemInfo() string {
-	return fmt.Sprintf("%s/api/v1/agent/system-info?uuid=%s", s.ServerUrl, s.DbID)
-}
-
-// PostMetrics generates the URL for posting metrics.
-func (s ServerURLs) PostMetrics() string {
-	return fmt.Sprintf("%s/api/v1/agent/metrics?uuid=%s", s.ServerUrl, s.DbID)
-}
-
-// PostActiveConfig generates the URL for posting active configurations.
-func (s ServerURLs) PostActiveConfig() string {
-	return fmt.Sprintf("%s/api/v1/agent/configurations?uuid=%s", s.ServerUrl, s.DbID)
+// AgentURL builds a URL for the given agent API path segment.
+// e.g. AgentURL("heartbeat") => "https://app.dbtune.com/api/v1/agent/heartbeat?uuid=<db-id>"
+func (s ServerURLs) AgentURL(path string) string {
+	return fmt.Sprintf("%s/api/v1/agent/%s?uuid=%s", s.ServerUrl, path, s.DbID)
 }
 
 // GetKnobRecommendations generates the URL for getting knob recommendations.
 func (s ServerURLs) GetKnobRecommendations() string {
 	return fmt.Sprintf("%s/api/v1/agent/configurations?uuid=%s&status=recommended", s.ServerUrl, s.DbID)
-}
-
-// PostGuardrailSignal generates the URL for posting a guardrail signal.
-func (s ServerURLs) PostGuardrailSignal() string {
-	return fmt.Sprintf("%s/api/v1/agent/guardrails?uuid=%s", s.ServerUrl, s.DbID)
-}
-
-// PostError generates the URL for posting errors.
-func (s ServerURLs) PostError() string {
-	return fmt.Sprintf("%s/api/v1/agent/log-entries?uuid=%s", s.ServerUrl, s.DbID)
 }
