@@ -975,28 +975,28 @@ func TestScan_ConcurrentDifferentLayouts(t *testing.T) {
 // --- Multi-version: real system views ---
 
 type PgStatDatabase struct {
-	Datid        uint32  `db:"datid"`
-	Datname      *string `db:"datname"`
-	Numbackends  int32   `db:"numbackends"`
-	XactCommit   int64   `db:"xact_commit"`
-	XactRollback int64   `db:"xact_rollback"`
-	BlksRead     int64   `db:"blks_read"`
-	BlksHit      int64   `db:"blks_hit"`
-	TupReturned  int64   `db:"tup_returned"`
-	TupFetched   int64   `db:"tup_fetched"`
-	TupInserted  int64   `db:"tup_inserted"`
-	TupUpdated   int64   `db:"tup_updated"`
-	TupDeleted   int64   `db:"tup_deleted"`
-	Conflicts    int64   `db:"conflicts"`
-	TempFiles    int64   `db:"temp_files"`
-	TempBytes    int64   `db:"temp_bytes"`
-	Deadlocks    int64   `db:"deadlocks"`
-	BlkReadTime  float64 `db:"blk_read_time"`
-	BlkWriteTime float64 `db:"blk_write_time"`
+	Datid        uint32     `db:"datid"`
+	Datname      *string    `db:"datname"`
+	Numbackends  int32      `db:"numbackends"`
+	XactCommit   int64      `db:"xact_commit"`
+	XactRollback int64      `db:"xact_rollback"`
+	BlksRead     int64      `db:"blks_read"`
+	BlksHit      int64      `db:"blks_hit"`
+	TupReturned  int64      `db:"tup_returned"`
+	TupFetched   int64      `db:"tup_fetched"`
+	TupInserted  int64      `db:"tup_inserted"`
+	TupUpdated   int64      `db:"tup_updated"`
+	TupDeleted   int64      `db:"tup_deleted"`
+	Conflicts    int64      `db:"conflicts"`
+	TempFiles    int64      `db:"temp_files"`
+	TempBytes    int64      `db:"temp_bytes"`
+	Deadlocks    int64      `db:"deadlocks"`
+	BlkReadTime  float64    `db:"blk_read_time"`
+	BlkWriteTime float64    `db:"blk_write_time"`
 	StatsReset   *time.Time `db:"stats_reset"`
 
 	// PG 12+
-	ChecksumFailures    *int64  `db:"checksum_failures"`
+	ChecksumFailures    *int64     `db:"checksum_failures"`
 	ChecksumLastFailure *time.Time `db:"checksum_last_failure"`
 
 	// PG 14+
