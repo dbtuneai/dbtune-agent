@@ -397,7 +397,7 @@ func TestScan_UnexportedFieldsIgnored(t *testing.T) {
 
 	type withUnexported struct {
 		Name   string `db:"name"`
-		secret string //nolint:unused // unexported — must not match column "secret"
+		secret string //nolint:unused,nolintlint // unexported — must not match column "secret"
 	}
 	scanner := NewScanner[withUnexported]()
 
@@ -925,7 +925,7 @@ func TestScan_MultipleRows(t *testing.T) {
 		t.Fatalf("expected 5 rows, got %d", len(result))
 	}
 	for i, r := range result {
-		expectedN := int32(i + 1)
+		expectedN := int32(i + 1) //nolint:gosec // test data, i is always small
 		expectedLabel := "row_" + fmt.Sprintf("%d", expectedN)
 		if r.N != expectedN || r.Label != expectedLabel {
 			t.Fatalf("row %d: got N=%d Label=%q, want N=%d Label=%q",
@@ -993,7 +993,7 @@ func TestScan_ConcurrentSameLayout(t *testing.T) {
 	// Pre-warm the cache so the test focuses on concurrent read path.
 	warm := connectForTest(t, ctx)
 	warmRows, _ := warm.Query(ctx, `SELECT 0::bigint AS n`)
-	pgx.CollectRows(warmRows, scanner.Scan)
+	_, _ = pgx.CollectRows(warmRows, scanner.Scan)
 	warm.Close(ctx)
 
 	// pgx.Conn is NOT goroutine-safe, so each goroutine gets its own connection.
@@ -1211,8 +1211,6 @@ func TestScan_DefinedTypes(t *testing.T) {
 	type Real float64
 	type DoublePrecision float64
 	type Boolean bool
-	type TimestampTZ string
-
 	type definedRow struct {
 		ID      Oid             `db:"id"`
 		Name    Name            `db:"name"`

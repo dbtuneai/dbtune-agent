@@ -259,7 +259,7 @@ func doubleDiff(prev, curr *DoublePrecision) *DoublePrecision {
 // Sorts by avg exec time desc and caps at diffLimit.
 // Returns the delta rows and the total number of qualifying diffs (before cap).
 func calculateStatementDeltas(prev, curr map[string]PgStatStatementsRow, diffLimit int) ([]PgStatStatementsDelta, int) {
-	var diffs []PgStatStatementsDelta
+	diffs := make([]PgStatStatementsDelta, 0, len(curr))
 	totalDiffs := 0
 
 	for key, currRow := range curr {
@@ -371,7 +371,9 @@ func queryPGMajorVersion(pool *pgxpool.Pool, ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("could not parse PG version from %q", versionStr)
 	}
 	var major int
-	fmt.Sscanf(matches[1], "%d", &major)
+	if _, err := fmt.Sscanf(matches[1], "%d", &major); err != nil {
+		return 0, fmt.Errorf("could not parse PG major version from %q: %w", matches[1], err)
+	}
 	return major, nil
 }
 

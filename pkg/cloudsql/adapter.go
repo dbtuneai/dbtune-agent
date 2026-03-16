@@ -101,7 +101,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 	return c, nil
 }
 
-func (adapter *CloudSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *CloudSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	adapter.Logger().Infof("Applying config")
 
 	flags := []*sqladmin.DatabaseFlags{}
@@ -158,7 +158,7 @@ func (adapter *CloudSQLAdapter) GetActiveConfig(ctx context.Context) (agent.Conf
 	return filteredConfig, nil
 }
 
-func (adapter *CloudSQLAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
+func (adapter *CloudSQLAdapter) GetSystemInfo(_ context.Context) ([]metrics.FlatValue, error) {
 	adapter.Logger().Debugf("Getting System Info")
 
 	// Get PostgreSQL version and max connections from database
@@ -220,7 +220,7 @@ func (adapter *CloudSQLAdapter) GetSystemInfo(ctx context.Context) ([]metrics.Fl
 	return systemInfo, nil
 }
 
-func (adapter *CloudSQLAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
+func (adapter *CloudSQLAdapter) Guardrails(_ context.Context) *guardrails.Signal {
 	if time.Since(adapter.State.LastGuardrailCheck) < 5*time.Second {
 		return nil
 	}

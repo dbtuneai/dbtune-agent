@@ -655,7 +655,7 @@ func (adapter *CNPGAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	return nil
 }
 
-func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName string, containerName string, logger *log.Logger) []agent.MetricCollector {
+func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName string, containerName string, _ *log.Logger) []agent.MetricCollector {
 	pgConfig, _ := pg.ConfigFromViper(nil)
 	collectors := agent.DefaultMetricCollectors(pool, pgConfig)
 	return append(collectors, agent.MetricCollector{

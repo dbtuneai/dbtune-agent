@@ -48,7 +48,7 @@ func (p PGConfigRow) GetSettingValue() (string, error) {
 		case string:
 			parsed, err := strconv.ParseInt(v, 10, 64)
 			if err != nil {
-				return "", fmt.Errorf("failed to parse integer setting: %v", err)
+				return "", fmt.Errorf("failed to parse integer setting: %w", err)
 			}
 			val = parsed
 		default:
@@ -68,7 +68,7 @@ func (p PGConfigRow) GetSettingValue() (string, error) {
 		case string:
 			parsed, err := strconv.ParseFloat(v, 64)
 			if err != nil {
-				return "", fmt.Errorf("failed to parse real setting: %v", err)
+				return "", fmt.Errorf("failed to parse real setting: %w", err)
 			}
 			val = parsed
 		default:

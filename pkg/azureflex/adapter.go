@@ -300,7 +300,7 @@ func (adapter *AzureFlexAdapter) GetSystemInfo(ctx context.Context) ([]metrics.F
 	return systemInfo, nil
 }
 
-func (adapter *AzureFlexAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
+func (adapter *AzureFlexAdapter) Guardrails(_ context.Context) *guardrails.Signal {
 	memoryUsagePercent, err := MemoryPercent(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName)()
 	if err != nil {
 		adapter.Logger().Errorf("Failed to get memory metric for guardrail: %v", err)

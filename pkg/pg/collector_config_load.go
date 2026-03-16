@@ -18,7 +18,9 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 	universalFields := []string{"enabled", "interval_seconds"}
 	for name, extraFields := range knownCollectorFields {
 		envName := strings.ToUpper(strings.ReplaceAll(name, " ", "_"))
-		allFields := append(universalFields, extraFields...)
+		allFields := make([]string, 0, len(universalFields)+len(extraFields))
+		allFields = append(allFields, universalFields...)
+		allFields = append(allFields, extraFields...)
 		for _, field := range allFields {
 			envKey := fmt.Sprintf("DBT_COLLECTOR_%s_%s", envName, strings.ToUpper(field))
 			viperKey := fmt.Sprintf("collectors.%s.%s", name, field)

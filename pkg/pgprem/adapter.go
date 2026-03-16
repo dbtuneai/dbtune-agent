@@ -80,7 +80,7 @@ func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollec
 	})
 }
 
-func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
+func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(_ context.Context) ([]metrics.FlatValue, error) {
 	adapter.Logger().Println("Collecting system info")
 
 	pgDriver := adapter.PGPool
@@ -153,7 +153,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (a
 	return config, nil
 }
 
-func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	adapter.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
 	if proposedConfig.KnobApplication == "restart" {
@@ -224,7 +224,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 // 1. Checks if the total memory is set. If not fetches it from the system and sets it in cache.
 // 2. Fetches current memory usage
 // 3. If memory usage is greater than 90% of total memory, triggers a critical guardrail
-func (adapter *DefaultPostgreSQLAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
+func (adapter *DefaultPostgreSQLAdapter) Guardrails(_ context.Context) *guardrails.Signal {
 	// Get memory info
 	memoryInfo, err := mem.VirtualMemory()
 	if err != nil {

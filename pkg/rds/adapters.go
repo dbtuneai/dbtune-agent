@@ -230,7 +230,7 @@ func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
 }
 
 // Guardrails checks memory utilization and returns Critical if thresholds are exceeded
-func (adapter *RDSAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
+func (adapter *RDSAdapter) Guardrails(_ context.Context) *guardrails.Signal {
 	if time.Since(adapter.State.LastGuardrailCheck) < 5*time.Second {
 		return nil
 	}

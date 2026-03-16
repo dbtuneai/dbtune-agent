@@ -194,7 +194,7 @@ func TestPgStatsCollector(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			callIdx := 0
 
-			collectFn := func(ctx context.Context, q PgStatsQueryMode) ([]PgStatsRow, error) {
+			collectFn := func(_ context.Context, q PgStatsQueryMode) ([]PgStatsRow, error) {
 				require.Less(t, callIdx, len(tt.calls), "unexpected extra call to collectFn")
 				c := tt.calls[callIdx]
 

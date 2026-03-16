@@ -803,7 +803,7 @@ func (adapter *PatroniAdapter) GetSystemInfo(ctx context.Context) ([]metrics.Fla
 	return systemInfo, nil
 }
 
-func (adapter *PatroniAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
+func (adapter *PatroniAdapter) Guardrails(_ context.Context) *guardrails.Signal {
 	// Get memory info
 	memoryInfo, err := mem.VirtualMemory()
 	if err != nil {
