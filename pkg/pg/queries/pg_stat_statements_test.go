@@ -132,7 +132,7 @@ func TestCalculateStatementDeltas_BasicDiff(t *testing.T) {
 		"1_10_100": fakeStatementsRow(1, 10, 100, 10, 20.0, 100),
 	}
 
-	deltas, count := calculateStatementDeltas(prev, curr)
+	deltas, count := calculateStatementDeltas(prev, curr, PgStatStatementsDiffLimit)
 	assert.Equal(t, 1, count)
 	require.Len(t, deltas, 1)
 
@@ -150,7 +150,7 @@ func TestCalculateStatementDeltas_NewQueryInCurrent(t *testing.T) {
 		"1_10_100": fakeStatementsRow(1, 10, 100, 5, 10.0, 50),
 	}
 
-	deltas, count := calculateStatementDeltas(prev, curr)
+	deltas, count := calculateStatementDeltas(prev, curr, PgStatStatementsDiffLimit)
 	assert.Equal(t, 1, count)
 	require.Len(t, deltas, 1)
 
@@ -167,7 +167,7 @@ func TestCalculateStatementDeltas_SkipsNegativeDiff(t *testing.T) {
 		"1_10_100": fakeStatementsRow(1, 10, 100, 5, 10.0, 50),
 	}
 
-	deltas, count := calculateStatementDeltas(prev, curr)
+	deltas, count := calculateStatementDeltas(prev, curr, PgStatStatementsDiffLimit)
 	assert.Equal(t, 0, count)
 	assert.Empty(t, deltas)
 }
@@ -181,7 +181,7 @@ func TestCalculateStatementDeltas_SkipsZeroDiffCalls(t *testing.T) {
 		"1_10_100": fakeStatementsRow(1, 10, 100, 10, 25.0, 110),
 	}
 
-	deltas, count := calculateStatementDeltas(prev, curr)
+	deltas, count := calculateStatementDeltas(prev, curr, PgStatStatementsDiffLimit)
 	assert.Equal(t, 0, count)
 	assert.Empty(t, deltas)
 }
@@ -195,7 +195,7 @@ func TestCalculateStatementDeltas_IdentifiersFromCurrent(t *testing.T) {
 		"1_10_100": fakeStatementsRow(1, 10, 100, 10, 20.0, 100),
 	}
 
-	deltas, _ := calculateStatementDeltas(prev, curr)
+	deltas, _ := calculateStatementDeltas(prev, curr, PgStatStatementsDiffLimit)
 	require.Len(t, deltas, 1)
 
 	// Identifiers should be from current snapshot
@@ -215,7 +215,7 @@ func TestCalculateStatementDeltas_SortedByAvgExecTimeDesc(t *testing.T) {
 		"3_10_100": fakeStatementsRow(3, 10, 100, 20, 100.0, 20),
 	}
 
-	deltas, _ := calculateStatementDeltas(prev, curr)
+	deltas, _ := calculateStatementDeltas(prev, curr, PgStatStatementsDiffLimit)
 	require.Len(t, deltas, 3)
 
 	// Sorted by avg exec time desc: slow (100ms) > medium (5ms) > fast (1ms)
@@ -228,11 +228,6 @@ func TestCalculateStatementDeltas_CappedAtLimit(t *testing.T) {
 	prev := map[string]PgStatStatementsRow{}
 	curr := make(map[string]PgStatStatementsRow)
 
-	// Create more entries than the limit
-	originalLimit := pgStatStatementsDiffLimit
-	pgStatStatementsDiffLimit = 3
-	defer func() { pgStatStatementsDiffLimit = originalLimit }()
-
 	for i := int64(1); i <= 10; i++ {
 		key := compositeKey(&PgStatStatementsRow{
 			QueryID: bigintPtr(i), UserID: oidPtr(10), DbID: oidPtr(100),
@@ -240,7 +235,7 @@ func TestCalculateStatementDeltas_CappedAtLimit(t *testing.T) {
 		curr[key] = fakeStatementsRow(i, 10, 100, i, float64(i)*10, i)
 	}
 
-	deltas, count := calculateStatementDeltas(prev, curr)
+	deltas, count := calculateStatementDeltas(prev, curr, 3)
 	assert.Equal(t, 10, count) // total diffs before cap
 	assert.Len(t, deltas, 3)   // capped
 }

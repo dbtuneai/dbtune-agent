@@ -50,10 +50,29 @@ const (
 	PgStatsBackfillBatchSize = 200
 )
 
-// pgStatsColumns is the SELECT list shared by the full and delta queries.
+// buildPgStatsColumns returns the SELECT list shared by the full and delta queries.
 // Array columns use format() to stringify anyarray values since anyarray
 // cannot be cast to text[] directly.
-const pgStatsColumns = `
+//
+// When includeTableData is false, the columns that contain actual data values
+// from tables (most_common_vals, histogram_bounds, most_common_elems) are
+// NULLed out to avoid sending potentially sensitive information.
+func buildPgStatsColumns(includeTableData bool) string {
+	var mcv, hb, mce string
+	if includeTableData {
+		mcv = `CASE WHEN ps.most_common_vals IS NULL THEN NULL
+         ELSE pg_catalog.format('%s', ps.most_common_vals) END`
+		hb = `CASE WHEN ps.histogram_bounds IS NULL THEN NULL
+         ELSE pg_catalog.format('%s', ps.histogram_bounds) END`
+		mce = `CASE WHEN ps.most_common_elems IS NULL THEN NULL
+         ELSE pg_catalog.format('%s', ps.most_common_elems) END`
+	} else {
+		mcv = `NULL::text`
+		hb = `NULL::text`
+		mce = `NULL::text`
+	}
+
+	return fmt.Sprintf(`
     ps.schemaname,
     ps.tablename,
     ps.attname,
@@ -61,24 +80,23 @@ const pgStatsColumns = `
     ps.null_frac,
     ps.avg_width,
     ps.n_distinct,
-    CASE WHEN ps.most_common_vals IS NULL THEN NULL
-         ELSE pg_catalog.format('%s', ps.most_common_vals) END,
+    %s,
     CASE WHEN ps.most_common_freqs IS NULL THEN NULL
          ELSE pg_catalog.array_to_json(ps.most_common_freqs) END,
-    CASE WHEN ps.histogram_bounds IS NULL THEN NULL
-         ELSE pg_catalog.format('%s', ps.histogram_bounds) END,
+    %s,
     ps.correlation,
-    CASE WHEN ps.most_common_elems IS NULL THEN NULL
-         ELSE pg_catalog.format('%s', ps.most_common_elems) END,
+    %s,
     CASE WHEN ps.most_common_elem_freqs IS NULL THEN NULL
          ELSE pg_catalog.array_to_json(ps.most_common_elem_freqs) END,
     CASE WHEN ps.elem_count_histogram IS NULL THEN NULL
-         ELSE pg_catalog.array_to_json(ps.elem_count_histogram) END`
+         ELSE pg_catalog.array_to_json(ps.elem_count_histogram) END`, mcv, hb, mce)
+}
 
-// pgStatsQueryBatch fetches stats for a batch of tables during the initial
-// backfill phase. The subquery paginates through pg_stat_user_tables using
+// buildPgStatsQueryBatch returns the batch backfill query for pg_stats.
+// The subquery paginates through pg_stat_user_tables using
 // LIMIT/OFFSET ($1=batch size, $2=offset) to bound memory per tick.
-const pgStatsQueryBatch = `SELECT` + pgStatsColumns + `
+func buildPgStatsQueryBatch(includeTableData bool) string {
+	return `SELECT` + buildPgStatsColumns(includeTableData) + `
 FROM pg_stats ps
 JOIN (
     SELECT schemaname, relname
@@ -89,10 +107,12 @@ JOIN (
        AND ps.tablename  = batch.relname
 ORDER BY ps.schemaname, ps.tablename, ps.attname
 `
+}
 
-// pgStatsQueryDelta returns stats only for tables that have been (auto-)analyzed
-// since $1. The JOIN against pg_stat_user_tables implicitly excludes system schemas.
-const pgStatsQueryDelta = `SELECT` + pgStatsColumns + `
+// buildPgStatsQueryDelta returns the delta query for pg_stats — only tables
+// that have been (auto-)analyzed since $1.
+func buildPgStatsQueryDelta(includeTableData bool) string {
+	return `SELECT` + buildPgStatsColumns(includeTableData) + `
 FROM pg_stats ps
 JOIN pg_stat_user_tables pst
   ON ps.schemaname = pst.schemaname
@@ -100,6 +120,7 @@ JOIN pg_stat_user_tables pst
 WHERE GREATEST(pst.last_analyze, pst.last_autoanalyze) > $1
 ORDER BY ps.schemaname, ps.tablename, ps.attname
 `
+}
 
 // PgStatsQueryMode specifies which pg_stats query mode to use.
 type PgStatsQueryMode struct {
@@ -123,7 +144,7 @@ func PgStatsDeltaQuery(since time.Time) PgStatsQueryMode {
 // CollectPgStats queries the pg_stats view and returns rows for the backend.
 // This uses custom scanning because pg_stats has anyarray columns that cannot
 // be directly scanned by pgx.RowToStructByNameLax.
-func CollectPgStats(pgPool *pgxpool.Pool, ctx context.Context, q PgStatsQueryMode) ([]PgStatsRow, error) {
+func CollectPgStats(pgPool *pgxpool.Pool, ctx context.Context, q PgStatsQueryMode, includeTableData bool) ([]PgStatsRow, error) {
 	ctx, cancel := EnsureTimeout(ctx)
 	defer cancel()
 
@@ -132,9 +153,9 @@ func CollectPgStats(pgPool *pgxpool.Pool, ctx context.Context, q PgStatsQueryMod
 		err  error
 	)
 	if q.since != nil {
-		rows, err = utils.QueryWithPrefix(pgPool, ctx, pgStatsQueryDelta, *q.since)
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, buildPgStatsQueryDelta(includeTableData), *q.since)
 	} else {
-		rows, err = utils.QueryWithPrefix(pgPool, ctx, pgStatsQueryBatch, q.batchSize, q.offset)
+		rows, err = utils.QueryWithPrefix(pgPool, ctx, buildPgStatsQueryBatch(includeTableData), q.batchSize, q.offset)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_stats: %w", err)
@@ -284,17 +305,17 @@ func newPgStatsCollectFunc(collectFn PgStatsCollectFunc, batchSize int) func(ctx
 	}
 }
 
-func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
+func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSize int, includeTableData bool) CatalogCollector {
 	collectFn := func(ctx context.Context, q PgStatsQueryMode) ([]PgStatsRow, error) {
 		ctx, err := prepareCtx(ctx)
 		if err != nil {
 			return nil, err
 		}
-		return CollectPgStats(pool, ctx, q)
+		return CollectPgStats(pool, ctx, q, includeTableData)
 	}
 	return CatalogCollector{
 		Name:     PgStatsName,
 		Interval: PgStatsInterval,
-		Collect:  newPgStatsCollectFunc(collectFn, PgStatsBackfillBatchSize),
+		Collect:  newPgStatsCollectFunc(collectFn, backfillBatchSize),
 	}
 }

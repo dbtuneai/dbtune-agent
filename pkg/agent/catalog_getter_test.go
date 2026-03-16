@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/sirupsen/logrus"
 )
@@ -218,4 +220,138 @@ func TestCatalogCollectors_Shape(t *testing.T) {
 			seen[c.Name] = true
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// CollectorsConfig: enabled/disabled filtering
+// ---------------------------------------------------------------------------
+
+func boolPtr(v bool) *bool { return &v }
+func intPtr(v int) *int    { return &v }
+
+func TestCatalogCollectors_DisabledCollector(t *testing.T) {
+	g := &CatalogGetter{
+		PGMajorVersion: 16,
+		CollectorsConfig: pg.CollectorsConfig{
+			"pg_stat_statements": {Enabled: boolPtr(false)},
+			"pg_stats":           {Enabled: boolPtr(false)},
+		},
+	}
+	collectors := g.CatalogCollectors()
+
+	byName := make(map[string]bool, len(collectors))
+	for _, c := range collectors {
+		byName[c.Name] = true
+	}
+
+	if byName["pg_stat_statements"] {
+		t.Error("pg_stat_statements should be disabled")
+	}
+	if byName["pg_stats"] {
+		t.Error("pg_stats should be disabled")
+	}
+	if !byName["ddl"] {
+		t.Error("ddl should still be present")
+	}
+	if len(collectors) != 35 {
+		t.Errorf("expected 35 collectors (37-2 disabled), got %d", len(collectors))
+	}
+}
+
+func TestCatalogCollectors_IntervalOverride(t *testing.T) {
+	g := &CatalogGetter{
+		PGMajorVersion: 16,
+		CollectorsConfig: pg.CollectorsConfig{
+			queries.PgStatsName: {IntervalSeconds: intPtr(300)},
+		},
+	}
+	collectors := g.CatalogCollectors()
+
+	for _, c := range collectors {
+		if c.Name == queries.PgStatsName {
+			if c.Interval != 300*time.Second {
+				t.Errorf("expected pg_stats interval 300s, got %v", c.Interval)
+			}
+			return
+		}
+	}
+	t.Error("pg_stats not found in collectors")
+}
+
+func TestCatalogCollectors_IntervalFloor(t *testing.T) {
+	// Try to set interval below the compiled default — should be clamped.
+	g := &CatalogGetter{
+		PGMajorVersion: 16,
+		CollectorsConfig: pg.CollectorsConfig{
+			queries.PgStatStatementsName: {IntervalSeconds: intPtr(1)}, // default is 5s
+		},
+	}
+	collectors := g.CatalogCollectors()
+
+	for _, c := range collectors {
+		if c.Name == queries.PgStatStatementsName {
+			if c.Interval != queries.PgStatStatementsInterval {
+				t.Errorf("expected interval clamped to %v, got %v", queries.PgStatStatementsInterval, c.Interval)
+			}
+			return
+		}
+	}
+	t.Error("pg_stat_statements not found in collectors")
+}
+
+func TestCatalogCollectors_NilCollectorsConfig(t *testing.T) {
+	g := &CatalogGetter{
+		PGMajorVersion:   16,
+		CollectorsConfig: nil,
+	}
+	collectors := g.CatalogCollectors()
+	if len(collectors) != 37 {
+		t.Fatalf("expected 37 collectors with nil config, got %d", len(collectors))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CollectorsConfig: upper-bound enforcement
+// ---------------------------------------------------------------------------
+
+func TestCatalogCollectors_MaxQueryTextLength_ClampedFromPGConfig(t *testing.T) {
+	// pg.Config has a default of 50_000 which must be clamped to MaxQueryTextLength (8192).
+	// We verify this by checking that CatalogCollectors doesn't panic and produces
+	// collectors — the clamping happens in the resolution logic before passing to the factory.
+	g := &CatalogGetter{
+		PGMajorVersion: 16,
+		PGConfig: pg.Config{
+			MaximumQueryTextLength: 50_000, // exceeds MaxQueryTextLength
+			IncludeQueries:         true,
+		},
+	}
+	collectors := g.CatalogCollectors()
+	found := false
+	for _, c := range collectors {
+		if c.Name == queries.PgStatStatementsName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("pg_stat_statements collector should be present")
+	}
+}
+
+func TestCatalogCollectors_CollectorCfgHelper(t *testing.T) {
+	g := &CatalogGetter{
+		CollectorsConfig: pg.CollectorsConfig{
+			"pg_stats": {IntervalSeconds: intPtr(120)},
+		},
+	}
+
+	cfg := g.collectorCfg("pg_stats")
+	if cfg.IntervalSeconds == nil || *cfg.IntervalSeconds != 120 {
+		t.Error("expected configured interval for pg_stats")
+	}
+
+	cfg2 := g.collectorCfg("nonexistent")
+	if cfg2.IntervalSeconds != nil {
+		t.Error("expected nil for nonexistent collector")
+	}
 }

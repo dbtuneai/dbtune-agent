@@ -18,3 +18,25 @@ dbtune:
 
 guardrail_settings:
   memory_threshold: 90 # percentage of total memory.
+
+# Per-collector configuration (all optional, omitted collectors use defaults).
+# interval_seconds must be >= the compiled default (can only slow down, not speed up).
+# collectors:
+#   pg_stat_statements:
+#     interval_seconds: 10       # default 5s
+#     include_queries: true
+#     diff_limit: 500            # max 500
+#   pg_stats:
+#     interval_seconds: 120      # default 60s
+#     backfill_batch_size: 200
+#     include_table_data: true    # collect potentially sensitive data values from tables
+#   pg_class:
+#     backfill_batch_size: 500
+#   pg_stat_user_tables:
+#     category_limit: 200
+#   pg_stat_user_indexes:
+#     category_limit: 200
+#   pg_statio_user_indexes:
+#     category_limit: 200
+#   pg_stat_subscription:
+#     enabled: false

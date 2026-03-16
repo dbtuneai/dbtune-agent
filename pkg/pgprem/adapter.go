@@ -49,13 +49,18 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 	}
 
 	pgMajorVersion := pg.ParsePgMajorVersion(PGVersion)
+	collectorsConfig, err := pg.CollectorsConfigFromViper()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load collectors config: %w", err)
+	}
 	c := &DefaultPostgreSQLAdapter{
 		CommonAgent: *commonAgent,
 		CatalogGetter: agent.CatalogGetter{
-			PGPool:         dbpool,
-			PGMajorVersion: pgMajorVersion,
-			PGConfig:       pgConfig,
-			HealthGate:     pg.NewHealthGate(dbpool, commonAgent.Logger()),
+			PGPool:           dbpool,
+			PGMajorVersion:   pgMajorVersion,
+			PGConfig:         pgConfig,
+			CollectorsConfig: collectorsConfig,
+			HealthGate:       pg.NewHealthGate(dbpool, commonAgent.Logger()),
 		},
 		pgConfig:        pgConfig,
 		GuardrailConfig: guardrailSettings,

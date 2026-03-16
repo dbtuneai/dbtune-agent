@@ -38,19 +38,22 @@ const (
 //     misses indicates a potential configuration issue.
 //
 // UNION deduplicates across categories automatically.
-var pgStatioUserIndexesQuery = fmt.Sprintf(`
+func BuildPgStatioUserIndexesQuery(categoryLimit int) string {
+	return fmt.Sprintf(`
 (SELECT * FROM pg_statio_user_indexes ORDER BY COALESCE(idx_blks_read,0) DESC LIMIT %d)
 UNION
 (SELECT * FROM pg_statio_user_indexes ORDER BY COALESCE(idx_blks_read,0) + COALESCE(idx_blks_hit,0) DESC LIMIT %d)
 UNION
 (SELECT * FROM pg_statio_user_indexes WHERE COALESCE(idx_blks_read,0) > 0 ORDER BY COALESCE(idx_blks_read,0) DESC LIMIT %d)
-`, PgStatioUserIndexesCategoryLimit, PgStatioUserIndexesCategoryLimit, PgStatioUserIndexesCategoryLimit)
-
-func CollectPgStatioUserIndexes(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatioUserIndexesRow, error) {
-	return CollectView[PgStatioUserIndexesRow](pgPool, ctx, pgStatioUserIndexesQuery, "pg_statio_user_indexes")
+`, categoryLimit, categoryLimit, categoryLimit)
 }
 
-func PgStatioUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
+func CollectPgStatioUserIndexes(pgPool *pgxpool.Pool, ctx context.Context, query string) ([]PgStatioUserIndexesRow, error) {
+	return CollectView[PgStatioUserIndexesRow](pgPool, ctx, query, "pg_statio_user_indexes")
+}
+
+func PgStatioUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, categoryLimit int) CatalogCollector {
+	query := BuildPgStatioUserIndexesQuery(categoryLimit)
 	return CatalogCollector{
 		Name:     PgStatioUserIndexesName,
 		Interval: PgStatioUserIndexesInterval,
@@ -59,7 +62,7 @@ func PgStatioUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) Cat
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatioUserIndexes(pool, ctx)
+			rows, err := CollectPgStatioUserIndexes(pool, ctx, query)
 			if err != nil {
 				return nil, err
 			}

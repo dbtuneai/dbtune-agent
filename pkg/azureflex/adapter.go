@@ -61,13 +61,18 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 
 	common := agent.CreateCommonAgent()
 	pgMajorVersion := pg.ParsePgMajorVersion(pgVersion)
+	collectorsConfig, err := pg.CollectorsConfigFromViper()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load collectors config: %w", err)
+	}
 	adpt := AzureFlexAdapter{
 		CommonAgent: *common,
 		CatalogGetter: agent.CatalogGetter{
-			PGPool:         pgPool,
-			PGMajorVersion: pgMajorVersion,
-			PGConfig:       pgConfig,
-			HealthGate:     pg.NewHealthGate(pgPool, common.Logger()),
+			PGPool:           pgPool,
+			PGMajorVersion:   pgMajorVersion,
+			PGConfig:         pgConfig,
+			CollectorsConfig: collectorsConfig,
+			HealthGate:       pg.NewHealthGate(pgPool, common.Logger()),
 		},
 		AzureFlexConfig: config,
 		GuardrailConfig: guardrailConfig,
