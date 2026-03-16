@@ -234,7 +234,7 @@ func TestPgStatStatementsCollector(t *testing.T) {
 			prepareCtx := func(ctx context.Context) (context.Context, error) { return ctx, nil }
 
 			// Test with query text included
-			collector := queries.PgStatStatementsCollector(pg.pool, prepareCtx, true, 1000, pg.version)
+			collector := queries.PgStatStatementsCollector(pg.pool, prepareCtx, true, 1000, queries.PgStatStatementsDiffLimit, pg.version)
 			assert.Equal(t, "pg_stat_statements", collector.Name)
 
 			// First tick: should return rows but no deltas
@@ -295,7 +295,7 @@ func TestPgStatStatementsCollectorNoQueryText(t *testing.T) {
 			ctx := context.Background()
 			prepareCtx := func(ctx context.Context) (context.Context, error) { return ctx, nil }
 
-			collector := queries.PgStatStatementsCollector(pg.pool, prepareCtx, false, 1000, pg.version)
+			collector := queries.PgStatStatementsCollector(pg.pool, prepareCtx, false, 1000, queries.PgStatStatementsDiffLimit, pg.version)
 			result, err := collector.Collect(ctx)
 			require.NoError(t, err)
 			payload, ok := result.(*queries.PgStatStatementsPayload)
@@ -318,7 +318,7 @@ func TestPgStatStatementsQueryTruncation(t *testing.T) {
 			prepareCtx := func(ctx context.Context) (context.Context, error) { return ctx, nil }
 
 			// Use a very short max length to test truncation
-			collector := queries.PgStatStatementsCollector(pg.pool, prepareCtx, true, 10, pg.version)
+			collector := queries.PgStatStatementsCollector(pg.pool, prepareCtx, true, 10, queries.PgStatStatementsDiffLimit, pg.version)
 			result, err := collector.Collect(ctx)
 			require.NoError(t, err)
 			payload, ok := result.(*queries.PgStatStatementsPayload)
@@ -341,7 +341,7 @@ func TestPgStatStatementsVersionSpecificFields(t *testing.T) {
 			ctx := context.Background()
 			prepareCtx := func(ctx context.Context) (context.Context, error) { return ctx, nil }
 
-			collector := queries.PgStatStatementsCollector(pg.pool, prepareCtx, true, 1000, pg.version)
+			collector := queries.PgStatStatementsCollector(pg.pool, prepareCtx, true, 1000, queries.PgStatStatementsDiffLimit, pg.version)
 			result, err := collector.Collect(ctx)
 			require.NoError(t, err)
 			payload, ok := result.(*queries.PgStatStatementsPayload)
