@@ -24,6 +24,11 @@ tasks:
       - ./scripts/local-testing.sh
     silent: false
 
+  build:
+    desc: Build the agent binary
+    cmds:
+      - go build -o dbtune-agent cmd/agent.go
+
   test:
     desc: Run all tests
     cmds:
