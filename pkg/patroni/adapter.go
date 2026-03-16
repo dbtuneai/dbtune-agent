@@ -78,11 +78,16 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 		State:           &State{},
 	}
 
+	collectorsConfig, err := pg.CollectorsConfigFromViper()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load collectors config: %w", err)
+	}
 	adpt.CatalogGetter = agent.CatalogGetter{
-		PGPool:         pgPool,
-		PGMajorVersion: pg.ParsePgMajorVersion(pgVersion),
-		PGConfig:       pgConfig,
-		HealthGate:     pg.NewHealthGate(pgPool, common.Logger()),
+		PGPool:           pgPool,
+		PGMajorVersion:   pg.ParsePgMajorVersion(pgVersion),
+		PGConfig:         pgConfig,
+		CollectorsConfig: collectorsConfig,
+		HealthGate:       pg.NewHealthGate(pgPool, common.Logger()),
 		PrepareContext: func(ctx context.Context) (context.Context, error) {
 			opsCtx := adpt.State.GetOperationsContext()
 			if err := adpt.checkFailoverBeforeOperation(ctx, "catalog_query"); err != nil {

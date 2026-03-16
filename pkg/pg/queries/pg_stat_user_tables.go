@@ -38,19 +38,22 @@ const (
 //     may need vacuum tuning, regardless of current read/write rate.
 //
 // UNION deduplicates across categories automatically.
-var pgStatUserTablesQuery = fmt.Sprintf(`
+func BuildPgStatUserTablesQuery(categoryLimit int) string {
+	return fmt.Sprintf(`
 (SELECT * FROM pg_stat_user_tables ORDER BY COALESCE(n_tup_ins,0) + COALESCE(n_tup_upd,0) + COALESCE(n_tup_del,0) DESC LIMIT %d)
 UNION
 (SELECT * FROM pg_stat_user_tables ORDER BY COALESCE(seq_scan,0) + COALESCE(idx_scan,0) DESC LIMIT %d)
 UNION
 (SELECT * FROM pg_stat_user_tables ORDER BY COALESCE(n_dead_tup,0) DESC LIMIT %d)
-`, PgStatUserTablesCategoryLimit, PgStatUserTablesCategoryLimit, PgStatUserTablesCategoryLimit)
-
-func CollectPgStatUserTables(pgPool *pgxpool.Pool, ctx context.Context) ([]PgStatUserTableRow, error) {
-	return CollectView[PgStatUserTableRow](pgPool, ctx, pgStatUserTablesQuery, "pg_stat_user_tables")
+`, categoryLimit, categoryLimit, categoryLimit)
 }
 
-func PgStatUserTablesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
+func CollectPgStatUserTables(pgPool *pgxpool.Pool, ctx context.Context, query string) ([]PgStatUserTableRow, error) {
+	return CollectView[PgStatUserTableRow](pgPool, ctx, query, "pg_stat_user_tables")
+}
+
+func PgStatUserTablesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, categoryLimit int) CatalogCollector {
+	query := BuildPgStatUserTablesQuery(categoryLimit)
 	return CatalogCollector{
 		Name:     PgStatUserTablesName,
 		Interval: PgStatUserTablesInterval,
@@ -59,7 +62,7 @@ func PgStatUserTablesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) Catalo
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectPgStatUserTables(pool, ctx)
+			rows, err := CollectPgStatUserTables(pool, ctx, query)
 			if err != nil {
 				return nil, err
 			}

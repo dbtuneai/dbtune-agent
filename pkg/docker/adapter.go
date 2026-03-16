@@ -63,13 +63,18 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
+	collectorsConfig, err := pg.CollectorsConfigFromViper()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load collectors config: %w", err)
+	}
 	dockerAdapter := &DockerContainerAdapter{
 		CommonAgent: *commonAgent,
 		CatalogGetter: agent.CatalogGetter{
-			PGPool:         dbpool,
-			PGMajorVersion: pg.ParsePgMajorVersion(PGVersion),
-			PGConfig:       pgConfig,
-			HealthGate:     pg.NewHealthGate(dbpool, commonAgent.Logger()),
+			PGPool:           dbpool,
+			PGMajorVersion:   pg.ParsePgMajorVersion(PGVersion),
+			PGConfig:         pgConfig,
+			CollectorsConfig: collectorsConfig,
+			HealthGate:       pg.NewHealthGate(dbpool, commonAgent.Logger()),
 		},
 		Config:            dockerConfig,
 		dockerClient:      cli,

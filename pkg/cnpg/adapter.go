@@ -120,11 +120,16 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 	// Initialize operations context for cancellation support
 	adapter.State.CreateOperationsContext()
 
+	collectorsConfig, err := pg.CollectorsConfigFromViper()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load collectors config: %w", err)
+	}
 	adapter.CatalogGetter = agent.CatalogGetter{
-		PGPool:         dbpool,
-		PGMajorVersion: pg.ParsePgMajorVersion(pgVersion),
-		PGConfig:       pgConfig,
-		HealthGate:     pg.NewHealthGate(dbpool, adapter.Logger()),
+		PGPool:           dbpool,
+		PGMajorVersion:   pg.ParsePgMajorVersion(pgVersion),
+		PGConfig:         pgConfig,
+		CollectorsConfig: collectorsConfig,
+		HealthGate:       pg.NewHealthGate(dbpool, adapter.Logger()),
 		PrepareContext: func(ctx context.Context) (context.Context, error) {
 			if err := adapter.CheckForFailover(ctx); err != nil {
 				return nil, err

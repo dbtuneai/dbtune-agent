@@ -91,14 +91,19 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
 	pgMajorVersion := pg.ParsePgMajorVersion(PGVersion)
+	collectorsConfig, err := pg.CollectorsConfigFromViper()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load collectors config: %w", err)
+	}
 	// Create adapter
 	adapter := &AivenPostgreSQLAdapter{
 		CommonAgent: *commonAgent,
 		CatalogGetter: agent.CatalogGetter{
-			PGPool:         pgPool,
-			PGMajorVersion: pgMajorVersion,
-			PGConfig:       pgConfig,
-			HealthGate:     pg.NewHealthGate(pgPool, commonAgent.Logger()),
+			PGPool:           pgPool,
+			PGMajorVersion:   pgMajorVersion,
+			PGConfig:         pgConfig,
+			CollectorsConfig: collectorsConfig,
+			HealthGate:       pg.NewHealthGate(pgPool, commonAgent.Logger()),
 		},
 		Config:            aivenConfig,
 		Client:            aivenClient,

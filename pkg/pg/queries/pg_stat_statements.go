@@ -14,7 +14,7 @@ import (
 
 const (
 	PgStatStatementsName     = "pg_stat_statements"
-	PgStatStatementsInterval = 1 * time.Minute
+	PgStatStatementsInterval = 5 * time.Second
 )
 
 // pgStatStatementsFilter is the WHERE clause shared by all pg_stat_statements queries.
@@ -24,8 +24,8 @@ WHERE NOT starts_with(query, '%s')
   AND query !~* '^\s*(BEGIN|COMMIT|ROLLBACK|SET |SHOW |SELECT (pg_|\$1$|version\s*\(\s*\)))\s*;?\s*$'
 `, utils.DBtuneQueryPrefix)
 
-// pgStatStatementsDiffLimit is the max number of delta entries to include.
-var pgStatStatementsDiffLimit = 500
+// PgStatStatementsDiffLimit is the max number of delta entries to include.
+const PgStatStatementsDiffLimit = 500
 
 // PgStatStatementsRow represents a single row from pg_stat_statements.
 // All fields are nullable pointers; the scanner silently skips columns
@@ -256,9 +256,9 @@ func doubleDiff(prev, curr *DoublePrecision) *DoublePrecision {
 // Only diffs the three original counters: calls, total_exec_time, rows.
 // All other fields are copied from the current snapshot as-is.
 // Only includes queries where all three counters increased.
-// Sorts by avg exec time desc and caps at pgStatStatementsDiffLimit.
+// Sorts by avg exec time desc and caps at diffLimit.
 // Returns the delta rows and the total number of qualifying diffs (before cap).
-func calculateStatementDeltas(prev, curr map[string]PgStatStatementsRow) ([]PgStatStatementsDelta, int) {
+func calculateStatementDeltas(prev, curr map[string]PgStatStatementsRow, diffLimit int) ([]PgStatStatementsDelta, int) {
 	var diffs []PgStatStatementsDelta
 	totalDiffs := 0
 
@@ -295,8 +295,8 @@ func calculateStatementDeltas(prev, curr map[string]PgStatStatementsRow) ([]PgSt
 		return avgI > avgJ
 	})
 
-	if len(diffs) > pgStatStatementsDiffLimit {
-		diffs = diffs[:pgStatStatementsDiffLimit]
+	if len(diffs) > diffLimit {
+		diffs = diffs[:diffLimit]
 	}
 
 	return diffs, totalDiffs
@@ -391,6 +391,7 @@ func PgStatStatementsCollector(
 	prepareCtx PrepareCtx,
 	includeQueries bool,
 	maxQueryTextLength int,
+	diffLimit int,
 	initialPGVersion int,
 ) CatalogCollector {
 	var prevSnapshot map[string]PgStatStatementsRow
@@ -430,7 +431,7 @@ func PgStatStatementsCollector(
 			}
 
 			if prevSnapshot != nil {
-				deltas, deltaCount := calculateStatementDeltas(prevSnapshot, currSnapshot)
+				deltas, deltaCount := calculateStatementDeltas(prevSnapshot, currSnapshot, diffLimit)
 				avgRuntime := calculateAvgRuntime(prevSnapshot, currSnapshot)
 				payload.Deltas = deltas
 				payload.DeltaCount = deltaCount

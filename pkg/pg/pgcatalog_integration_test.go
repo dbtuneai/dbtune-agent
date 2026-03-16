@@ -184,9 +184,11 @@ func runVersionGatedTest[T any](
 
 func TestSimpleCollectors(t *testing.T) {
 	runSimpleCollectorTest(t, "pg_stats", func(pool *pgxpool.Pool, ctx context.Context) ([]queries.PgStatsRow, error) {
-		return queries.CollectPgStats(pool, ctx, queries.PgStatsBackfillQuery(queries.PgStatsBackfillBatchSize, 0))
+		return queries.CollectPgStats(pool, ctx, queries.PgStatsBackfillQuery(queries.PgStatsBackfillBatchSize, 0), true)
 	}, true)
-	runSimpleCollectorTest(t, "pg_stat_user_tables", queries.CollectPgStatUserTables, true)
+	runSimpleCollectorTest(t, "pg_stat_user_tables", func(pool *pgxpool.Pool, ctx context.Context) ([]queries.PgStatUserTableRow, error) {
+		return queries.CollectPgStatUserTables(pool, ctx, queries.BuildPgStatUserTablesQuery(queries.PgStatUserTablesCategoryLimit))
+	}, true)
 	runSimpleCollectorTest(t, "pg_class", func(pool *pgxpool.Pool, ctx context.Context) ([]queries.PgClassRow, error) {
 		return queries.CollectPgClass(pool, ctx, queries.PgClassBackfillQuery(queries.PgClassBackfillBatchSize, 0))
 	}, true)
@@ -197,9 +199,13 @@ func TestSimpleCollectors(t *testing.T) {
 	runSimpleCollectorTest(t, "pg_stat_bgwriter", queries.CollectPgStatBgwriter, true)
 	runSimpleCollectorTest(t, "pg_stat_replication", queries.CollectPgStatReplication, false)
 	runSimpleCollectorTest(t, "pg_stat_slru", queries.CollectPgStatSlru, true)
-	runSimpleCollectorTest(t, "pg_stat_user_indexes", queries.CollectPgStatUserIndexes, true)
+	runSimpleCollectorTest(t, "pg_stat_user_indexes", func(pool *pgxpool.Pool, ctx context.Context) ([]queries.PgStatUserIndexesRow, error) {
+		return queries.CollectPgStatUserIndexes(pool, ctx, queries.BuildPgStatUserIndexesQuery(queries.PgStatUserIndexesCategoryLimit))
+	}, true)
 	runSimpleCollectorTest(t, "pg_statio_user_tables", queries.CollectPgStatioUserTables, false)
-	runSimpleCollectorTest(t, "pg_statio_user_indexes", queries.CollectPgStatioUserIndexes, false)
+	runSimpleCollectorTest(t, "pg_statio_user_indexes", func(pool *pgxpool.Pool, ctx context.Context) ([]queries.PgStatioUserIndexesRow, error) {
+		return queries.CollectPgStatioUserIndexes(pool, ctx, queries.BuildPgStatioUserIndexesQuery(queries.PgStatioUserIndexesCategoryLimit))
+	}, false)
 	runSimpleCollectorTest(t, "pg_stat_user_functions", queries.CollectPgStatUserFunctions, false)
 	runSimpleCollectorTest(t, "pg_locks", queries.CollectPgLocks, false)
 	runSimpleCollectorTest(t, "pg_stat_progress_vacuum", queries.CollectPgStatProgressVacuum, false)

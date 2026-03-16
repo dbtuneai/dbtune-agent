@@ -178,7 +178,7 @@ func newPgClassCollectFunc(collectFn PgClassCollectFunc, batchSize int) func(ctx
 	}
 }
 
-func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
+func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSize int) CatalogCollector {
 	collectFn := func(ctx context.Context, q PgClassQueryMode) ([]PgClassRow, error) {
 		ctx, err := prepareCtx(ctx)
 		if err != nil {
@@ -189,6 +189,6 @@ func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollecto
 	return CatalogCollector{
 		Name:     PgClassName,
 		Interval: PgClassInterval,
-		Collect:  newPgClassCollectFunc(collectFn, PgClassBackfillBatchSize),
+		Collect:  newPgClassCollectFunc(collectFn, backfillBatchSize),
 	}
 }
