@@ -24,11 +24,21 @@ tasks:
       - ./scripts/local-testing.sh
     silent: false
 
+  build:
+    desc: Build the agent binary
+    cmds:
+      - go build -o dbtune-agent cmd/agent.go
+
   test:
     desc: Run all tests
     cmds:
       - go test ./...
     silent: false
+
+  test-integration:
+    desc: Run integration tests against PG 13-18 (requires Docker)
+    cmds:
+      - go test -tags integration ./pkg/pg/ -v -timeout 10m
 
   format:
     desc: Format all Go files

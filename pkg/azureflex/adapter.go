@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
@@ -17,6 +16,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
 )
@@ -25,8 +25,8 @@ var parseSKURegex = regexp.MustCompile("([B,D,E])([0-9]+)(ds|ads|s|ms)(?:_v([0-9
 
 type AzureFlexAdapter struct {
 	agent.CommonAgent
+	agent.CatalogGetter
 	AzureFlexConfig Config
-	PGDriver        *pgxpool.Pool
 	GuardrailConfig guardrails.Config
 	pgConfig        pg.Config
 	PGVersion       string
@@ -49,7 +49,7 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 		return nil, err
 	}
 
-	pgVersion, err := pg.PGVersion(pgPool)
+	pgVersion, err := queries.PGVersion(pgPool)
 	if err != nil {
 		return nil, err
 	}
@@ -60,10 +60,21 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 	}
 
 	common := agent.CreateCommonAgent()
+	pgMajorVersion := pg.ParsePgMajorVersion(pgVersion)
+	collectorsConfig, err := pg.CollectorsConfigFromViper()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load collectors config: %w", err)
+	}
 	adpt := AzureFlexAdapter{
-		CommonAgent:     *common,
+		CommonAgent: *common,
+		CatalogGetter: agent.CatalogGetter{
+			PGPool:           pgPool,
+			PGMajorVersion:   pgMajorVersion,
+			PGConfig:         pgConfig,
+			CollectorsConfig: collectorsConfig,
+			HealthGate:       pg.NewHealthGate(pgPool, common.Logger()),
+		},
 		AzureFlexConfig: config,
-		PGDriver:        pgPool,
 		GuardrailConfig: guardrailConfig,
 		pgConfig:        pgConfig,
 		PGVersion:       pgVersion,
@@ -73,8 +84,7 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 	return &adpt, nil
 }
 
-func (adapter *AzureFlexAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
-	ctx := context.Background()
+func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
 		return err
@@ -184,18 +194,19 @@ func ApplyParameter(ctx context.Context, logger *logrus.Logger, paramsClient *ar
 	return *res.Configuration.Properties.IsConfigPendingRestart, nil
 }
 
-func (adapter *AzureFlexAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
-	ctx := context.Background()
-
-	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx, adapter.Logger())
+func (adapter *AzureFlexAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
+	rows, err := queries.CollectPgSettings(adapter.PGPool, ctx, adapter.Logger())
 	if err != nil {
 		return nil, err
 	}
-
-	return config, err
+	config := make(agent.ConfigArraySchema, len(rows))
+	for i, r := range rows {
+		config[i] = r
+	}
+	return config, nil
 }
 
-func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *AzureFlexAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
 		return nil, err
@@ -206,7 +217,7 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 		return nil, err
 	}
 
-	serverInfo, err := clientFactory.NewServersClient().Get(context.Background(), adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, nil)
+	serverInfo, err := clientFactory.NewServersClient().Get(ctx, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -253,12 +264,12 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 		}
 	}
 
-	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
+	maxConnections, err := queries.MaxConnections(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
 
-	pgVersion, err := pg.PGVersion(adapter.PGDriver)
+	pgVersion, err := queries.PGVersion(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +300,7 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return systemInfo, nil
 }
 
-func (adapter *AzureFlexAdapter) Guardrails() *guardrails.Signal {
+func (adapter *AzureFlexAdapter) Guardrails(_ context.Context) *guardrails.Signal {
 	memoryUsagePercent, err := MemoryPercent(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName)()
 	if err != nil {
 		adapter.Logger().Errorf("Failed to get memory metric for guardrail: %v", err)
@@ -310,75 +321,17 @@ func (adapter *AzureFlexAdapter) Guardrails() *guardrails.Signal {
 }
 
 func (adapter *AzureFlexAdapter) Collectors() []agent.MetricCollector {
-	pool := adapter.PGDriver
-	collectors := []agent.MetricCollector{
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pool, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pool),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pool),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pool),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pool),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pool),
-		},
-		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pool),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pool),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pool),
-		},
-		{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pool),
-		},
-		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pool),
-		},
-
-		{
+	collectors := agent.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
+	return append(collectors,
+		agent.MetricCollector{
 			Key:       "cpu_utilization",
 			Collector: AsCollector(CPUUtilization(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName), metrics.NodeCPUUsage),
 		},
-		{
+		agent.MetricCollector{
 			Key:       "memory_used",
 			Collector: AsCollector(MemoryPercent(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName), metrics.NodeMemoryUsedPercentage),
 		},
-	}
-	majorVersion := strings.Split(adapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_checkpointer",
-			Collector: pg.PGStatCheckpointer(pool),
-		})
-	}
-	return collectors
+	)
 }
 
 func AsCollector(metricGetter func() (float64, error), metric metrics.MetricDef) func(ctx context.Context, metric_state *agent.MetricsState) error {

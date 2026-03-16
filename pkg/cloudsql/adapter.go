@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
-	"strings"
 	"time"
 
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
@@ -14,13 +12,14 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/api/sqladmin/v1"
 )
 
 type CloudSQLAdapter struct {
 	agent.CommonAgent
-	PGDriver              *pgPool.Pool
+	agent.CatalogGetter
 	State                 *State
 	CloudSQLConfig        Config
 	CloudMonitoringClient *CloudMonitoringClient
@@ -64,15 +63,26 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		return nil, fmt.Errorf("failed to validate settings for guardrails %w", err)
 	}
 
-	PGVersion, err := pg.PGVersion(pgPool)
+	PGVersion, err := queries.PGVersion(pgPool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
 
+	pgMajorVersion := pg.ParsePgMajorVersion(PGVersion)
+	collectorsConfig, err := pg.CollectorsConfigFromViper()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load collectors config: %w", err)
+	}
 	c := &CloudSQLAdapter{
-		CommonAgent:    *commonAgent,
+		CommonAgent: *commonAgent,
+		CatalogGetter: agent.CatalogGetter{
+			PGPool:           pgPool,
+			PGMajorVersion:   pgMajorVersion,
+			PGConfig:         pgConfig,
+			CollectorsConfig: collectorsConfig,
+			HealthGate:       pg.NewHealthGate(pgPool, commonAgent.Logger()),
+		},
 		State:          &State{LastGuardrailCheck: time.Now()},
-		PGDriver:       pgPool,
 		CloudSQLConfig: config,
 		CloudMonitoringClient: &CloudMonitoringClient{
 			client: client,
@@ -91,7 +101,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 	return c, nil
 }
 
-func (adapter *CloudSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *CloudSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	adapter.Logger().Infof("Applying config")
 
 	flags := []*sqladmin.DatabaseFlags{}
@@ -119,17 +129,17 @@ func (adapter *CloudSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfig
 		return err
 	}
 
-	err = pg.WaitPostgresReady(adapter.PGDriver)
+	err = pg.WaitPostgresReady(adapter.PGPool)
 	if err != nil {
 		return fmt.Errorf("Error waiting for PostgreSQL to come back online: %w", err)
 	}
 	return nil
 }
 
-func (adapter *CloudSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
+func (adapter *CloudSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	adapter.Logger().Debugf("Getting Active Config")
 
-	config, err := pg.GetActiveConfig(adapter.PGDriver, context.Background(), adapter.Logger())
+	config, err := queries.CollectPgSettings(adapter.PGPool, ctx, adapter.Logger())
 	if err != nil {
 		return nil, err
 	}
@@ -137,32 +147,27 @@ func (adapter *CloudSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, erro
 	// some config rows are marked as internal, we cannot control these at all and
 	// they change in a way we can't predict and so can cause tuning to fail
 	filteredConfig := make(agent.ConfigArraySchema, 0, len(config))
-
-	for _, knob := range config {
-		if k, ok := knob.(agent.PGConfigRow); ok {
-			if k.Context != "internal" {
-				filteredConfig = append(filteredConfig, k)
-			} else {
-				adapter.Logger().Debugf("Internal config option filtered out: %s", k.Name)
-			}
+	for _, row := range config {
+		if row.Context != "internal" {
+			filteredConfig = append(filteredConfig, row)
 		} else {
-			adapter.Logger().Errorf("Unexpected Config Type: %T", knob)
+			adapter.Logger().Debugf("Internal config option filtered out: %s", row.Name)
 		}
 	}
 
 	return filteredConfig, nil
 }
 
-func (adapter *CloudSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *CloudSQLAdapter) GetSystemInfo(_ context.Context) ([]metrics.FlatValue, error) {
 	adapter.Logger().Debugf("Getting System Info")
 
 	// Get PostgreSQL version and max connections from database
-	pgVersion, err := pg.PGVersion(adapter.PGDriver)
+	pgVersion, err := queries.PGVersion(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
 
-	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
+	maxConnections, err := queries.MaxConnections(adapter.PGPool)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +220,7 @@ func (adapter *CloudSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return systemInfo, nil
 }
 
-func (adapter *CloudSQLAdapter) Guardrails() *guardrails.Signal {
+func (adapter *CloudSQLAdapter) Guardrails(_ context.Context) *guardrails.Signal {
 	if time.Since(adapter.State.LastGuardrailCheck) < 5*time.Second {
 		return nil
 	}
@@ -244,68 +249,9 @@ func (adapter *CloudSQLAdapter) Guardrails() *guardrails.Signal {
 }
 
 func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
-	pool := adapter.PGDriver
-	collectors := []agent.MetricCollector{
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pool, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pool),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pool),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pool),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pool),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pool),
-		},
-		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pool),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pool),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pool),
-		},
-		{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pool),
-		},
-		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pool),
-		},
-		{
-			Key:       "hardware",
-			Collector: CloudSQLHardwareInfo(adapter.Logger(), adapter.CloudSQLConfig, adapter.CloudMonitoringClient),
-		},
-	}
-	majorVersion := strings.Split(adapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_checkpointer",
-			Collector: pg.PGStatCheckpointer(pool),
-		})
-	}
-	return collectors
+	collectors := agent.DefaultMetricCollectors(adapter.PGPool, adapter.pgConfig)
+	return append(collectors, agent.MetricCollector{
+		Key:       "hardware",
+		Collector: CloudSQLHardwareInfo(adapter.Logger(), adapter.CloudSQLConfig, adapter.CloudMonitoringClient),
+	})
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/kubernetes"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
 	log "github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -44,6 +44,7 @@ const (
 
 type CNPGAdapter struct {
 	agent.CommonAgent
+	agent.CatalogGetter
 	GuardrailSettings guardrails.Config
 	Config            Config
 	PGDriver          *pgxpool.Pool
@@ -101,15 +102,15 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 	}
 
 	// Get PostgreSQL version
-	pgVersion, err := pg.PGVersion(dbpool)
+	pgVersion, err := queries.PGVersion(dbpool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
 
 	adapter := &CNPGAdapter{
 		CommonAgent:       *agent.CreateCommonAgent(),
-		Config:            config,
 		GuardrailSettings: guardrailSettings,
+		Config:            config,
 		PGDriver:          dbpool,
 		PGVersion:         pgVersion,
 		K8sClient:         client,
@@ -119,6 +120,24 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 	// Initialize operations context for cancellation support
 	adapter.State.CreateOperationsContext()
 
+	collectorsConfig, err := pg.CollectorsConfigFromViper()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load collectors config: %w", err)
+	}
+	adapter.CatalogGetter = agent.CatalogGetter{
+		PGPool:           dbpool,
+		PGMajorVersion:   pg.ParsePgMajorVersion(pgVersion),
+		PGConfig:         pgConfig,
+		CollectorsConfig: collectorsConfig,
+		HealthGate:       pg.NewHealthGate(dbpool, adapter.Logger()),
+		PrepareContext: func(ctx context.Context) (context.Context, error) {
+			if err := adapter.CheckForFailover(ctx); err != nil {
+				return nil, err
+			}
+			return adapter.State.GetOperationsContext(), nil
+		},
+	}
+
 	// Initialize collectors
 	// Use cluster name (not pod name) so metrics always come from current primary
 	adapter.InitCollectors(Collectors(
@@ -126,16 +145,14 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 		client,
 		config.ClusterName,
 		config.ContainerName,
-		pgVersion,
 		adapter.Logger(),
 	))
 
 	return adapter, nil
 }
 
-func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	// https://cloudnative-pg.io/documentation/1.27/postgresql_conf/#changing-configuration
-	ctx := context.Background()
 	logger := adapter.Logger()
 
 	logger.Infof("[FAILOVER_RECOVERY] ApplyConfig called: knob_application=%s, num_params=%d",
@@ -356,33 +373,33 @@ func (adapter *CNPGAdapter) getClusterName(_ context.Context) (string, error) {
 	return adapter.Config.ClusterName, nil
 }
 
-func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
+func (adapter *CNPGAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	logger := adapter.Logger()
 
 	// Check for failover before querying PostgreSQL
 	// During recovery, PostgreSQL may be unavailable or unreliable
-	if err := adapter.CheckForFailover(context.Background()); err != nil {
+	if err := adapter.CheckForFailover(ctx); err != nil {
 		// Block operation for ANY error from CheckForFailover
 		var failoverErr *FailoverDetectedError
 		if errors.As(err, &failoverErr) {
 			logger.Infof("[FAILOVER_RECOVERY] Operations blocked during recovery: %s", failoverErr.Message)
-			return agent.ConfigArraySchema{}, failoverErr
+			return nil, failoverErr
 		}
 		// Non-failover error (cluster status check failed, pod not found, etc.)
 		logger.Warnf("[FAILOVER_RECOVERY] BLOCKING GetActiveConfig due to cluster check failure: %v", err)
-		return agent.ConfigArraySchema{}, err
+		return nil, err
 	}
 
 	// Get operations context AFTER CheckForFailover passes
 	// This ensures we get the fresh context created by recovery completion, not the pre-cancelled one
-	ctx := adapter.State.GetOperationsContext()
+	opsCtx := adapter.State.GetOperationsContext()
 
-	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx, logger)
+	rows, err := queries.CollectPgSettings(adapter.PGDriver, opsCtx, logger)
 	if err != nil {
 		// If context was cancelled (failover detected mid-query), return FailoverDetectedError
-		if ctx.Err() == context.Canceled {
+		if opsCtx.Err() == context.Canceled {
 			logger.Infof("[FAILOVER_RECOVERY] GetActiveConfig aborted due to context cancellation")
-			return agent.ConfigArraySchema{}, &FailoverDetectedError{
+			return nil, &FailoverDetectedError{
 				OldPrimary: adapter.State.GetLastKnownPrimary(),
 				NewPrimary: "(context cancelled)",
 				Message:    "operation cancelled due to failover",
@@ -411,14 +428,14 @@ func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 					ErrorType:    "failover_detected",
 					Timestamp:    time.Now().UTC().Format(time.RFC3339),
 				}
-				if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+				if sendErr := adapter.SendError(ctx, errorPayload); sendErr != nil {
 					logger.Errorf("failed to send error report: %v", sendErr)
 				}
 			}
 
 			// Return FailoverDetectedError - runner will skip sending error and config
 			logger.Infof("[FAILOVER_RECOVERY] Returning FailoverDetectedError to prevent config_error")
-			return agent.ConfigArraySchema{}, &FailoverDetectedError{
+			return nil, &FailoverDetectedError{
 				OldPrimary: adapter.State.GetLastKnownPrimary(),
 				NewPrimary: "(PostgreSQL shutting down)",
 				Message:    err.Error(),
@@ -426,19 +443,23 @@ func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 		}
 
 		// For other errors, return as-is
-		return agent.ConfigArraySchema{}, err
+		return nil, err
 	}
 
+	config := make(agent.ConfigArraySchema, len(rows))
+	for i, r := range rows {
+		config[i] = r
+	}
 	return config, nil
 }
 
 // GetMetrics overrides CommonAgent.GetMetrics to check for failover before collecting metrics
-func (adapter *CNPGAdapter) GetMetrics() ([]metrics.FlatValue, error) {
+func (adapter *CNPGAdapter) GetMetrics(ctx context.Context) ([]metrics.FlatValue, error) {
 	logger := adapter.Logger()
 
 	// Check for failover before collecting metrics
 	// During recovery, PostgreSQL and primary pod may be unavailable
-	if err := adapter.CheckForFailover(context.Background()); err != nil {
+	if err := adapter.CheckForFailover(ctx); err != nil {
 		// Block operation for ANY error from CheckForFailover
 		var failoverErr *FailoverDetectedError
 		if errors.As(err, &failoverErr) {
@@ -452,16 +473,16 @@ func (adapter *CNPGAdapter) GetMetrics() ([]metrics.FlatValue, error) {
 
 	// Cluster is healthy - proceed with normal metrics collection
 	// Note: collectors internally use their own context, but this is the entry point check
-	return adapter.CommonAgent.GetMetrics()
+	return adapter.CommonAgent.GetMetrics(ctx)
 }
 
-func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *CNPGAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	logger := adapter.Logger()
 	var flatValues []metrics.FlatValue
 
 	// Check for failover before collecting system info
 	// During recovery, PostgreSQL and primary pod may be unavailable
-	if err := adapter.CheckForFailover(context.Background()); err != nil {
+	if err := adapter.CheckForFailover(ctx); err != nil {
 		// Block operation for ANY error from CheckForFailover
 		var failoverErr *FailoverDetectedError
 		if errors.As(err, &failoverErr) {
@@ -477,7 +498,7 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 
 	// Get operations context AFTER CheckForFailover passes
 	// This ensures we get the fresh context created by recovery completion, not the pre-cancelled one
-	ctx := adapter.State.GetOperationsContext()
+	opsCtx := adapter.State.GetOperationsContext()
 
 	// Get PostgreSQL version
 	pgVersionMetric, err := metrics.PGVersion.AsFlatValue(adapter.PGVersion)
@@ -487,10 +508,10 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	flatValues = append(flatValues, pgVersionMetric)
 
 	// Get max_connections from PostgreSQL
-	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
+	maxConnections, err := queries.MaxConnections(adapter.PGDriver)
 	if err != nil {
 		// Check if context was cancelled (failover during operation)
-		if ctx.Err() == context.Canceled {
+		if opsCtx.Err() == context.Canceled {
 			logger.Infof("[FAILOVER_RECOVERY] GetSystemInfo aborted due to context cancellation")
 			return []metrics.FlatValue{}, &FailoverDetectedError{
 				OldPrimary: adapter.State.GetLastKnownPrimary(),
@@ -521,10 +542,10 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	flatValues = append(flatValues, maxConnectionsMetric)
 
 	// Dynamically discover current primary pod for system info
-	primaryPod, err := adapter.K8sClient.FindCNPGPrimaryPod(ctx, adapter.Config.ClusterName)
+	primaryPod, err := adapter.K8sClient.FindCNPGPrimaryPod(opsCtx, adapter.Config.ClusterName)
 	if err != nil {
 		// Check if context was cancelled (failover during operation)
-		if ctx.Err() == context.Canceled {
+		if opsCtx.Err() == context.Canceled {
 			logger.Infof("[FAILOVER_RECOVERY] GetSystemInfo aborted due to context cancellation")
 			return []metrics.FlatValue{}, nil
 		}
@@ -541,10 +562,10 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	}
 
 	containerClient := adapter.K8sClient.ContainerClient(primaryPod, adapter.Config.ContainerName)
-	systemInfo, err := containerClient.GetContainerSystemInfo(ctx)
+	systemInfo, err := containerClient.GetContainerSystemInfo(opsCtx)
 	if err != nil {
 		// Check if context was cancelled (failover during operation)
-		if ctx.Err() == context.Canceled {
+		if opsCtx.Err() == context.Canceled {
 			logger.Infof("[FAILOVER_RECOVERY] GetSystemInfo aborted due to context cancellation")
 			return []metrics.FlatValue{}, nil
 		}
@@ -555,16 +576,13 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return flatValues, nil
 }
 
-func (adapter *CNPGAdapter) Guardrails() *guardrails.Signal {
+func (adapter *CNPGAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	// Check if enough time has passed since the last guardrail check
 	if adapter.State.TimeSinceLastGuardrailCheck() < 5*time.Second {
 		return nil
 	}
 	adapter.Logger().Debugf("Checking Guardrails")
 	adapter.State.UpdateLastGuardrailCheck()
-
-	// Get pod resources to determine memory limit
-	ctx := context.Background()
 
 	// This provides continuous failover detection even when ApplyConfig isn't running
 	if err := adapter.CheckForFailover(ctx); err != nil {
@@ -637,82 +655,13 @@ func (adapter *CNPGAdapter) Guardrails() *guardrails.Signal {
 	return nil
 }
 
-func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName string, containerName string, pgVersion string, logger *log.Logger) []agent.MetricCollector {
-	// Get PG config for query settings
+func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName string, containerName string, _ *log.Logger) []agent.MetricCollector {
 	pgConfig, _ := pg.ConfigFromViper(nil)
-
-	collectors := []agent.MetricCollector{
-		// TODO: Re-enable pg_role collector once backend supports it
-		// {
-		// 	Key:        "postgresql_role",
-		// 	MetricType: "string",
-		// 	Collector:  pg.PostgreSQLRole(pool),
-		// },
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pool, pgConfig.IncludeQueries, pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pool),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pool),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pool),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pool),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pool),
-		},
-		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pool),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pool),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pool),
-		},
-		{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pool),
-		},
-		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pool),
-		},
-		{
-			Key:       "hardware",
-			Collector: kubernetes.CNPGContainerMetricsCollector(kubeClient, clusterName, containerName),
-		},
-	}
-
-	// Add pg_checkpointer for PostgreSQL 17+
-	majorVersion := strings.Split(pgVersion, ".")
-	if len(majorVersion) > 0 {
-		intMajorVersion, err := strconv.Atoi(majorVersion[0])
-		if err != nil {
-			logger.Warn("Failed to parse PostgreSQL major version, skipping pg_checkpointer collector", "version", pgVersion, "error", err)
-		} else if intMajorVersion >= 17 {
-			collectors = append(collectors, agent.MetricCollector{
-				Key:       "pg_checkpointer",
-				Collector: pg.PGStatCheckpointer(pool),
-			})
-		}
-	}
-
-	return collectors
+	collectors := agent.DefaultMetricCollectors(pool, pgConfig)
+	return append(collectors, agent.MetricCollector{
+		Key:       "hardware",
+		Collector: kubernetes.CNPGContainerMetricsCollector(kubeClient, clusterName, containerName),
+	})
 }
 
 // extractSettingValue converts row.Setting to string for comparison.
@@ -729,18 +678,13 @@ func extractSettingValue(setting interface{}) string {
 // Returns a map of parameter name to current value in CNPG format (e.g., "2GB").
 // This is used to compare against proposed config to avoid applying unchanged parameters.
 func (adapter *CNPGAdapter) GetCurrentConfig(ctx context.Context) (map[string]string, error) {
-	configRows, err := pg.GetActiveConfig(adapter.PGDriver, ctx, adapter.Logger())
+	configRows, err := queries.CollectPgSettings(adapter.PGDriver, ctx, adapter.Logger())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active config: %w", err)
 	}
 
 	config := make(map[string]string)
-	for _, rawRow := range configRows {
-		row, ok := rawRow.(agent.PGConfigRow)
-		if !ok {
-			continue
-		}
-
+	for _, row := range configRows {
 		// Extract the actual value from row.Setting
 		settingStr := extractSettingValue(row.Setting)
 
