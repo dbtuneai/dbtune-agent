@@ -67,9 +67,10 @@ func buildPgStatsColumns(includeTableData bool) string {
 		mce = `CASE WHEN ps.most_common_elems IS NULL THEN NULL
          ELSE pg_catalog.format('%s', ps.most_common_elems) END`
 	} else {
-		mcv = `NULL::text`
-		hb = `NULL::text`
-		mce = `NULL::text`
+		const nullText = `NULL::text`
+		mcv = nullText
+		hb = nullText
+		mce = nullText
 	}
 
 	return fmt.Sprintf(`

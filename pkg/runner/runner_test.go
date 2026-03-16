@@ -116,7 +116,7 @@ func (m *MockAgentLooper) StartHealthGate(ctx context.Context) {
 func setupCatalogMocksSuccess(m *MockAgentLooper) {
 	testData := map[string]bool{}
 	m.On("CatalogCollectors").Return([]agent.CatalogCollector{
-		{Name: "test_catalog", Interval: 1 * time.Minute, Collect: func(ctx context.Context) (any, error) {
+		{Name: "test_catalog", Interval: 1 * time.Minute, Collect: func(_ context.Context) (any, error) {
 			testData["collected"] = true
 			return map[string]string{"test": "data"}, nil
 		}},
@@ -127,7 +127,7 @@ func setupCatalogMocksSuccess(m *MockAgentLooper) {
 // setupCatalogMocksError sets up catalog collectors that return errors.
 func setupCatalogMocksError(m *MockAgentLooper) {
 	m.On("CatalogCollectors").Return([]agent.CatalogCollector{
-		{Name: "test_catalog", Interval: 1 * time.Minute, Collect: func(ctx context.Context) (any, error) {
+		{Name: "test_catalog", Interval: 1 * time.Minute, Collect: func(_ context.Context) (any, error) {
 			return nil, errors.New("error")
 		}},
 	})
@@ -161,13 +161,13 @@ func TestCatalogSkipUnchanged(t *testing.T) {
 				Name:          "test_dedup",
 				Interval:      10 * time.Millisecond,
 				SkipUnchanged: true,
-				Collect: func(ctx context.Context) (any, error) {
+				Collect: func(_ context.Context) (any, error) {
 					return map[string]string{"key": "same_value"}, nil
 				},
 			},
 		})
 		mockAgent.On("SendCatalogPayload", mock.Anything, "test_dedup", mock.Anything).
-			Run(func(args mock.Arguments) {
+			Run(func(_ mock.Arguments) {
 				mu.Lock()
 				sendCount++
 				mu.Unlock()
@@ -211,7 +211,7 @@ func TestCatalogSkipUnchanged(t *testing.T) {
 				Name:          "test_dedup_change",
 				Interval:      10 * time.Millisecond,
 				SkipUnchanged: true,
-				Collect: func(ctx context.Context) (any, error) {
+				Collect: func(_ context.Context) (any, error) {
 					mu.Lock()
 					callCount++
 					n := callCount
@@ -221,7 +221,7 @@ func TestCatalogSkipUnchanged(t *testing.T) {
 			},
 		})
 		mockAgent.On("SendCatalogPayload", mock.Anything, "test_dedup_change", mock.Anything).
-			Run(func(args mock.Arguments) {
+			Run(func(_ mock.Arguments) {
 				mu.Lock()
 				sendCount++
 				mu.Unlock()
@@ -251,7 +251,7 @@ func TestRunWithTicker(t *testing.T) {
 		counter := 0
 		var mu sync.Mutex
 
-		fn := func(ctx context.Context) error {
+		fn := func(_ context.Context) error {
 			mu.Lock()
 			counter++
 			mu.Unlock()
@@ -277,7 +277,7 @@ func TestRunWithTicker(t *testing.T) {
 		var mu sync.Mutex
 
 		expectedErr := errors.New("test error")
-		fn := func(ctx context.Context) error {
+		fn := func(_ context.Context) error {
 			mu.Lock()
 			counter++
 			mu.Unlock()
@@ -449,26 +449,26 @@ type stubAgentLooper struct {
 }
 
 // Stub out the database interactions here (but note: not the DBtune API)
-func (s *stubAgentLooper) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
+func (s *stubAgentLooper) GetSystemInfo(_ context.Context) ([]metrics.FlatValue, error) {
 	return []metrics.FlatValue{}, nil
 }
 
-func (s *stubAgentLooper) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
+func (s *stubAgentLooper) GetActiveConfig(_ context.Context) (agent.ConfigArraySchema, error) {
 	return agent.ConfigArraySchema{}, nil
 }
 
-func (s *stubAgentLooper) ApplyConfig(ctx context.Context, _ *agent.ProposedConfigResponse) error {
+func (s *stubAgentLooper) ApplyConfig(_ context.Context, _ *agent.ProposedConfigResponse) error {
 	return nil
 }
 
-func (s *stubAgentLooper) Guardrails(ctx context.Context) *guardrails.Signal {
+func (s *stubAgentLooper) Guardrails(_ context.Context) *guardrails.Signal {
 	return &guardrails.Signal{Level: guardrails.Critical, Type: guardrails.Memory}
 }
 
 func (s *stubAgentLooper) CatalogCollectors() []agent.CatalogCollector {
 	return nil
 }
-func (s *stubAgentLooper) SendCatalogPayload(ctx context.Context, name string, payload any) error {
+func (s *stubAgentLooper) SendCatalogPayload(_ context.Context, _ string, _ any) error {
 	return nil
 }
 
@@ -543,7 +543,7 @@ func TestCatalogSkipUnchanged_NilDataSkipsSend(t *testing.T) {
 		{
 			Name:     "test_nil_data",
 			Interval: 10 * time.Millisecond,
-			Collect: func(ctx context.Context) (any, error) {
+			Collect: func(_ context.Context) (any, error) {
 				return nil, nil
 			},
 		},
@@ -580,7 +580,7 @@ func TestCatalogSkipUnchanged_ErrorOnCollectSkipsSend(t *testing.T) {
 		{
 			Name:     "test_error_collect",
 			Interval: 10 * time.Millisecond,
-			Collect: func(ctx context.Context) (any, error) {
+			Collect: func(_ context.Context) (any, error) {
 				return nil, errors.New("db connection lost")
 			},
 		},
@@ -624,13 +624,13 @@ func TestCatalogSkipUnchanged_SendFailureDoesNotUpdateHash(t *testing.T) {
 			Name:          "test_send_fail",
 			Interval:      10 * time.Millisecond,
 			SkipUnchanged: true,
-			Collect: func(ctx context.Context) (any, error) {
+			Collect: func(_ context.Context) (any, error) {
 				return map[string]string{"key": "value"}, nil
 			},
 		},
 	})
 	mockAgent.On("SendCatalogPayload", mock.Anything, "test_send_fail", mock.Anything).
-		Run(func(args mock.Arguments) {
+		Run(func(_ mock.Arguments) {
 			mu.Lock()
 			sendCount++
 			mu.Unlock()

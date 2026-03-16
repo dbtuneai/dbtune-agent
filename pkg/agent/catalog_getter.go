@@ -142,7 +142,7 @@ func (g *CatalogGetter) CatalogCollectors() []CatalogCollector {
 	// Post-construction: apply interval overrides + enabled filter.
 	// IntervalOr enforces floor: configured value is clamped to >= compiled default.
 	// Users can only make collection LESS frequent, never more frequent.
-	var collectors []CatalogCollector
+	collectors := make([]CatalogCollector, 0, len(allCollectors))
 	for _, c := range allCollectors {
 		cfg := g.collectorCfg(c.Name)
 		if !cfg.IsEnabled() {

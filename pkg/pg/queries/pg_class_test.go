@@ -182,7 +182,7 @@ func TestPgClassCollector(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			callIdx := 0
 
-			collectFn := func(ctx context.Context, q PgClassQueryMode) ([]PgClassRow, error) {
+			collectFn := func(_ context.Context, q PgClassQueryMode) ([]PgClassRow, error) {
 				require.Less(t, callIdx, len(tt.calls), "unexpected extra call")
 				c := tt.calls[callIdx]
 

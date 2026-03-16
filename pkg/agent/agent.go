@@ -381,6 +381,35 @@ func (a *CommonAgent) SendHeartbeat(ctx context.Context) error {
 	return nil
 }
 
+// postJSON creates a context-aware POST request with JSON content type and executes it.
+func (a *CommonAgent) postJSON(ctx context.Context, url string, jsonData []byte) (*http.Response, error) {
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return a.APIClient.Do(req)
+}
+
+// putJSON creates a context-aware PUT request with JSON content type and executes it.
+func (a *CommonAgent) putJSON(ctx context.Context, url string, jsonData []byte) (*http.Response, error) {
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return a.APIClient.Do(req)
+}
+
+// getRequest creates a context-aware GET request and executes it.
+func (a *CommonAgent) getRequest(ctx context.Context, url string) (*http.Response, error) {
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return a.APIClient.Do(req)
+}
+
 // Should be called after creating the common agent is created to attach the collectors.
 // You can also forgo this step if you create the common agent with the collectors already attached.
 func (a *CommonAgent) InitCollectors(collectors []MetricCollector) {
@@ -476,7 +505,7 @@ func (a *CommonAgent) SendMetrics(ctx context.Context, ms []metrics.FlatValue) e
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL("metrics"), "application/json", jsonData)
+	resp, err := a.postJSON(ctx, a.ServerURLs.AgentURL("metrics"), jsonData)
 	if err != nil {
 		return err
 	}
@@ -501,10 +530,7 @@ func (a *CommonAgent) SendSystemInfo(ctx context.Context, systemInfo []metrics.F
 		return err
 	}
 
-	req, _ := retryablehttp.NewRequest("PUT", a.ServerURLs.AgentURL("system-info"), bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := a.APIClient.Do(req)
+	resp, err := a.putJSON(ctx, a.ServerURLs.AgentURL("system-info"), jsonData)
 	if err != nil {
 		return err
 	}
@@ -536,7 +562,7 @@ func (a *CommonAgent) SendActiveConfig(ctx context.Context, config ConfigArraySc
 
 	a.Logger().Debugf("Active config payload: %s", string(jsonData))
 
-	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL("configurations"), "application/json", jsonData)
+	resp, err := a.postJSON(ctx, a.ServerURLs.AgentURL("configurations"), jsonData)
 	if err != nil {
 		return err
 	}
@@ -616,7 +642,7 @@ func (a *CommonAgent) SendCatalogPayload(ctx context.Context, name string, paylo
 func (a *CommonAgent) GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error) {
 	a.Logger().Println("Fetching proposed configurations")
 
-	resp, err := a.APIClient.Get(a.ServerURLs.GetKnobRecommendations())
+	resp, err := a.getRequest(ctx, a.ServerURLs.GetKnobRecommendations())
 	if err != nil {
 		return nil, err
 	}
@@ -650,7 +676,7 @@ func (a *CommonAgent) SendGuardrailSignal(ctx context.Context, signal guardrails
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL("guardrails"), "application/json", jsonData)
+	resp, err := a.postJSON(ctx, a.ServerURLs.AgentURL("guardrails"), jsonData)
 	if err != nil {
 		return err
 	}
@@ -673,7 +699,7 @@ func (a *CommonAgent) SendError(ctx context.Context, payload ErrorPayload) error
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL("log-entries"), "application/json", jsonData)
+	resp, err := a.postJSON(ctx, a.ServerURLs.AgentURL("log-entries"), jsonData)
 	if err != nil {
 		return err
 	}

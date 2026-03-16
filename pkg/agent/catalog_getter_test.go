@@ -87,7 +87,7 @@ func TestPrepareCtx_PrepareContextError_PropagatedWhenGateOpen(t *testing.T) {
 
 	g := &CatalogGetter{
 		HealthGate: hg,
-		PrepareContext: func(ctx context.Context) (context.Context, error) {
+		PrepareContext: func(_ context.Context) (context.Context, error) {
 			return nil, expectedErr
 		},
 	}
@@ -102,12 +102,12 @@ func TestPrepareCtx_PrepareContextError_PropagatedWhenGateOpen(t *testing.T) {
 // CatalogGetter.StartHealthGate
 // ---------------------------------------------------------------------------
 
-func TestStartHealthGate_NilHealthGate(t *testing.T) {
+func TestStartHealthGate_NilHealthGate(_ *testing.T) {
 	g := &CatalogGetter{}
 	g.StartHealthGate(context.Background()) // Should not panic.
 }
 
-func TestStartHealthGate_WithHealthGate(t *testing.T) {
+func TestStartHealthGate_WithHealthGate(_ *testing.T) {
 	hg := pg.NewHealthGate(nil, testLogger())
 	g := &CatalogGetter{HealthGate: hg}
 

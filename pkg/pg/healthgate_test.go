@@ -340,14 +340,14 @@ func TestStop_CancelsPingGoroutine(t *testing.T) {
 	waitForPingingDone(t, hg, 2*time.Second)
 }
 
-func TestStop_SafeToCallTwice(t *testing.T) {
+func TestStop_SafeToCallTwice(_ *testing.T) {
 	hg := &HealthGate{logger: testLogger()}
 	hg.Start(context.Background())
 	hg.Stop()
 	hg.Stop() // Should not panic.
 }
 
-func TestStop_SafeWithNilCancel(t *testing.T) {
+func TestStop_SafeWithNilCancel(_ *testing.T) {
 	hg := &HealthGate{logger: testLogger()}
 	hg.Stop() // cancel is nil — should not panic.
 }

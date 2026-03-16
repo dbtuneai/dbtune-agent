@@ -58,7 +58,7 @@ func handleGetError(ctx context.Context, adapter agent.AgentLooper, logger *logr
 		logger.Debugf("Skipping %s during recovery: %v", name, err)
 		return nil
 	}
-	adapter.SendError(ctx, agent.ErrorPayload{
+	_ = adapter.SendError(ctx, agent.ErrorPayload{
 		ErrorMessage: fmt.Sprintf("Failed to collect %s: %s", name, err.Error()),
 		ErrorType:    name + "_error",
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),
