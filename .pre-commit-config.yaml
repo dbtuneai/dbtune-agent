@@ -13,3 +13,9 @@ repos:
         language: system
         types: [go]
         pass_filenames: false
+      - id: go-test-compile
+        name: go test compile
+        entry: go test -run=^$ ./...
+        language: system
+        types: [go]
+        pass_filenames: false
