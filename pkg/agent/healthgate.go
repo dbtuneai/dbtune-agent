@@ -6,16 +6,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
 )
 
 // ErrDatabaseDown is returned by HealthGate.Check when the database is unreachable.
 var ErrDatabaseDown = errors.New("database health gate: connection unavailable")
-
-// pinger abstracts the Ping method so HealthGate does not depend on pgxpool directly.
-type pinger interface {
-	Ping(ctx context.Context) error
-}
 
 // HealthGate tracks database connectivity and short-circuits catalog queries
 // when the database is unreachable. Instead of ~30 collectors each timing out
@@ -24,7 +20,7 @@ type pinger interface {
 // All methods are nil-receiver safe — a nil *HealthGate is a no-op gate that
 // never blocks. This lets callers skip nil checks entirely.
 type HealthGate struct {
-	pool              pinger
+	pool              *pgxpool.Pool
 	isConnectionError func(error) bool
 	logger            *logrus.Logger
 	down              atomic.Bool
@@ -35,7 +31,7 @@ type HealthGate struct {
 }
 
 // NewHealthGate creates a ready-to-use HealthGate. No Start call needed.
-func NewHealthGate(pool pinger, isConnErr func(error) bool, logger *logrus.Logger) *HealthGate {
+func NewHealthGate(pool *pgxpool.Pool, isConnErr func(error) bool, logger *logrus.Logger) *HealthGate {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &HealthGate{
 		pool:              pool,
@@ -71,7 +67,7 @@ func (h *HealthGate) ReportError(err error) {
 	}
 	h.down.Store(true)
 	if h.pool == nil {
-		return // no pinger to recover with
+		return // no pool to recover with
 	}
 	// Only one goroutine should ping at a time.
 	if h.pinging.CompareAndSwap(false, true) {

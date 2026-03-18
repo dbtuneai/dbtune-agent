@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -22,18 +21,6 @@ func alwaysConnectionError(err error) bool { return err != nil }
 
 // neverConnectionError never treats errors as connection errors.
 func neverConnectionError(_ error) bool { return false }
-
-// waitForPingingDone polls until hg.pinging is false, proving the ping goroutine exited.
-func waitForPingingDone(t *testing.T, hg *HealthGate, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for hg.pinging.Load() {
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for ping goroutine to exit")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Nil-receiver safety
@@ -102,9 +89,6 @@ func TestReportError_Nil(t *testing.T) {
 	if hg.down.Load() {
 		t.Fatal("ReportError(nil) should not trip the gate")
 	}
-	if hg.pinging.Load() {
-		t.Fatal("ReportError(nil) should not start pinging")
-	}
 }
 
 func TestReportError_NonConnectionError_DoesNotTrip(t *testing.T) {
@@ -118,9 +102,6 @@ func TestReportError_NonConnectionError_DoesNotTrip(t *testing.T) {
 	if hg.down.Load() {
 		t.Fatal("gate should not be tripped by non-connection errors")
 	}
-	if hg.pinging.Load() {
-		t.Fatal("no pinging should have started for non-connection errors")
-	}
 }
 
 func TestReportError_ConnectionError_TripsGate(t *testing.T) {
@@ -132,25 +113,6 @@ func TestReportError_ConnectionError_TripsGate(t *testing.T) {
 	if !hg.down.Load() {
 		t.Fatal("gate should be tripped by connection error")
 	}
-	// No pinger → no ping goroutine, but gate is still tripped.
-}
-
-func TestReportError_OnlyOnePingGoroutine(t *testing.T) {
-	// Use a real pinger so the ping goroutine actually starts.
-	mp := &mockPinger{failCount: 1000}
-	hg := NewHealthGate(mp, alwaysConnectionError, testLogger())
-	defer hg.Stop()
-
-	for i := 0; i < 100; i++ {
-		hg.ReportError(errors.New("connection refused"))
-	}
-
-	if !hg.pinging.Load() {
-		t.Fatal("at least one ping goroutine should be running")
-	}
-
-	hg.Stop()
-	waitForPingingDone(t, hg, 2*time.Second)
 }
 
 func TestReportError_ConcurrentFromManyGoroutines(t *testing.T) {
@@ -172,69 +134,14 @@ func TestReportError_ConcurrentFromManyGoroutines(t *testing.T) {
 	}
 }
 
-func TestReportError_CanRetripAfterRecovery(t *testing.T) {
-	mp := &mockPinger{failCount: 1000}
-	hg := NewHealthGate(mp, alwaysConnectionError, testLogger())
-
-	hg.ReportError(errors.New("connection refused"))
-	if !hg.down.Load() {
-		t.Fatal("gate should be down")
-	}
-
-	hg.Stop()
-	waitForPingingDone(t, hg, 2*time.Second)
-
-	hg.down.Store(false)
-
-	hg.ReportError(errors.New("connection reset"))
-	if !hg.down.Load() {
-		t.Fatal("gate should be tripped again after recovery")
-	}
-	if !hg.pinging.Load() {
-		t.Fatal("a new ping goroutine should be running")
-	}
-	hg.Stop()
-	waitForPingingDone(t, hg, 2*time.Second)
-}
-
 // ---------------------------------------------------------------------------
 // HealthGate.Stop
 // ---------------------------------------------------------------------------
-
-func TestStop_CancelsPingGoroutine(t *testing.T) {
-	mp := &mockPinger{failCount: 1000}
-	hg := NewHealthGate(mp, alwaysConnectionError, testLogger())
-
-	hg.ReportError(errors.New("connection refused"))
-	if !hg.pinging.Load() {
-		t.Fatal("ping goroutine should be running")
-	}
-
-	hg.Stop()
-	waitForPingingDone(t, hg, 2*time.Second)
-}
 
 func TestStop_SafeToCallTwice(_ *testing.T) {
 	hg := NewHealthGate(nil, alwaysConnectionError, testLogger())
 	hg.Stop()
 	hg.Stop()
-}
-
-// ---------------------------------------------------------------------------
-// pingUntilRecovery — context cancellation
-// ---------------------------------------------------------------------------
-
-func TestPingUntilRecovery_ExitsOnStop(t *testing.T) {
-	mp := &mockPinger{failCount: 1000}
-	hg := NewHealthGate(mp, alwaysConnectionError, testLogger())
-
-	hg.ReportError(errors.New("connection refused"))
-	hg.Stop()
-	waitForPingingDone(t, hg, 2*time.Second)
-
-	if !hg.down.Load() {
-		t.Fatal("gate should remain down when ping exits due to Stop")
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -280,155 +187,6 @@ func TestNewHealthGate_InitialState(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Full lifecycle: trip → stop → re-trip
+// Recovery and ping goroutine tests require a real *pgxpool.Pool.
+// See pkg/agent/healthgatetest/healthgate_integration_test.go.
 // ---------------------------------------------------------------------------
-
-func TestHealthGate_FullLifecycle(t *testing.T) {
-	mp := &mockPinger{failCount: 1000}
-	hg := NewHealthGate(mp, alwaysConnectionError, testLogger())
-
-	if err := hg.Check(); err != nil {
-		t.Fatalf("step 1: expected open gate, got %v", err)
-	}
-
-	hg.ReportError(errors.New("connection refused"))
-	if err := hg.Check(); !errors.Is(err, ErrDatabaseDown) {
-		t.Fatalf("step 2: expected ErrDatabaseDown, got %v", err)
-	}
-	if !hg.pinging.Load() {
-		t.Fatal("step 2: should be pinging")
-	}
-
-	hg.Stop()
-	waitForPingingDone(t, hg, 2*time.Second)
-
-	if !hg.down.Load() {
-		t.Fatal("step 3: gate should remain down")
-	}
-
-	hg.down.Store(false)
-
-	if err := hg.Check(); err != nil {
-		t.Fatalf("step 4: gate should be open after reset, got %v", err)
-	}
-
-	hg.ReportError(errors.New("broken pipe"))
-	if err := hg.Check(); !errors.Is(err, ErrDatabaseDown) {
-		t.Fatalf("step 5: expected ErrDatabaseDown, got %v", err)
-	}
-	hg.Stop()
-}
-
-// ---------------------------------------------------------------------------
-// Edge: multiple error types in sequence
-// ---------------------------------------------------------------------------
-
-func TestReportError_MixedErrorSequence(t *testing.T) {
-	isConnErr := func(err error) bool {
-		return err != nil && len(err.Error()) > 5 && err.Error()[:5] == "conn:"
-	}
-
-	mp := &mockPinger{failCount: 1000}
-	hg := NewHealthGate(mp, isConnErr, testLogger())
-	defer hg.Stop()
-
-	// Non-connection errors — gate stays open.
-	hg.ReportError(errors.New("syntax error"))
-	hg.ReportError(errors.New("query failed"))
-	if hg.down.Load() {
-		t.Fatal("gate should still be open after non-connection errors")
-	}
-
-	// Connection error — gate trips.
-	hg.ReportError(errors.New("conn: refused"))
-	if !hg.down.Load() {
-		t.Fatal("gate should be tripped after connection error")
-	}
-
-	// More non-connection errors — gate stays tripped.
-	hg.ReportError(errors.New("another query error"))
-	if !hg.down.Load() {
-		t.Fatal("gate should remain tripped")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// pingUntilRecovery — successful recovery via mock Pinger
-// ---------------------------------------------------------------------------
-
-// mockPinger is a pinger that fails a configurable number of times then succeeds.
-type mockPinger struct {
-	mu        sync.Mutex
-	failCount int // how many more times to fail
-	pingCalls int // total calls observed
-}
-
-func (p *mockPinger) Ping(_ context.Context) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.pingCalls++
-	if p.failCount > 0 {
-		p.failCount--
-		return errors.New("connection refused")
-	}
-	return nil
-}
-
-func (p *mockPinger) calls() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.pingCalls
-}
-
-func TestPingUntilRecovery_RecoversAfterFailures(t *testing.T) {
-	mp := &mockPinger{failCount: 2} // fail twice, then succeed
-	hg := NewHealthGate(mp, alwaysConnectionError, testLogger())
-	defer hg.Stop()
-
-	// Trip the gate.
-	hg.ReportError(errors.New("connection refused"))
-	if !hg.down.Load() {
-		t.Fatal("gate should be down")
-	}
-
-	// Wait for the ping goroutine to recover (backoff is 1s, 2s — so ~3s total).
-	deadline := time.Now().Add(10 * time.Second)
-	for hg.down.Load() {
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for gate to recover")
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	waitForPingingDone(t, hg, 2*time.Second)
-	if err := hg.Check(); err != nil {
-		t.Fatalf("gate should be open after recovery, got %v", err)
-	}
-	if mp.calls() < 3 {
-		t.Fatalf("expected at least 3 ping calls, got %d", mp.calls())
-	}
-}
-
-func TestPingUntilRecovery_RecoversOnFirstPing(t *testing.T) {
-	mp := &mockPinger{failCount: 0} // succeed immediately
-	hg := NewHealthGate(mp, alwaysConnectionError, testLogger())
-	defer hg.Stop()
-
-	hg.ReportError(errors.New("connection refused"))
-
-	deadline := time.Now().Add(5 * time.Second)
-	for hg.down.Load() {
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for gate to recover")
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	waitForPingingDone(t, hg, 2*time.Second)
-	if err := hg.Check(); err != nil {
-		t.Fatalf("gate should be open, got %v", err)
-	}
-	if mp.calls() != 1 {
-		t.Fatalf("expected exactly 1 ping call, got %d", mp.calls())
-	}
-}
