@@ -83,14 +83,11 @@ func (h *HealthGate) pingUntilRecovery() {
 	backoff := 1 * time.Second
 	const maxBackoff = 30 * time.Second
 
-	timer := time.NewTimer(backoff)
-	defer timer.Stop()
-
 	for {
 		select {
 		case <-h.ctx.Done():
 			return
-		case <-timer.C:
+		case <-time.After(backoff):
 		}
 
 		err := h.pool.Ping(h.ctx)
@@ -100,11 +97,6 @@ func (h *HealthGate) pingUntilRecovery() {
 			return
 		}
 		h.logger.Debugf("health gate: ping failed (%v), retrying in %s", err, backoff)
-
-		backoff *= 2
-		if backoff > maxBackoff {
-			backoff = maxBackoff
-		}
-		timer.Reset(backoff)
+		backoff = min(backoff*2, maxBackoff)
 	}
 }
