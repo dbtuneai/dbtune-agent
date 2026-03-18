@@ -1,6 +1,6 @@
 //go:build integration
 
-package healthgatetest
+package agent_test
 
 import (
 	"bytes"
@@ -35,13 +35,18 @@ var (
 	connStr     string
 )
 
+type bufLogger struct{ buf *bytes.Buffer }
+
+func (l *bufLogger) Printf(format string, v ...any) {
+	fmt.Fprintf(l.buf, format+"\n", v...)
+}
+
 func TestMain(m *testing.M) {
 	var logBuf bytes.Buffer
 	tclog.SetDefault(&bufLogger{buf: &logBuf})
 	log.SetOutput(&logBuf)
 
 	ctx := context.Background()
-
 	ctr, err := postgres.Run(ctx, "postgres:16-alpine",
 		postgres.WithDatabase("testdb"),
 		postgres.WithUsername("test"),
@@ -85,72 +90,6 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-type bufLogger struct {
-	buf *bytes.Buffer
-}
-
-func (l *bufLogger) Printf(format string, v ...any) {
-	fmt.Fprintf(l.buf, format+"\n", v...)
-}
-
-// pgQueryCollector returns a MetricCollector that runs a real query against the pool.
-func pgQueryCollector(key string, pool *pgxpool.Pool) agent.MetricCollector {
-	return agent.MetricCollector{
-		Key: key,
-		Collector: func(ctx context.Context, state *agent.MetricsState) error {
-			var result int
-			err := pool.QueryRow(ctx, "SELECT 1").Scan(&result)
-			if err != nil {
-				return fmt.Errorf("%s: query failed: %w", key, err)
-			}
-			state.AddMetric(metrics.FlatValue{Key: key, Value: result, Type: "int"})
-			return nil
-		},
-	}
-}
-
-// newTestAgent creates a CommonAgent with the given pool and collectors wired to the HealthGate.
-func newTestAgent(pool *pgxpool.Pool, hg *agent.HealthGate, collectors []agent.MetricCollector) *agent.CommonAgent {
-	logger := logrus.New()
-	logger.SetLevel(logrus.DebugLevel)
-	a := &agent.CommonAgent{
-		AgentID:   "integration-test",
-		StartTime: time.Now().UTC().Format(time.RFC3339),
-		Version:   "test",
-		MetricsState: agent.MetricsState{
-			Collectors: collectors,
-			Mutex:      &sync.Mutex{},
-			Metrics:    []metrics.FlatValue{},
-		},
-		CollectionTimeout: 10 * time.Second,
-		IndividualTimeout: 5 * time.Second,
-		HealthGate:        hg,
-	}
-	a.WithLogger(logger)
-	return a
-}
-
-func TestIntegration_HealthGate_CollectorsSucceedWhenDBUp(t *testing.T) {
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, connStr)
-	require.NoError(t, err)
-	defer pool.Close()
-
-	logger := logrus.New()
-	hg := agent.NewHealthGate(pool, pg.IsConnectionError, logger)
-	defer hg.Stop()
-
-	a := newTestAgent(pool, hg, []agent.MetricCollector{
-		pgQueryCollector("c1", pool),
-		pgQueryCollector("c2", pool),
-		pgQueryCollector("c3", pool),
-	})
-
-	result, err := a.GetMetrics()
-	assert.NoError(t, err)
-	assert.Len(t, result, 3, "all 3 collectors should produce metrics")
-}
-
 func TestIntegration_HealthGate_BlocksCollectorsWhenDBDown(t *testing.T) {
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)
@@ -166,7 +105,6 @@ func TestIntegration_HealthGate_BlocksCollectorsWhenDBDown(t *testing.T) {
 	var collectorCalls int
 	var mu sync.Mutex
 
-	// Build collectors that both track call count and produce a metric.
 	makeCollector := func(key string) agent.MetricCollector {
 		return agent.MetricCollector{
 			Key: key,
@@ -190,80 +128,73 @@ func TestIntegration_HealthGate_BlocksCollectorsWhenDBDown(t *testing.T) {
 		collectors[i] = makeCollector(fmt.Sprintf("collector_%d", i))
 	}
 
-	a := newTestAgent(pool, hg, collectors)
-
-	// Verify the pool is working before starting.
-	require.NoError(t, pool.Ping(ctx), "pool should be able to ping before phase 1")
+	a := &agent.CommonAgent{
+		MetricsState: agent.MetricsState{
+			Collectors: collectors,
+			Mutex:      &sync.Mutex{},
+			Metrics:    []metrics.FlatValue{},
+		},
+		CollectionTimeout: 10 * time.Second,
+		IndividualTimeout: 5 * time.Second,
+		HealthGate:        hg,
+	}
+	a.WithLogger(logger)
 
 	// --- Phase 1: DB is up, collectors work ---
+	require.NoError(t, pool.Ping(ctx))
 	result, err := a.GetMetrics()
 	require.NoError(t, err)
-	require.Len(t, result, numCollectors, "phase 1: all collectors should produce metrics")
+	require.Len(t, result, numCollectors)
 
 	// --- Phase 2: Stop the database ---
 	stopTimeout := 5 * time.Second
-	err = pgContainer.Stop(ctx, &stopTimeout)
-	require.NoError(t, err)
+	require.NoError(t, pgContainer.Stop(ctx, &stopTimeout))
 
-	// The pool's existing connections are now broken. Run GetMetrics so
-	// collectors hit real connection errors and trip the gate.
+	// Collectors hit real connection errors and trip the gate.
 	mu.Lock()
 	collectorCalls = 0
 	mu.Unlock()
 
 	result, err = a.GetMetrics()
-	// Some collectors fail with real pg errors. The gate should trip.
 	t.Logf("phase 2: got %d metrics, err=%v", len(result), err)
 
-	// If the gate was already tripped at the Check() at the top of
-	// GetMetrics, we get ErrDatabaseDown immediately. Otherwise,
-	// collectors ran and at least one failed, tripping the gate.
 	if err == nil {
 		assert.True(t, errors.Is(hg.Check(), agent.ErrDatabaseDown),
 			"gate should be tripped after collectors hit connection errors")
 	}
 
-	// --- Phase 3: Gate is now down — call GetMetrics again ---
-	// Key assertion: single ErrDatabaseDown error, zero collectors executed.
+	// --- Phase 3: Gate is now down — single error, zero collectors ---
 	mu.Lock()
 	collectorCalls = 0
 	mu.Unlock()
 
 	result, err = a.GetMetrics()
-	assert.ErrorIs(t, err, agent.ErrDatabaseDown, "should return exactly one ErrDatabaseDown")
-	assert.Nil(t, result, "no metrics when gate is down")
+	assert.ErrorIs(t, err, agent.ErrDatabaseDown)
+	assert.Nil(t, result)
 
 	mu.Lock()
 	calls := collectorCalls
 	mu.Unlock()
-	assert.Equal(t, 0, calls, "zero collectors should have executed when gate is down")
+	assert.Equal(t, 0, calls, "zero collectors should have executed")
 
-	// --- Phase 4: Restart the database, verify recovery ---
-	err = pgContainer.Start(ctx)
-	require.NoError(t, err)
+	// --- Phase 4: Restart, verify recovery ---
+	require.NoError(t, pgContainer.Start(ctx))
 
-	// Wait for the health gate's ping goroutine to detect recovery.
 	deadline := time.Now().Add(60 * time.Second)
 	for hg.Check() != nil {
 		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for health gate recovery after DB restart")
+			t.Fatal("timed out waiting for health gate recovery")
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-
-	// The pool also needs to establish fresh connections after the restart.
-	for {
+	for pool.Ping(ctx) != nil {
 		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for pool to reconnect after DB restart")
-		}
-		if pool.Ping(ctx) == nil {
-			break
+			t.Fatal("timed out waiting for pool to reconnect")
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 
-	// Collectors should work again.
 	result, err = a.GetMetrics()
 	assert.NoError(t, err)
-	assert.Len(t, result, numCollectors, "all collectors should produce metrics after recovery")
+	assert.Len(t, result, numCollectors)
 }
