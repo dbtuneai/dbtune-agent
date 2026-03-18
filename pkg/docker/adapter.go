@@ -64,6 +64,7 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
+	commonAgent.HealthGate = agent.NewHealthGate(dbpool, pg.IsConnectionError, commonAgent.Logger())
 	dockerAdapter := &DockerContainerAdapter{
 		CommonAgent:       *commonAgent,
 		Config:            dockerConfig,

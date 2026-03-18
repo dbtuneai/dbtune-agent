@@ -106,8 +106,10 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
 
+	commonAgent := agent.CreateCommonAgent()
+	commonAgent.HealthGate = agent.NewHealthGate(dbpool, pg.IsConnectionError, commonAgent.Logger())
 	adapter := &CNPGAdapter{
-		CommonAgent:       *agent.CreateCommonAgent(),
+		CommonAgent:       *commonAgent,
 		Config:            config,
 		GuardrailSettings: guardrailSettings,
 		PGDriver:          dbpool,

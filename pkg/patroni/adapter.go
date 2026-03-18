@@ -65,6 +65,7 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 	}
 
 	common := agent.CreateCommonAgent()
+	common.HealthGate = agent.NewHealthGate(pgPool, pg.IsConnectionError, common.Logger())
 	adpt := PatroniAdapter{
 		CommonAgent:     *common,
 		PatroniConfig:   patroniConfig,

@@ -16,6 +16,9 @@ func isRecoveryError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, agent.ErrDatabaseDown) {
+		return true
+	}
 	errMsg := strings.ToLower(err.Error())
 	return strings.Contains(errMsg, "failover detected") ||
 		strings.Contains(errMsg, "recovery in progress")

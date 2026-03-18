@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"testing"
@@ -357,4 +358,45 @@ func TestRunnerCallsAllAPIActions(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	transport.AllActionsCalled(t)
+}
+
+func TestIsRecoveryError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		// nil / unrelated
+		{"nil error", nil, false},
+		{"unrelated error", errors.New("something else"), false},
+
+		// ErrDatabaseDown sentinel
+		{"ErrDatabaseDown", agent.ErrDatabaseDown, true},
+		{"wrapped ErrDatabaseDown", fmt.Errorf("collector failed: %w", agent.ErrDatabaseDown), true},
+		{"deeply wrapped ErrDatabaseDown", fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", agent.ErrDatabaseDown)), true},
+
+		// failover detected — exact, case-insensitive, embedded in larger message
+		{"failover detected lowercase", errors.New("failover detected"), true},
+		{"failover detected uppercase", errors.New("FAILOVER DETECTED"), true},
+		{"failover detected mixed case", errors.New("Failover Detected"), true},
+		{"failover detected in context", errors.New("pg error: failover detected during query execution"), true},
+
+		// recovery in progress — exact, case-insensitive, embedded in larger message
+		{"recovery in progress lowercase", errors.New("recovery in progress"), true},
+		{"recovery in progress uppercase", errors.New("RECOVERY IN PROGRESS"), true},
+		{"recovery in progress mixed case", errors.New("Recovery In Progress"), true},
+		{"recovery in progress in context", errors.New("the server is in recovery in progress, try again later"), true},
+
+		// partial matches that should NOT match
+		{"failover without detected", errors.New("failover occurred"), false},
+		{"recovery without in progress", errors.New("recovery completed"), false},
+		{"detected without failover", errors.New("change detected"), false},
+		{"progress without recovery", errors.New("in progress"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, isRecoveryError(tt.err))
+		})
+	}
 }

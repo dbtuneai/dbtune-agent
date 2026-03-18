@@ -342,6 +342,9 @@ type CommonAgent struct {
 	IndividualTimeout time.Duration // Timeout for each individual collector
 	// Version information
 	Version string
+	// HealthGate short-circuits collectors when the DB is unreachable.
+	// Nil-safe: adapters that don't set it simply skip the gate.
+	HealthGate *HealthGate
 }
 
 func CreateCommonAgent() *CommonAgent {
@@ -417,7 +420,8 @@ func (a *CommonAgent) WithLogger(logger *log.Logger) {
 // to indicate that the agent is running.
 // This method does not need to be overridden by any adapter
 func (a *CommonAgent) SendHeartbeat() error {
-	a.Logger().Infof("Sending heartbeat to %s", a.ServerURLs.PostHeartbeat())
+	url := a.ServerURLs.AgentURL(dbtune.PathHeartbeat)
+	a.Logger().Infof("Sending heartbeat to %s", url)
 
 	payload := AgentPayload{
 		AgentVersion:   a.Version,
@@ -436,7 +440,7 @@ func (a *CommonAgent) SendHeartbeat() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", a.ServerURLs.PostHeartbeat(), bytes.NewBuffer(jsonData))
+	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		a.Logger().Errorf("Failed to create heartbeat request: %v", err)
 		return err
@@ -452,7 +456,7 @@ func (a *CommonAgent) SendHeartbeat() error {
 
 	if resp.StatusCode != 204 {
 		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Errorf("Failed to send heartbeat to %s, status: %d, body: %s", a.ServerURLs.PostHeartbeat(), resp.StatusCode, string(body))
+		a.Logger().Errorf("Failed to send heartbeat to %s, status: %d, body: %s", url, resp.StatusCode, string(body))
 		return fmt.Errorf("heartbeat failed with status code %d", resp.StatusCode)
 	}
 
@@ -470,6 +474,13 @@ func (a *CommonAgent) InitCollectors(collectors []MetricCollector) {
 // It is discouraged for every adapter overriding this one.
 func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
 	a.Logger().Println("Staring metric collection")
+
+	// Short-circuit: if the database is already known to be down, return
+	// a single error immediately instead of launching N collectors that
+	// would each individually report "skipped".
+	if err := a.HealthGate.Check(); err != nil {
+		return nil, err
+	}
 
 	// Cleanup metrics from the previous heartbeat
 	a.MetricsState.Metrics = []metrics.FlatValue{}
@@ -503,6 +514,7 @@ func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
 
 				err := c.Collector(newCtx, &a.MetricsState)
 				if err != nil {
+					a.HealthGate.ReportError(err)
 					a.Logger().Errorf("Error in collector %s: %v", c.Key, err)
 					done <- fmt.Errorf("collector %s failed: %w", c.Key, err)
 					return
@@ -553,7 +565,7 @@ func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.PostMetrics(), "application/json", jsonData)
+	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL(dbtune.PathMetrics), "application/json", jsonData)
 	if err != nil {
 		return err
 	}
@@ -578,7 +590,7 @@ func (a *CommonAgent) SendSystemInfo(systemInfo []metrics.FlatValue) error {
 		return err
 	}
 
-	req, _ := retryablehttp.NewRequest("PUT", a.ServerURLs.PostSystemInfo(), bytes.NewBuffer(jsonData))
+	req, _ := retryablehttp.NewRequest("PUT", a.ServerURLs.AgentURL(dbtune.PathSystemInfo), bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := a.APIClient.Do(req)
@@ -613,7 +625,7 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 
 	a.Logger().Debugf("Active config payload: %s", string(jsonData))
 
-	resp, err := a.APIClient.Post(a.ServerURLs.PostActiveConfig(), "application/json", jsonData)
+	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL(dbtune.PathConfigurations), "application/json", jsonData)
 	if err != nil {
 		return err
 	}
@@ -665,7 +677,7 @@ func (a *CommonAgent) SendGuardrailSignal(signal guardrails.Signal) error {
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.PostGuardrailSignal(), "application/json", jsonData)
+	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL(dbtune.PathGuardrails), "application/json", jsonData)
 	if err != nil {
 		return err
 	}
@@ -688,7 +700,7 @@ func (a *CommonAgent) SendError(payload ErrorPayload) error {
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.PostError(), "application/json", jsonData)
+	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL(dbtune.PathLogEntries), "application/json", jsonData)
 	if err != nil {
 		return err
 	}

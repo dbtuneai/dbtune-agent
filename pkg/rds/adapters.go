@@ -81,6 +81,7 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 	if err != nil {
 		return nil, err
 	}
+	commonAgent.HealthGate = agent.NewHealthGate(dbpool, pg.IsConnectionError, commonAgent.Logger())
 	adapter := &RDSAdapter{
 		CommonAgent: *commonAgent,
 		Config:      config,

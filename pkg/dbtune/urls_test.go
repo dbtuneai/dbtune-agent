@@ -209,52 +209,56 @@ func TestServerURLsGeneration(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		method   func() string
+		path     AgentPath
 		expected string
 	}{
 		{
-			name:     "PostHeartbeat",
-			method:   s.PostHeartbeat,
+			name:     "heartbeat",
+			path:     PathHeartbeat,
 			expected: "https://app.dbtune.com/api/v1/agent/heartbeat?uuid=550e8400-e29b-41d4-a716-446655440000",
 		},
 		{
-			name:     "PostSystemInfo",
-			method:   s.PostSystemInfo,
+			name:     "system-info",
+			path:     PathSystemInfo,
 			expected: "https://app.dbtune.com/api/v1/agent/system-info?uuid=550e8400-e29b-41d4-a716-446655440000",
 		},
 		{
-			name:     "PostMetrics",
-			method:   s.PostMetrics,
+			name:     "metrics",
+			path:     PathMetrics,
 			expected: "https://app.dbtune.com/api/v1/agent/metrics?uuid=550e8400-e29b-41d4-a716-446655440000",
 		},
 		{
-			name:     "PostActiveConfig",
-			method:   s.PostActiveConfig,
+			name:     "configurations",
+			path:     PathConfigurations,
 			expected: "https://app.dbtune.com/api/v1/agent/configurations?uuid=550e8400-e29b-41d4-a716-446655440000",
 		},
 		{
-			name:     "GetKnobRecommendations",
-			method:   s.GetKnobRecommendations,
-			expected: "https://app.dbtune.com/api/v1/agent/configurations?uuid=550e8400-e29b-41d4-a716-446655440000&status=recommended",
-		},
-		{
-			name:     "PostGuardrailSignal",
-			method:   s.PostGuardrailSignal,
+			name:     "guardrails",
+			path:     PathGuardrails,
 			expected: "https://app.dbtune.com/api/v1/agent/guardrails?uuid=550e8400-e29b-41d4-a716-446655440000",
 		},
 		{
-			name:     "PostError",
-			method:   s.PostError,
+			name:     "log-entries",
+			path:     PathLogEntries,
 			expected: "https://app.dbtune.com/api/v1/agent/log-entries?uuid=550e8400-e29b-41d4-a716-446655440000",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.method()
+			result := s.AgentURL(tt.path)
 			if result != tt.expected {
 				t.Errorf("expected %s, got %s", tt.expected, result)
 			}
 		})
 	}
+
+	// GetKnobRecommendations has its own method with extra query param
+	t.Run("GetKnobRecommendations", func(t *testing.T) {
+		expected := "https://app.dbtune.com/api/v1/agent/configurations?uuid=550e8400-e29b-41d4-a716-446655440000&status=recommended"
+		result := s.GetKnobRecommendations()
+		if result != expected {
+			t.Errorf("expected %s, got %s", expected, result)
+		}
+	})
 }
