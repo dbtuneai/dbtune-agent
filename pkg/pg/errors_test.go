@@ -48,12 +48,15 @@ func TestIsConnectionError(t *testing.T) {
 		{name: "PgError 08006", err: &pgconn.PgError{Code: "08006", Message: "connection failure"}, want: true},
 		{name: "PgError 08P01", err: &pgconn.PgError{Code: "08P01"}, want: true},
 
-		// --- PgError class 57 (operator intervention) ---
-		{name: "PgError 57000", err: &pgconn.PgError{Code: "57000"}, want: true},
-		{name: "PgError 57014 query_canceled", err: &pgconn.PgError{Code: "57014"}, want: true},
+		// --- PgError class 57 (operator intervention) — only shutdown/unavailable codes ---
+		{name: "PgError 57000 operator_intervention", err: &pgconn.PgError{Code: "57000"}, want: true},
 		{name: "PgError 57P01 admin_shutdown", err: &pgconn.PgError{Code: "57P01", Message: "admin shutdown"}, want: true},
 		{name: "PgError 57P02 crash_shutdown", err: &pgconn.PgError{Code: "57P02"}, want: true},
 		{name: "PgError 57P03 cannot_connect_now", err: &pgconn.PgError{Code: "57P03"}, want: true},
+		{name: "PgError 57P04 database_dropped", err: &pgconn.PgError{Code: "57P04"}, want: true},
+
+		// --- PgError class 57 codes that are NOT connection errors ---
+		{name: "PgError 57014 query_canceled", err: &pgconn.PgError{Code: "57014"}, want: false},
 
 		// --- PgError non-connection codes (query errors) ---
 		{name: "PgError 42P01 relation does not exist", err: &pgconn.PgError{Code: "42P01"}, want: false},

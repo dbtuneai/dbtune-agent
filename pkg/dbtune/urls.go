@@ -29,10 +29,6 @@ func CreateServerURLs() (ServerURLs, error) {
 	_ = dbtuneConfig.BindEnv("api_key", "DBT_DBTUNE_API_KEY")
 	_ = dbtuneConfig.BindEnv("database_id", "DBT_DBTUNE_DATABASE_ID")
 
-	if dbtuneConfig == nil {
-		return ServerURLs{}, fmt.Errorf("dbtune configuration not found")
-	}
-
 	var servTest ServerURLs
 	err := dbtuneConfig.Unmarshal(&servTest)
 	if err != nil {

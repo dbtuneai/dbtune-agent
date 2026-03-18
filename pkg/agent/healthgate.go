@@ -30,9 +30,10 @@ type HealthGate struct {
 	cancel  context.CancelFunc
 }
 
-// NewHealthGate creates a ready-to-use HealthGate. No Start call needed.
-func NewHealthGate(pool *pgxpool.Pool, isConnErr func(error) bool, logger *logrus.Logger) *HealthGate {
-	ctx, cancel := context.WithCancel(context.Background())
+// NewHealthGate creates a ready-to-use HealthGate. The gate's internal context
+// is derived from parent, so cancelling parent also stops any recovery pings.
+func NewHealthGate(parent context.Context, pool *pgxpool.Pool, isConnErr func(error) bool, logger *logrus.Logger) *HealthGate {
+	ctx, cancel := context.WithCancel(parent)
 	return &HealthGate{
 		pool:              pool,
 		isConnectionError: isConnErr,

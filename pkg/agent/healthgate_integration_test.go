@@ -98,7 +98,7 @@ func TestIntegration_HealthGate_BlocksAndRecovers(t *testing.T) {
 
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)
-	hg := agent.NewHealthGate(pool, pg.IsConnectionError, logger)
+	hg := agent.NewHealthGate(ctx, pool, pg.IsConnectionError, logger)
 	defer hg.Stop()
 
 	// --- Phase 1: DB is up, gate is open ---

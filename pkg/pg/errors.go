@@ -22,11 +22,33 @@ func IsConnectionError(err error) bool {
 		return true
 	}
 
-	// PgError with SQLSTATE class 08 (connection exception) or 57 (operator intervention).
+	// PgError with SQLSTATE class 08 (connection exception) or specific class 57
+	// (operator intervention) codes that indicate the server is shutting down or
+	// unavailable — NOT query-level cancellations like 57014.
+	//
+	// Class 08 — Connection Exception (all codes):
+	//   https://www.postgresql.org/docs/current/errcodes-appendix.html#ERRCODES-TABLE
+	//
+	// Class 57 — Operator Intervention (selective):
+	//   57000  operator_intervention (generic)
+	//   57P01  admin_shutdown        — server is shutting down
+	//   57P02  crash_shutdown        — server crashed
+	//   57P03  cannot_connect_now    — server is starting up
+	//   57P04  database_dropped      — database no longer exists
+	//
+	// Excluded from class 57:
+	//   57014  query_canceled — fired by statement_timeout, pg_cancel_backend(),
+	//          or client context cancellation. This is a normal query-level event,
+	//          not a sign that the database is unreachable.
+	//          https://www.postgresql.org/docs/current/errcodes-appendix.html
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		code := pgErr.Code
-		if strings.HasPrefix(code, "08") || strings.HasPrefix(code, "57") {
+		if strings.HasPrefix(code, "08") {
+			return true
+		}
+		switch code {
+		case "57000", "57P01", "57P02", "57P03", "57P04":
 			return true
 		}
 		// Any other PgError is a query-level error.

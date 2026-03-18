@@ -41,7 +41,7 @@ func TestHealthGate_NilReceiver_StopDoesNotPanic(_ *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReportError_ConnectionError_TripsGate(t *testing.T) {
-	hg := NewHealthGate(nil, func(_ error) bool { return true }, testLogger())
+	hg := NewHealthGate(context.Background(), nil, func(_ error) bool { return true }, testLogger())
 	defer hg.Stop()
 
 	hg.ReportError(errors.New("connection refused"))
@@ -52,7 +52,7 @@ func TestReportError_ConnectionError_TripsGate(t *testing.T) {
 }
 
 func TestReportError_NonConnectionError_DoesNotTrip(t *testing.T) {
-	hg := NewHealthGate(nil, func(_ error) bool { return false }, testLogger())
+	hg := NewHealthGate(context.Background(), nil, func(_ error) bool { return false }, testLogger())
 	defer hg.Stop()
 
 	hg.ReportError(errors.New("relation does not exist"))
@@ -64,7 +64,7 @@ func TestReportError_NonConnectionError_DoesNotTrip(t *testing.T) {
 }
 
 func TestReportError_Nil_DoesNotTrip(t *testing.T) {
-	hg := NewHealthGate(nil, func(_ error) bool { return true }, testLogger())
+	hg := NewHealthGate(context.Background(), nil, func(_ error) bool { return true }, testLogger())
 	defer hg.Stop()
 
 	hg.ReportError(nil)
@@ -75,7 +75,7 @@ func TestReportError_Nil_DoesNotTrip(t *testing.T) {
 }
 
 func TestReportError_ConcurrentFromManyGoroutines(t *testing.T) {
-	hg := NewHealthGate(nil, func(_ error) bool { return true }, testLogger())
+	hg := NewHealthGate(context.Background(), nil, func(_ error) bool { return true }, testLogger())
 	defer hg.Stop()
 
 	var wg sync.WaitGroup
