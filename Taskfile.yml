@@ -35,6 +35,11 @@ tasks:
       - go test ./...
     silent: false
 
+  test-integration:
+    desc: Run integration tests against PG 13-18 (requires Docker)
+    cmds:
+      - go test -tags integration ./... -v -timeout 10m
+
   format:
     desc: Format all Go files
     cmds:
