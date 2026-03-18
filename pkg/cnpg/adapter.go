@@ -107,7 +107,7 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 	}
 
 	commonAgent := agent.CreateCommonAgent()
-	commonAgent.HealthGate = agent.NewHealthGate(dbpool, pg.IsConnectionError, commonAgent.Logger())
+	commonAgent.DBPool = dbpool
 	adapter := &CNPGAdapter{
 		CommonAgent:       *commonAgent,
 		Config:            config,

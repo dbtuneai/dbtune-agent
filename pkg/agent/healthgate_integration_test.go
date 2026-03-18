@@ -90,7 +90,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func TestIntegration_HealthGate_BlocksCollectorsWhenDBDown(t *testing.T) {
+func TestIntegration_HealthGate_BlocksAndRecovers(t *testing.T) {
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)
 	require.NoError(t, err)
@@ -101,6 +101,11 @@ func TestIntegration_HealthGate_BlocksCollectorsWhenDBDown(t *testing.T) {
 	hg := agent.NewHealthGate(pool, pg.IsConnectionError, logger)
 	defer hg.Stop()
 
+	// --- Phase 1: DB is up, gate is open ---
+	require.NoError(t, pool.Ping(ctx))
+	assert.NoError(t, hg.Check())
+
+	// GetMetrics works and returns collector results
 	const numCollectors = 10
 	var collectorCalls int
 	var mu sync.Mutex
@@ -136,12 +141,9 @@ func TestIntegration_HealthGate_BlocksCollectorsWhenDBDown(t *testing.T) {
 		},
 		CollectionTimeout: 10 * time.Second,
 		IndividualTimeout: 5 * time.Second,
-		HealthGate:        hg,
 	}
 	a.WithLogger(logger)
 
-	// --- Phase 1: DB is up, collectors work ---
-	require.NoError(t, pool.Ping(ctx))
 	result, err := a.GetMetrics()
 	require.NoError(t, err)
 	require.Len(t, result, numCollectors)
@@ -150,7 +152,7 @@ func TestIntegration_HealthGate_BlocksCollectorsWhenDBDown(t *testing.T) {
 	stopTimeout := 5 * time.Second
 	require.NoError(t, pgContainer.Stop(ctx, &stopTimeout))
 
-	// Collectors hit real connection errors and trip the gate.
+	// Collectors hit real connection errors; GetMetrics now returns them.
 	mu.Lock()
 	collectorCalls = 0
 	mu.Unlock()
@@ -158,24 +160,18 @@ func TestIntegration_HealthGate_BlocksCollectorsWhenDBDown(t *testing.T) {
 	result, err = a.GetMetrics()
 	t.Logf("phase 2: got %d metrics, err=%v", len(result), err)
 
-	if err == nil {
-		assert.True(t, errors.Is(hg.Check(), agent.ErrDatabaseDown),
-			"gate should be tripped after collectors hit connection errors")
+	// Report errors to the gate (as the runner would do).
+	if err != nil {
+		hg.ReportError(err)
 	}
 
-	// --- Phase 3: Gate is now down — single error, zero collectors ---
-	mu.Lock()
-	collectorCalls = 0
-	mu.Unlock()
+	// Gate should be tripped (or will trip after ReportError processes connection errors).
+	// The collector errors from a stopped DB are connection errors.
+	assert.True(t, errors.Is(hg.Check(), agent.ErrDatabaseDown),
+		"gate should be tripped after reporting connection errors")
 
-	result, err = a.GetMetrics()
-	assert.ErrorIs(t, err, agent.ErrDatabaseDown)
-	assert.Nil(t, result)
-
-	mu.Lock()
-	calls := collectorCalls
-	mu.Unlock()
-	assert.Equal(t, 0, calls, "zero collectors should have executed")
+	// --- Phase 3: Gate is down — Check returns ErrDatabaseDown ---
+	assert.ErrorIs(t, hg.Check(), agent.ErrDatabaseDown)
 
 	// --- Phase 4: Restart, verify recovery ---
 	require.NoError(t, pgContainer.Start(ctx))

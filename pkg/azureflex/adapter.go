@@ -60,7 +60,7 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 	}
 
 	common := agent.CreateCommonAgent()
-	common.HealthGate = agent.NewHealthGate(pgPool, pg.IsConnectionError, common.Logger())
+	common.DBPool = pgPool
 	adpt := AzureFlexAdapter{
 		CommonAgent:     *common,
 		AzureFlexConfig: config,

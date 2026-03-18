@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/pg"
 
 	"github.com/sirupsen/logrus"
 )
@@ -49,6 +50,9 @@ func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger
 func Runner(adapter agent.AgentLooper) {
 	logger := adapter.Logger()
 
+	// Create a HealthGate to short-circuit DB-hitting calls when the database is unreachable.
+	hg := agent.NewHealthGate(adapter.Pool(), pg.IsConnectionError, logger)
+
 	// Create tickers for different intervals
 	metricsTicker := time.NewTicker(5 * time.Second)
 	systemMetricsTicker := time.NewTicker(1 * time.Minute)
@@ -65,8 +69,13 @@ func Runner(adapter agent.AgentLooper) {
 
 	// Metrics collection goroutine
 	go runWithTicker(ctx, metricsTicker, "metrics", logger, false, func() error {
+		if err := hg.Check(); err != nil {
+			logger.Debugf("Skipping metrics: %v", err)
+			return nil
+		}
 		data, err := adapter.GetMetrics()
 		if err != nil {
+			hg.ReportError(err)
 			// If error indicates recovery/failover, skip sending error and data
 			if isRecoveryError(err) {
 				logger.Debugf("Skipping metrics during recovery: %v", err)
@@ -87,8 +96,13 @@ func Runner(adapter agent.AgentLooper) {
 
 	// System metrics collection goroutine
 	go runWithTicker(ctx, systemMetricsTicker, "system info", logger, false, func() error {
+		if err := hg.Check(); err != nil {
+			logger.Debugf("Skipping system info: %v", err)
+			return nil
+		}
 		data, err := adapter.GetSystemInfo()
 		if err != nil {
+			hg.ReportError(err)
 			// If error indicates recovery/failover, skip sending error and data
 			if isRecoveryError(err) {
 				logger.Debugf("Skipping system info during recovery: %v", err)
@@ -109,8 +123,13 @@ func Runner(adapter agent.AgentLooper) {
 
 	// Config management goroutine
 	go runWithTicker(ctx, configTicker, "config", logger, false, func() error {
+		if err := hg.Check(); err != nil {
+			logger.Debugf("Skipping config: %v", err)
+			return nil
+		}
 		config, err := adapter.GetActiveConfig()
 		if err != nil {
+			hg.ReportError(err)
 			// If error indicates recovery/failover, skip sending error and config
 			if isRecoveryError(err) {
 				logger.Debugf("Skipping config during recovery: %v", err)

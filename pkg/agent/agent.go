@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/dbtuneai/agent/pkg/dbtune"
@@ -167,6 +169,9 @@ type AgentLooper interface {
 
 	// SendError sends an error report to the DBtune server
 	SendError(payload ErrorPayload) error
+
+	// Pool returns the pgxpool.Pool used for database connections.
+	Pool() *pgxpool.Pool
 
 	// GetLogger returns the logger for the agent
 	Logger() *log.Logger
@@ -342,9 +347,9 @@ type CommonAgent struct {
 	IndividualTimeout time.Duration // Timeout for each individual collector
 	// Version information
 	Version string
-	// HealthGate short-circuits collectors when the DB is unreachable.
-	// Nil-safe: adapters that don't set it simply skip the gate.
-	HealthGate *HealthGate
+	// DBPool is the pgxpool.Pool used for database connections.
+	// Set by adapters so the runner can create a HealthGate.
+	DBPool *pgxpool.Pool
 }
 
 func CreateCommonAgent() *CommonAgent {
@@ -416,6 +421,10 @@ func (a *CommonAgent) WithLogger(logger *log.Logger) {
 	a.logger = logger
 }
 
+func (a *CommonAgent) Pool() *pgxpool.Pool {
+	return a.DBPool
+}
+
 // SendHeartbeat sends a heartbeat to the DBtune server
 // to indicate that the agent is running.
 // This method does not need to be overridden by any adapter
@@ -475,13 +484,6 @@ func (a *CommonAgent) InitCollectors(collectors []MetricCollector) {
 func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
 	a.Logger().Println("Staring metric collection")
 
-	// Short-circuit: if the database is already known to be down, return
-	// a single error immediately instead of launching N collectors that
-	// would each individually report "skipped".
-	if err := a.HealthGate.Check(); err != nil {
-		return nil, err
-	}
-
 	// Cleanup metrics from the previous heartbeat
 	a.MetricsState.Metrics = []metrics.FlatValue{}
 
@@ -514,8 +516,6 @@ func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
 
 				err := c.Collector(newCtx, &a.MetricsState)
 				if err != nil {
-					a.HealthGate.ReportError(err)
-					a.Logger().Errorf("Error in collector %s: %v", c.Key, err)
 					done <- fmt.Errorf("collector %s failed: %w", c.Key, err)
 					return
 				}
@@ -537,21 +537,17 @@ func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
 	wg.Wait()
 
 	// Collect errors before closing the channel
-	var errors []error //nolint:prealloc // size unknown, collecting from channel
-	close(errorsChan)  // Close channel after all collectors are done
+	var collectorErrors []error //nolint:prealloc // size unknown, collecting from channel
+	close(errorsChan)           // Close channel after all collectors are done
 	for err := range errorsChan {
-		errors = append(errors, err)
-	}
-
-	if len(errors) > 0 {
-		a.Logger().Errorln("Collector errors:")
-		for _, err := range errors {
-			a.Logger().Errorln(err)
-		}
+		collectorErrors = append(collectorErrors, err)
 	}
 
 	a.Logger().Debug("Metrics collected", a.MetricsState.Metrics)
 
+	if len(collectorErrors) > 0 {
+		return a.MetricsState.Metrics, errors.Join(collectorErrors...)
+	}
 	return a.MetricsState.Metrics, nil
 }
 

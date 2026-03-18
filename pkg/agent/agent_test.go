@@ -87,7 +87,7 @@ func TestGetMetrics(t *testing.T) {
 		}
 
 		flat_metrics, err := agent.GetMetrics()
-		assert.NoError(t, err) // The function should not return error even if collectors fail
+		assert.Error(t, err) // GetMetrics now returns collector errors
 		assert.Len(t, flat_metrics, 1)
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric2", Value: 2, Type: "int"})
 	})
@@ -115,131 +115,10 @@ func TestGetMetrics(t *testing.T) {
 		}
 
 		flat_metrics, err := agent.GetMetrics()
-		assert.NoError(t, err)
+		assert.Error(t, err) // timed-out collector produces an error
 		assert.Len(t, flat_metrics, 1)
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric1", Value: 1, Type: "int"})
 	})
-}
-
-func TestGetMetrics_HealthGate_SkipsCollectorsWhenDown(t *testing.T) {
-	// Create a HealthGate that is already tripped (down=true).
-	hg := NewHealthGate(nil, func(_ error) bool { return true }, logrus.New())
-	hg.down.Store(true)
-
-	collectorRan := false
-	a := &CommonAgent{
-		logger: logrus.New(),
-		MetricsState: MetricsState{
-			Collectors: []MetricCollector{
-				{
-					Key: "should_be_skipped",
-					Collector: func(_ context.Context, state *MetricsState) error {
-						collectorRan = true
-						state.AddMetric(metrics.FlatValue{Key: "m", Value: 1, Type: "int"})
-						return nil
-					},
-				},
-				{
-					Key: "also_skipped",
-					Collector: func(_ context.Context, state *MetricsState) error {
-						collectorRan = true
-						state.AddMetric(metrics.FlatValue{Key: "m2", Value: 2, Type: "int"})
-						return nil
-					},
-				},
-			},
-			Mutex: &sync.Mutex{},
-		},
-		CollectionTimeout: 1 * time.Second,
-		IndividualTimeout: 500 * time.Millisecond,
-		HealthGate:        hg,
-	}
-
-	result, err := a.GetMetrics()
-	assert.ErrorIs(t, err, ErrDatabaseDown, "should return exactly one ErrDatabaseDown")
-	assert.Nil(t, result, "no metrics should be collected when gate is down")
-	assert.False(t, collectorRan, "collector functions should not have executed")
-}
-
-func TestGetMetrics_HealthGate_ReportsCollectorError(t *testing.T) {
-	// Create a HealthGate that is up, with a checker that treats all errors
-	// as connection errors. This lets us verify ReportError trips the gate.
-	hg := NewHealthGate(nil, func(_ error) bool { return true }, logrus.New())
-
-	a := &CommonAgent{
-		logger: logrus.New(),
-		MetricsState: MetricsState{
-			Collectors: []MetricCollector{
-				{
-					Key: "failing_collector",
-					Collector: func(_ context.Context, _ *MetricsState) error {
-						return errors.New("connection refused")
-					},
-				},
-			},
-			Mutex: &sync.Mutex{},
-		},
-		CollectionTimeout: 1 * time.Second,
-		IndividualTimeout: 500 * time.Millisecond,
-		HealthGate:        hg,
-	}
-
-	_, err := a.GetMetrics()
-	assert.NoError(t, err) // GetMetrics itself doesn't return collector errors
-
-	// The gate should now be tripped because ReportError was called with
-	// a connection error.
-	assert.True(t, hg.down.Load(), "health gate should be tripped after collector connection error")
-}
-
-func TestGetMetrics_HealthGate_DoesNotTripOnNonConnectionError(t *testing.T) {
-	// Checker that never considers errors as connection errors.
-	hg := NewHealthGate(nil, func(_ error) bool { return false }, logrus.New())
-
-	a := &CommonAgent{
-		logger: logrus.New(),
-		MetricsState: MetricsState{
-			Collectors: []MetricCollector{
-				{
-					Key: "query_error_collector",
-					Collector: func(_ context.Context, _ *MetricsState) error {
-						return errors.New("relation does not exist")
-					},
-				},
-			},
-			Mutex: &sync.Mutex{},
-		},
-		CollectionTimeout: 1 * time.Second,
-		IndividualTimeout: 500 * time.Millisecond,
-		HealthGate:        hg,
-	}
-
-	_, err := a.GetMetrics()
-	assert.NoError(t, err)
-
-	assert.False(t, hg.down.Load(), "health gate should NOT be tripped by non-connection errors")
-}
-
-func TestGetMetrics_NilHealthGate_CollectorsRunNormally(t *testing.T) {
-	// Ensure the nil-safe path still works: no HealthGate set, collectors run fine.
-	a := &CommonAgent{
-		logger: logrus.New(),
-		MetricsState: MetricsState{
-			Collectors: []MetricCollector{
-				mockCollector(10*time.Millisecond, false, []metrics.FlatValue{{
-					Key: "m1", Value: 1, Type: "int",
-				}}),
-			},
-			Mutex: &sync.Mutex{},
-		},
-		CollectionTimeout: 1 * time.Second,
-		IndividualTimeout: 500 * time.Millisecond,
-		// HealthGate intentionally nil
-	}
-
-	result, err := a.GetMetrics()
-	assert.NoError(t, err)
-	assert.Len(t, result, 1)
 }
 
 // Creates a CommonAgent for testing purposes

@@ -15,6 +15,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/hashicorp/go-retryablehttp"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -94,6 +95,10 @@ func (m *MockAgentLooper) SendGuardrailSignal(signal guardrails.Signal) error {
 func (m *MockAgentLooper) SendError(payload agent.ErrorPayload) error {
 	args := m.Called(payload)
 	return args.Error(0)
+}
+
+func (m *MockAgentLooper) Pool() *pgxpool.Pool {
+	return nil
 }
 
 // Test runWithTicker function
