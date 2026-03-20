@@ -3,7 +3,6 @@ package runner
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"sync"
 	"testing"
@@ -375,11 +374,6 @@ func TestIsRecoveryError(t *testing.T) {
 		// nil / unrelated
 		{"nil error", nil, false},
 		{"unrelated error", errors.New("something else"), false},
-
-		// ErrDatabaseDown sentinel
-		{"ErrDatabaseDown", agent.ErrDatabaseDown, true},
-		{"wrapped ErrDatabaseDown", fmt.Errorf("collector failed: %w", agent.ErrDatabaseDown), true},
-		{"deeply wrapped ErrDatabaseDown", fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", agent.ErrDatabaseDown)), true},
 
 		// failover detected — exact, case-insensitive, embedded in larger message
 		{"failover detected lowercase", errors.New("failover detected"), true},

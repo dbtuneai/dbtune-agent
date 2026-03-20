@@ -18,9 +18,6 @@ func isRecoveryError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, agent.ErrDatabaseDown) {
-		return true
-	}
 	errMsg := strings.ToLower(err.Error())
 	return strings.Contains(errMsg, "failover detected") ||
 		strings.Contains(errMsg, "recovery in progress")
@@ -51,8 +48,8 @@ func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger
 // an error, the gate inspects it for connection-level failures. Recovery errors
 // are suppressed (returned as nil) to avoid noisy logging in runWithTicker.
 func withHealthGate(hg *agent.HealthGate, logger *logrus.Logger, fn func() error) error {
-	if err := hg.Check(); err != nil {
-		logger.Debugf("Skipping: %v", err)
+	if hg.IsClosed() {
+		logger.Debugf("Skipping, health gate closed")
 		return nil
 	}
 	err := fn()
@@ -77,7 +74,6 @@ func Runner(adapter agent.AgentLooper) {
 
 	// Create a HealthGate to short-circuit DB-hitting calls when the database is unreachable.
 	hg := agent.NewHealthGate(ctx, adapter.Pool(), pg.IsConnectionError, logger)
-	defer hg.Stop()
 
 	// Create tickers for different intervals
 	metricsTicker := time.NewTicker(5 * time.Second)

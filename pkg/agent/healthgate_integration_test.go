@@ -5,7 +5,6 @@ package agent_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -99,11 +98,10 @@ func TestIntegration_HealthGate_BlocksAndRecovers(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)
 	hg := agent.NewHealthGate(ctx, pool, pg.IsConnectionError, logger)
-	defer hg.Stop()
 
 	// --- Phase 1: DB is up, gate is open ---
 	require.NoError(t, pool.Ping(ctx))
-	assert.NoError(t, hg.Check())
+	assert.False(t, hg.IsClosed())
 
 	// GetMetrics works and returns collector results
 	const numCollectors = 10
@@ -167,17 +165,12 @@ func TestIntegration_HealthGate_BlocksAndRecovers(t *testing.T) {
 
 	// Gate should be tripped (or will trip after ReportError processes connection errors).
 	// The collector errors from a stopped DB are connection errors.
-	assert.True(t, errors.Is(hg.Check(), agent.ErrDatabaseDown),
-		"gate should be tripped after reporting connection errors")
+	assert.True(t, hg.IsClosed(), "gate should be tripped after reporting connection errors")
 
-	// --- Phase 3: Gate is down — Check returns ErrDatabaseDown ---
-	assert.ErrorIs(t, hg.Check(), agent.ErrDatabaseDown)
-
-	// --- Phase 4: Restart, verify recovery ---
 	require.NoError(t, pgContainer.Start(ctx))
 
 	deadline := time.Now().Add(60 * time.Second)
-	for hg.Check() != nil {
+	for hg.IsClosed() {
 		if time.Now().After(deadline) {
 			t.Fatal("timed out waiting for health gate recovery")
 		}
