@@ -57,6 +57,7 @@ const (
 	PathConfigurations AgentPath = "configurations"
 	PathGuardrails     AgentPath = "guardrails"
 	PathLogEntries     AgentPath = "log-entries"
+	PathRawLogs        AgentPath = "raw-logs"
 )
 
 // AgentURL builds a URL for the given agent API path segment.
