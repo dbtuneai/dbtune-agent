@@ -49,6 +49,7 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
 
+	commonAgent.DBPool = dbpool
 	c := &DefaultPostgreSQLAdapter{
 		CommonAgent:     *commonAgent,
 		pgDriver:        dbpool,

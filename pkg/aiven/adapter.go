@@ -90,6 +90,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
+	commonAgent.DBPool = pgPool
 	// Create adapter
 	adapter := &AivenPostgreSQLAdapter{
 		CommonAgent:       *commonAgent,

@@ -60,6 +60,7 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 	}
 
 	common := agent.CreateCommonAgent()
+	common.DBPool = pgPool
 	adpt := AzureFlexAdapter{
 		CommonAgent:     *common,
 		AzureFlexConfig: config,

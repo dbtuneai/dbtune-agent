@@ -81,6 +81,7 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 	if err != nil {
 		return nil, err
 	}
+	commonAgent.DBPool = dbpool
 	adapter := &RDSAdapter{
 		CommonAgent: *commonAgent,
 		Config:      config,

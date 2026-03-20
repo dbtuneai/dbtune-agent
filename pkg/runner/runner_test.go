@@ -14,6 +14,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/hashicorp/go-retryablehttp"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -93,6 +94,10 @@ func (m *MockAgentLooper) SendGuardrailSignal(signal guardrails.Signal) error {
 func (m *MockAgentLooper) SendError(payload agent.ErrorPayload) error {
 	args := m.Called(payload)
 	return args.Error(0)
+}
+
+func (m *MockAgentLooper) Pool() *pgxpool.Pool {
+	return nil
 }
 
 // Test runWithTicker function
@@ -196,11 +201,12 @@ func TestRunnerWithErrors(t *testing.T) {
 
 	// Setup mock expectations with errors
 	// Note: SendHeartbeat is not expected to be called during the short test window
-	// because the heartbeat ticker has skipFirst: true
+	// because the heartbeat ticker has skipFirst: true.
+	// withHealthGate no longer calls SendError for collection failures — it reports
+	// to the health gate and returns the error to runWithTicker for logging.
 	mockAgent.On("Logger").Return(logger)
 	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, errors.New("metrics error"))
 	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, errors.New("system info error"))
-	mockAgent.On("SendError", mock.AnythingOfType("agent.ErrorPayload")).Return(nil)
 	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, errors.New("config error"))
 	mockAgent.On("Guardrails").Return(nil)
 
@@ -357,4 +363,40 @@ func TestRunnerCallsAllAPIActions(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	transport.AllActionsCalled(t)
+}
+
+func TestIsRecoveryError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		// nil / unrelated
+		{"nil error", nil, false},
+		{"unrelated error", errors.New("something else"), false},
+
+		// failover detected — exact, case-insensitive, embedded in larger message
+		{"failover detected lowercase", errors.New("failover detected"), true},
+		{"failover detected uppercase", errors.New("FAILOVER DETECTED"), true},
+		{"failover detected mixed case", errors.New("Failover Detected"), true},
+		{"failover detected in context", errors.New("pg error: failover detected during query execution"), true},
+
+		// recovery in progress — exact, case-insensitive, embedded in larger message
+		{"recovery in progress lowercase", errors.New("recovery in progress"), true},
+		{"recovery in progress uppercase", errors.New("RECOVERY IN PROGRESS"), true},
+		{"recovery in progress mixed case", errors.New("Recovery In Progress"), true},
+		{"recovery in progress in context", errors.New("the server is in recovery in progress, try again later"), true},
+
+		// partial matches that should NOT match
+		{"failover without detected", errors.New("failover occurred"), false},
+		{"recovery without in progress", errors.New("recovery completed"), false},
+		{"detected without failover", errors.New("change detected"), false},
+		{"progress without recovery", errors.New("in progress"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, isRecoveryError(tt.err))
+		})
+	}
 }

@@ -69,6 +69,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
 
+	commonAgent.DBPool = pgPool
 	c := &CloudSQLAdapter{
 		CommonAgent:    *commonAgent,
 		State:          &State{LastGuardrailCheck: time.Now()},

@@ -87,7 +87,7 @@ func TestGetMetrics(t *testing.T) {
 		}
 
 		flat_metrics, err := agent.GetMetrics()
-		assert.NoError(t, err) // The function should not return error even if collectors fail
+		assert.Error(t, err) // GetMetrics now returns collector errors
 		assert.Len(t, flat_metrics, 1)
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric2", Value: 2, Type: "int"})
 	})
@@ -115,7 +115,7 @@ func TestGetMetrics(t *testing.T) {
 		}
 
 		flat_metrics, err := agent.GetMetrics()
-		assert.NoError(t, err)
+		assert.Error(t, err) // timed-out collector produces an error
 		assert.Len(t, flat_metrics, 1)
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric1", Value: 1, Type: "int"})
 	})

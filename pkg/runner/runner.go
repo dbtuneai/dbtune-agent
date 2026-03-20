@@ -3,10 +3,12 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/pg"
 
 	"github.com/sirupsen/logrus"
 )
@@ -41,10 +43,37 @@ func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger
 	}
 }
 
+// withHealthGate wraps a function with health gate check and error reporting.
+// If the gate is closed (database unreachable), fn is skipped. If fn returns
+// an error, the gate inspects it for connection-level failures. Recovery errors
+// are suppressed (returned as nil) to avoid noisy logging in runWithTicker.
+func withHealthGate(hg *agent.HealthGate, logger *logrus.Logger, fn func() error) error {
+	if hg.IsClosed() {
+		logger.Debugf("Skipping, health gate closed")
+		return nil
+	}
+	err := fn()
+	if err != nil {
+		hg.ReportError(err)
+		if isRecoveryError(err) {
+			logger.Debugf("Skipping during recovery: %v", err)
+			return nil
+		}
+	}
+	return err
+}
+
 // Runner is the main entry point for the agent
 // that executes the different tasks
 func Runner(adapter agent.AgentLooper) {
 	logger := adapter.Logger()
+
+	// Create a context that we can cancel
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Create a HealthGate to short-circuit DB-hitting calls when the database is unreachable.
+	hg := agent.NewHealthGate(ctx, adapter.Pool(), pg.IsConnectionError, logger)
 
 	// Create tickers for different intervals
 	metricsTicker := time.NewTicker(5 * time.Second)
@@ -53,120 +82,80 @@ func Runner(adapter agent.AgentLooper) {
 	heartbeatTicker := time.NewTicker(15 * time.Second)
 	guardrailTicker := time.NewTicker(1 * time.Second)
 
-	// Create a context that we can cancel
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	// Heartbeat goroutine
 	go runWithTicker(ctx, heartbeatTicker, "heartbeat", logger, true, adapter.SendHeartbeat)
 
 	// Metrics collection goroutine
 	go runWithTicker(ctx, metricsTicker, "metrics", logger, false, func() error {
-		data, err := adapter.GetMetrics()
-		if err != nil {
-			// If error indicates recovery/failover, skip sending error and data
-			if isRecoveryError(err) {
-				logger.Debugf("Skipping metrics during recovery: %v", err)
-				return nil // Return nil to prevent error logging in runWithTicker
+		return withHealthGate(hg, logger, func() error {
+			data, err := adapter.GetMetrics()
+			if err != nil {
+				// Send partial data even when some collectors failed.
+				if len(data) > 0 {
+					if sendErr := adapter.SendMetrics(data); sendErr != nil {
+						logger.Errorf("failed to send partial metrics: %v", sendErr)
+					}
+				}
+				return fmt.Errorf("failed to collect metrics: %w", err)
 			}
-			errorPayload := agent.ErrorPayload{
-				ErrorMessage: "Failed to collect metrics: " + err.Error(),
-				ErrorType:    "metrics_error",
-				Timestamp:    time.Now().UTC().Format(time.RFC3339),
-			}
-			if sendErr := adapter.SendError(errorPayload); sendErr != nil {
-				logger.Errorf("failed to send error report: %v", sendErr)
-			}
-			return err
-		}
-		return adapter.SendMetrics(data)
+			return adapter.SendMetrics(data)
+		})
 	})
 
 	// System metrics collection goroutine
 	go runWithTicker(ctx, systemMetricsTicker, "system info", logger, false, func() error {
-		data, err := adapter.GetSystemInfo()
-		if err != nil {
-			// If error indicates recovery/failover, skip sending error and data
-			if isRecoveryError(err) {
-				logger.Debugf("Skipping system info during recovery: %v", err)
-				return nil // Return nil to prevent error logging in runWithTicker
+		return withHealthGate(hg, logger, func() error {
+			data, err := adapter.GetSystemInfo()
+			if err != nil {
+				return fmt.Errorf("failed to collect system information: %w", err)
 			}
-			errorPayload := agent.ErrorPayload{
-				ErrorMessage: "Failed to collect system information: " + err.Error(),
-				ErrorType:    "system_info_error",
-				Timestamp:    time.Now().UTC().Format(time.RFC3339),
-			}
-			if sendErr := adapter.SendError(errorPayload); sendErr != nil {
-				logger.Errorf("failed to send error report: %v", sendErr)
-			}
-			return err
-		}
-		return adapter.SendSystemInfo(data)
+			return adapter.SendSystemInfo(data)
+		})
 	})
 
 	// Config management goroutine
 	go runWithTicker(ctx, configTicker, "config", logger, false, func() error {
-		config, err := adapter.GetActiveConfig()
-		if err != nil {
-			// If error indicates recovery/failover, skip sending error and config
-			if isRecoveryError(err) {
-				logger.Debugf("Skipping config during recovery: %v", err)
-				return nil // Return nil to prevent error logging in runWithTicker
-			}
-			errorPayload := agent.ErrorPayload{
-				ErrorMessage: "Failed to get active configuration: " + err.Error(),
-				ErrorType:    "config_error",
-				Timestamp:    time.Now().UTC().Format(time.RFC3339),
-			}
-			if sendErr := adapter.SendError(errorPayload); sendErr != nil {
-				logger.Errorf("failed to send error report: %v", sendErr)
-			}
-			return err
-		}
-
-		// Check for proposed configs BEFORE sending current config
-		// This is critical after failover recovery - we need to apply baseline first
-		proposedConfig, err := adapter.GetProposedConfig()
-		if err != nil {
-			return err
-		}
-		if proposedConfig != nil {
-			err := adapter.ApplyConfig(proposedConfig)
+		return withHealthGate(hg, logger, func() error {
+			config, err := adapter.GetActiveConfig()
 			if err != nil {
-				errorType := "config_apply_error"
-				var restartErr *agent.RestartNotAllowedError
-				if errors.As(err, &restartErr) {
-					errorType = "restart_not_allowed"
-				}
-				errorPayload := agent.ErrorPayload{
-					ErrorMessage: "Failed to apply configuration: " + err.Error(),
-					ErrorType:    errorType,
-					Timestamp:    time.Now().UTC().Format(time.RFC3339),
-				}
-				if sendErr := adapter.SendError(errorPayload); sendErr != nil {
-					logger.Errorf("failed to send error report: %v", sendErr)
-				}
+				return fmt.Errorf("failed to get active configuration: %w", err)
+			}
+
+			// Check for proposed configs BEFORE sending current config
+			// This is critical after failover recovery - we need to apply baseline first
+			proposedConfig, err := adapter.GetProposedConfig()
+			if err != nil {
 				return err
 			}
-
-			// Re-fetch config after applying proposed config
-			// This ensures we send the newly applied config
-			config, err = adapter.GetActiveConfig()
-			if err != nil {
-				if isRecoveryError(err) {
-					logger.Debugf("Skipping config during recovery after apply: %v", err)
-					return nil
+			if proposedConfig != nil {
+				err := adapter.ApplyConfig(proposedConfig)
+				if err != nil {
+					errorType := "config_apply_error"
+					var restartErr *agent.RestartNotAllowedError
+					if errors.As(err, &restartErr) {
+						errorType = "restart_not_allowed"
+					}
+					errorPayload := agent.ErrorPayload{
+						ErrorMessage: "Failed to apply configuration: " + err.Error(),
+						ErrorType:    errorType,
+						Timestamp:    time.Now().UTC().Format(time.RFC3339),
+					}
+					if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+						logger.Errorf("failed to send error report: %v", sendErr)
+					}
+					return err
 				}
-				return err
+
+				// Re-fetch config after applying proposed config
+				// This ensures we send the newly applied config
+				config, err = adapter.GetActiveConfig()
+				if err != nil {
+					return err
+				}
 			}
-		}
 
-		// Now send the config (either original or newly applied)
-		if err := adapter.SendActiveConfig(config); err != nil {
-			return err
-		}
-
-		return nil
+			return adapter.SendActiveConfig(config)
+		})
 	})
 
 	// Guardrail check goroutine
