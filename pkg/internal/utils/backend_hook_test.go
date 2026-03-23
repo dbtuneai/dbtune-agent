@@ -202,6 +202,55 @@ func TestBackendHookFlushNoopWhenEmpty(t *testing.T) {
 	hook.mu.Unlock()
 }
 
+func TestBackendHookCloseDrainsBuffer(t *testing.T) {
+	var mu sync.Mutex
+	var received []backendLogEntry
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var entries []backendLogEntry
+		_ = json.Unmarshal(body, &entries)
+
+		mu.Lock()
+		received = append(received, entries...)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	hook := CreateBackendHook(server.URL, "key")
+
+	_ = hook.Fire(&logrus.Entry{
+		Logger:  logrus.New(),
+		Level:   logrus.ErrorLevel,
+		Message: "should be flushed on close",
+		Time:    time.Now(),
+		Data:    logrus.Fields{},
+	})
+
+	hook.Close()
+
+	// Verify stop channel is closed (flushLoop will exit)
+	select {
+	case <-hook.stop:
+		// expected
+	default:
+		t.Fatal("stop channel should be closed after Close()")
+	}
+
+	// Verify buffer was drained
+	hook.mu.Lock()
+	assert.Empty(t, hook.buffer)
+	hook.mu.Unlock()
+
+	// Verify the entry was actually sent to the backend
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, received, 1)
+	assert.Contains(t, received[0].Message, "should be flushed on close")
+}
+
 func TestBackendHookIntegrationWithLogger(t *testing.T) {
 	var mu sync.Mutex
 	var received []backendLogEntry

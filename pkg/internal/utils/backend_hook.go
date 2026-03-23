@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	flushInterval = 10 * time.Second
-	maxBufferSize = 100
+	flushInterval = 15 * time.Second
+	maxBufferSize = 20
 	sendTimeout   = 5 * time.Second
 )
 
@@ -34,6 +34,7 @@ type BackendHook struct {
 	mu      sync.Mutex
 	buffer  []backendLogEntry
 	sending bool
+	stop    chan struct{}
 }
 
 func CreateBackendHook(url, apiKey string) *BackendHook {
@@ -42,6 +43,7 @@ func CreateBackendHook(url, apiKey string) *BackendHook {
 		url:    url,
 		apiKey: apiKey,
 		buffer: make([]backendLogEntry, 0, maxBufferSize),
+		stop:   make(chan struct{}),
 	}
 	go h.flushLoop()
 	return h
@@ -102,12 +104,23 @@ func (h *BackendHook) Fire(entry *logrus.Entry) error {
 	return nil
 }
 
+// Close stops the flush loop and drains any remaining buffered entries.
+func (h *BackendHook) Close() {
+	close(h.stop)
+	h.Flush()
+}
+
 func (h *BackendHook) flushLoop() {
 	ticker := time.NewTicker(flushInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		h.Flush()
+	for {
+		select {
+		case <-ticker.C:
+			h.Flush()
+		case <-h.stop:
+			return
+		}
 	}
 }
 
