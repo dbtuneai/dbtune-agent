@@ -37,6 +37,7 @@ SELECT
     i.indislive,
     i.indisreplident,
     c.reltuples::float8 AS reltuples,
+    c.relpages,
     pg_get_indexdef(i.indexrelid) AS indexdef
 FROM pg_index i
 JOIN pg_class c ON c.oid = i.indexrelid
@@ -66,6 +67,7 @@ type PgIndexRow struct {
 	IndIsLive      *Boolean  `json:"indislive" db:"indislive"`
 	IndIsReplIdent *Boolean  `json:"indisreplident" db:"indisreplident"`
 	RelTuples      *Real     `json:"reltuples" db:"reltuples"`
+	RelPages       *Integer  `json:"relpages" db:"relpages"`
 	IndexDef       *Text     `json:"indexdef" db:"indexdef"`
 }
 
