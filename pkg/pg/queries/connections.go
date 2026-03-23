@@ -25,23 +25,30 @@ const ConnectionStatsQuery = `
 SELECT
     COUNT(*) FILTER (WHERE state = 'active') AS active_connections,
     COUNT(*) FILTER (WHERE state = 'idle') AS idle_connections,
-    COUNT(*) FILTER (WHERE state = 'idle in transaction') AS idle_in_transaction_connections
+    COUNT(*) FILTER (WHERE state = 'idle in transaction') AS idle_in_transaction_connections,
+    COUNT(*) FILTER (WHERE state = 'idle in transaction (aborted)') AS idle_in_transaction_aborted_connections
 FROM pg_stat_activity`
 
 // ConnectionStatsPayload holds connection counts by state.
 type ConnectionStatsPayload struct {
-	Active            int `json:"active_connections"`
-	Idle              int `json:"idle_connections"`
-	IdleInTransaction int `json:"idle_in_transaction_connections"`
+	Active                              int `json:"active_connections"`
+	Idle                                int `json:"idle_connections"`
+	IdleInTransaction                   int `json:"idle_in_transaction_connections"`
+	IdleInTransactionAbortedConnections int `json:"idle_in_transaction_aborted_connections"`
+	Total                               int `json:"total_connections"`
 }
 
 // CollectConnectionStats returns active, idle, and idle-in-transaction connection counts.
 func CollectConnectionStats(pool *pgxpool.Pool, ctx context.Context) (ConnectionStatsPayload, error) {
 	var stats ConnectionStatsPayload
 	err := utils.QueryRowWithPrefix(pool, ctx, ConnectionStatsQuery).Scan(
-		&stats.Active, &stats.Idle, &stats.IdleInTransaction,
+		&stats.Active, &stats.Idle, &stats.IdleInTransaction, &stats.IdleInTransactionAbortedConnections,
 	)
-	return stats, err
+	if err != nil {
+		return stats, err
+	}
+	stats.Total = stats.Active + stats.Idle + stats.IdleInTransaction + stats.IdleInTransactionAbortedConnections
+	return stats, nil
 }
 
 func ConnectionStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
