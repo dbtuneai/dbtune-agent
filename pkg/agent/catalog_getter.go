@@ -126,6 +126,7 @@ func (g *CatalogGetter) CatalogCollectors() []CatalogCollector {
 		queries.PgPreparedXactsCollector(pool, p),
 		queries.PgReplicationSlotsCollector(pool, p),
 		queries.PgIndexCollector(pool, p),
+		queries.PgAttributeCollector(pool, p),
 		queries.PgStatWalReceiverCollector(pool, p),
 		queries.PgStatRecoveryPrefetchCollector(pool, p, g.PGMajorVersion),
 		queries.PgStatSubscriptionCollector(pool, p),
