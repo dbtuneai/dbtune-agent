@@ -29,7 +29,7 @@ type PgStatActivityRow struct {
 	State           *Text        `json:"state" db:"state"`
 	BackendXID      *Xid         `json:"backend_xid" db:"backend_xid"`
 	BackendXmin     *Xid         `json:"backend_xmin" db:"backend_xmin"`
-	QueryID         *Text        `json:"query_id" db:"query_id"` // composite: queryid_usesysid_datid (matches pg_stat_statements key)
+	QueryID         *Text        `json:"query_id" db:"query_id"` // PG 14+: composite queryid_usesysid_datid (matches pg_stat_statements key)
 	BackendType     *Text        `json:"backend_type" db:"backend_type"`
 }
 
@@ -41,8 +41,19 @@ const (
 // Explicit column list to avoid fetching the potentially large query text.
 // query_id is constructed as a composite key (queryid_usesysid_datid) matching
 // the format used in pg_stat_statements, enabling correlation without needing
-// the raw query text.
-const pgStatActivityQuery = `SELECT
+// the raw query text. queryid was added in PG 14, so PG 13 uses NULL.
+const pgStatActivityQueryPG13 = `SELECT
+	datid, datname, pid, leader_pid, usesysid, usename,
+	application_name, client_addr, client_hostname, client_port,
+	backend_start, xact_start, query_start, state_change,
+	wait_event_type, wait_event, state,
+	backend_xid, backend_xmin,
+	NULL as query_id,
+	backend_type
+FROM pg_stat_activity
+WHERE datname = current_database()`
+
+const pgStatActivityQueryPG14 = `SELECT
 	datid, datname, pid, leader_pid, usesysid, usename,
 	application_name, client_addr, client_hostname, client_port,
 	backend_start, xact_start, query_start, state_change,
@@ -53,6 +64,10 @@ const pgStatActivityQuery = `SELECT
 FROM pg_stat_activity
 WHERE datname = current_database()`
 
-func PgStatActivityCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	return NewCollector[PgStatActivityRow](pool, prepareCtx, PgStatActivityName, PgStatActivityInterval, pgStatActivityQuery)
+func PgStatActivityCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
+	query := pgStatActivityQueryPG14
+	if pgMajorVersion < 14 {
+		query = pgStatActivityQueryPG13
+	}
+	return NewCollector[PgStatActivityRow](pool, prepareCtx, PgStatActivityName, PgStatActivityInterval, query)
 }
