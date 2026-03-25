@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-REPLICATION
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -34,10 +32,6 @@ type PgStatReplicationRow struct {
 	ReplyTime       *TimestampTZ `json:"reply_time" db:"reply_time"`
 }
 
-type PgStatReplicationPayload struct {
-	Rows []PgStatReplicationRow `json:"rows"`
-}
-
 const (
 	PgStatReplicationName     = "pg_stat_replication"
 	PgStatReplicationInterval = 1 * time.Minute
@@ -45,25 +39,6 @@ const (
 
 const pgStatReplicationQuery = `SELECT * FROM pg_stat_replication`
 
-func CollectPgStatReplication(pgPool *pgxpool.Pool, ctx context.Context, scanner *pgxutil.Scanner[PgStatReplicationRow]) ([]PgStatReplicationRow, error) {
-	return CollectView(pgPool, ctx, pgStatReplicationQuery, "pg_stat_replication", scanner)
-}
-
 func PgStatReplicationCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgStatReplicationRow]()
-	return CatalogCollector{
-		Name:     PgStatReplicationName,
-		Interval: PgStatReplicationInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStatReplication(pool, ctx, scanner)
-			if err != nil {
-				return nil, err
-			}
-			return &PgStatReplicationPayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgStatReplicationRow](pool, prepareCtx, PgStatReplicationName, PgStatReplicationInterval, pgStatReplicationQuery)
 }

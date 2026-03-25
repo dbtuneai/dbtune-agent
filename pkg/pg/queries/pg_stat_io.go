@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-IO
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -32,10 +30,6 @@ type PgStatIORow struct {
 	StatsReset    *TimestampTZ     `json:"stats_reset" db:"stats_reset"`
 }
 
-type PgStatIOPayload struct {
-	Rows []PgStatIORow `json:"rows"`
-}
-
 const (
 	PgStatIOName     = "pg_stat_io"
 	PgStatIOInterval = 1 * time.Minute
@@ -44,31 +38,6 @@ const (
 // PG 16+ only.
 const pgStatIOQuery = `SELECT * FROM pg_stat_io`
 
-func CollectPgStatIO(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion int, scanner *pgxutil.Scanner[PgStatIORow]) ([]PgStatIORow, error) {
-	if pgMajorVersion < 16 {
-		return nil, nil
-	}
-	return CollectView(pgPool, ctx, pgStatIOQuery, "pg_stat_io", scanner)
-}
-
 func PgStatIOCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgStatIORow]()
-	return CatalogCollector{
-		Name:     PgStatIOName,
-		Interval: PgStatIOInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStatIO(pool, ctx, pgMajorVersion, scanner)
-			if err != nil {
-				return nil, err
-			}
-			if rows == nil {
-				return nil, nil
-			}
-			return &PgStatIOPayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgStatIORow](pool, prepareCtx, PgStatIOName, PgStatIOInterval, pgStatIOQuery, WithMinPGVersion(pgMajorVersion, 16))
 }

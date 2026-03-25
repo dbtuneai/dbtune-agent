@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ACTIVITY
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -31,13 +29,8 @@ type PgStatActivityRow struct {
 	State           *Text        `json:"state" db:"state"`
 	BackendXID      *Xid         `json:"backend_xid" db:"backend_xid"`
 	BackendXmin     *Xid         `json:"backend_xmin" db:"backend_xmin"`
-	QueryID         *Bigint      `json:"query_id" db:"query_id"`
-	Query           *Text        `json:"query" db:"query"`
+	QueryID         *Text        `json:"query_id" db:"query_id"` // composite: queryid_usesysid_datid (matches pg_stat_statements key)
 	BackendType     *Text        `json:"backend_type" db:"backend_type"`
-}
-
-type PgStatActivityPayload struct {
-	Rows []PgStatActivityRow `json:"rows"`
 }
 
 const (
@@ -45,27 +38,21 @@ const (
 	PgStatActivityInterval = 1 * time.Minute
 )
 
-const pgStatActivityQuery = `SELECT * FROM pg_stat_activity WHERE datname = current_database()`
-
-func CollectPgStatActivity(pgPool *pgxpool.Pool, ctx context.Context, scanner *pgxutil.Scanner[PgStatActivityRow]) ([]PgStatActivityRow, error) {
-	return CollectView(pgPool, ctx, pgStatActivityQuery, "pg_stat_activity", scanner)
-}
+// Explicit column list to avoid fetching the potentially large query text.
+// query_id is constructed as a composite key (queryid_usesysid_datid) matching
+// the format used in pg_stat_statements, enabling correlation without needing
+// the raw query text.
+const pgStatActivityQuery = `SELECT
+	datid, datname, pid, leader_pid, usesysid, usename,
+	application_name, client_addr, client_hostname, client_port,
+	backend_start, xact_start, query_start, state_change,
+	wait_event_type, wait_event, state,
+	backend_xid, backend_xmin,
+	format('%s_%s_%s', queryid, usesysid, datid) as query_id,
+	backend_type
+FROM pg_stat_activity
+WHERE datname = current_database()`
 
 func PgStatActivityCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgStatActivityRow]()
-	return CatalogCollector{
-		Name:     PgStatActivityName,
-		Interval: PgStatActivityInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStatActivity(pool, ctx, scanner)
-			if err != nil {
-				return nil, err
-			}
-			return &PgStatActivityPayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgStatActivityRow](pool, prepareCtx, PgStatActivityName, PgStatActivityInterval, pgStatActivityQuery)
 }

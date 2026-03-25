@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-SUBSCRIPTION-STATS
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -19,10 +17,6 @@ type PgStatSubscriptionStatsRow struct {
 	StatsReset      *TimestampTZ `json:"stats_reset" db:"stats_reset"`
 }
 
-type PgStatSubscriptionStatsPayload struct {
-	Rows []PgStatSubscriptionStatsRow `json:"rows"`
-}
-
 const (
 	PgStatSubscriptionStatsName     = "pg_stat_subscription_stats"
 	PgStatSubscriptionStatsInterval = 1 * time.Minute
@@ -31,31 +25,6 @@ const (
 // PG 15+ only.
 const pgStatSubscriptionStatsQuery = `SELECT * FROM pg_stat_subscription_stats`
 
-func CollectPgStatSubscriptionStats(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion int, scanner *pgxutil.Scanner[PgStatSubscriptionStatsRow]) ([]PgStatSubscriptionStatsRow, error) {
-	if pgMajorVersion < 15 {
-		return nil, nil
-	}
-	return CollectView(pgPool, ctx, pgStatSubscriptionStatsQuery, "pg_stat_subscription_stats", scanner)
-}
-
 func PgStatSubscriptionStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgStatSubscriptionStatsRow]()
-	return CatalogCollector{
-		Name:     PgStatSubscriptionStatsName,
-		Interval: PgStatSubscriptionStatsInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStatSubscriptionStats(pool, ctx, pgMajorVersion, scanner)
-			if err != nil {
-				return nil, err
-			}
-			if rows == nil {
-				return nil, nil
-			}
-			return &PgStatSubscriptionStatsPayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgStatSubscriptionStatsRow](pool, prepareCtx, PgStatSubscriptionStatsName, PgStatSubscriptionStatsInterval, pgStatSubscriptionStatsQuery, WithMinPGVersion(pgMajorVersion, 15), WithSkipUnchanged())
 }

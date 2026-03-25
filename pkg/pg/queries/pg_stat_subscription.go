@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-SUBSCRIPTION
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -25,10 +23,6 @@ type PgStatSubscriptionRow struct {
 	WorkerType         *Text        `json:"worker_type" db:"worker_type"`
 }
 
-type PgStatSubscriptionPayload struct {
-	Rows []PgStatSubscriptionRow `json:"rows"`
-}
-
 const (
 	PgStatSubscriptionName     = "pg_stat_subscription"
 	PgStatSubscriptionInterval = 1 * time.Minute
@@ -36,25 +30,6 @@ const (
 
 const pgStatSubscriptionQuery = `SELECT * FROM pg_stat_subscription`
 
-func CollectPgStatSubscription(pgPool *pgxpool.Pool, ctx context.Context, scanner *pgxutil.Scanner[PgStatSubscriptionRow]) ([]PgStatSubscriptionRow, error) {
-	return CollectView(pgPool, ctx, pgStatSubscriptionQuery, "pg_stat_subscription", scanner)
-}
-
 func PgStatSubscriptionCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgStatSubscriptionRow]()
-	return CatalogCollector{
-		Name:     PgStatSubscriptionName,
-		Interval: PgStatSubscriptionInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStatSubscription(pool, ctx, scanner)
-			if err != nil {
-				return nil, err
-			}
-			return &PgStatSubscriptionPayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgStatSubscriptionRow](pool, prepareCtx, PgStatSubscriptionName, PgStatSubscriptionInterval, pgStatSubscriptionQuery)
 }

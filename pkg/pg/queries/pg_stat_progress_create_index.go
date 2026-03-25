@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/progress-reporting.html#CREATE-INDEX-PROGRESS-REPORTING
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -30,10 +28,6 @@ type PgStatProgressCreateIndexRow struct {
 	PartitionsDone   *Bigint  `json:"partitions_done" db:"partitions_done"`
 }
 
-type PgStatProgressCreateIndexPayload struct {
-	Rows []PgStatProgressCreateIndexRow `json:"rows"`
-}
-
 const (
 	PgStatProgressCreateIndexName     = "pg_stat_progress_create_index"
 	PgStatProgressCreateIndexInterval = 30 * time.Second
@@ -41,25 +35,6 @@ const (
 
 const pgStatProgressCreateIndexQuery = `SELECT * FROM pg_stat_progress_create_index WHERE datname = current_database()`
 
-func CollectPgStatProgressCreateIndex(pgPool *pgxpool.Pool, ctx context.Context, scanner *pgxutil.Scanner[PgStatProgressCreateIndexRow]) ([]PgStatProgressCreateIndexRow, error) {
-	return CollectView(pgPool, ctx, pgStatProgressCreateIndexQuery, "pg_stat_progress_create_index", scanner)
-}
-
 func PgStatProgressCreateIndexCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgStatProgressCreateIndexRow]()
-	return CatalogCollector{
-		Name:     PgStatProgressCreateIndexName,
-		Interval: PgStatProgressCreateIndexInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStatProgressCreateIndex(pool, ctx, scanner)
-			if err != nil {
-				return nil, err
-			}
-			return &PgStatProgressCreateIndexPayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgStatProgressCreateIndexRow](pool, prepareCtx, PgStatProgressCreateIndexName, PgStatProgressCreateIndexInterval, pgStatProgressCreateIndexQuery, WithSkipUnchanged())
 }

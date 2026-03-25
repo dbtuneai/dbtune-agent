@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-DATABASE-CONFLICTS
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,10 +20,6 @@ type PgStatDatabaseConflictsRow struct {
 	ConflLogicalSlot *Bigint `json:"confl_active_logicalslot" db:"confl_active_logicalslot"`
 }
 
-type PgStatDatabaseConflictsPayload struct {
-	Rows []PgStatDatabaseConflictsRow `json:"rows"`
-}
-
 const (
 	PgStatDatabaseConflictsName     = "pg_stat_database_conflicts"
 	PgStatDatabaseConflictsInterval = 1 * time.Minute
@@ -33,25 +27,6 @@ const (
 
 const pgStatDatabaseConflictsQuery = `SELECT * FROM pg_stat_database_conflicts WHERE datname = current_database()`
 
-func CollectPgStatDatabaseConflicts(pgPool *pgxpool.Pool, ctx context.Context, scanner *pgxutil.Scanner[PgStatDatabaseConflictsRow]) ([]PgStatDatabaseConflictsRow, error) {
-	return CollectView(pgPool, ctx, pgStatDatabaseConflictsQuery, "pg_stat_database_conflicts", scanner)
-}
-
 func PgStatDatabaseConflictsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgStatDatabaseConflictsRow]()
-	return CatalogCollector{
-		Name:     PgStatDatabaseConflictsName,
-		Interval: PgStatDatabaseConflictsInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStatDatabaseConflicts(pool, ctx, scanner)
-			if err != nil {
-				return nil, err
-			}
-			return &PgStatDatabaseConflictsPayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgStatDatabaseConflictsRow](pool, prepareCtx, PgStatDatabaseConflictsName, PgStatDatabaseConflictsInterval, pgStatDatabaseConflictsQuery, WithSkipUnchanged())
 }

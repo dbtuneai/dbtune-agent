@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/view-pg-replication-slots.html
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -29,10 +27,8 @@ type PgReplicationSlotsRow struct {
 	TwoPhase           *Boolean `json:"two_phase" db:"two_phase"`
 	Conflicting        *Boolean `json:"conflicting" db:"conflicting"`
 	InvalidationReason *Text    `json:"invalidation_reason" db:"invalidation_reason"`
-}
-
-type PgReplicationSlotsPayload struct {
-	Rows []PgReplicationSlotsRow `json:"rows"`
+	Failover           *Boolean `json:"failover" db:"failover"` // PG 17+
+	Synced             *Boolean `json:"synced" db:"synced"`     // PG 17+
 }
 
 const (
@@ -42,25 +38,6 @@ const (
 
 const pgReplicationSlotsQuery = `SELECT * FROM pg_replication_slots`
 
-func CollectPgReplicationSlots(pgPool *pgxpool.Pool, ctx context.Context, scanner *pgxutil.Scanner[PgReplicationSlotsRow]) ([]PgReplicationSlotsRow, error) {
-	return CollectView(pgPool, ctx, pgReplicationSlotsQuery, "pg_replication_slots", scanner)
-}
-
 func PgReplicationSlotsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgReplicationSlotsRow]()
-	return CatalogCollector{
-		Name:     PgReplicationSlotsName,
-		Interval: PgReplicationSlotsInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgReplicationSlots(pool, ctx, scanner)
-			if err != nil {
-				return nil, err
-			}
-			return &PgReplicationSlotsPayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgReplicationSlotsRow](pool, prepareCtx, PgReplicationSlotsName, PgReplicationSlotsInterval, pgReplicationSlotsQuery, WithSkipUnchanged())
 }

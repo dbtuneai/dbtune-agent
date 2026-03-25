@@ -2,9 +2,7 @@ package queries
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/netip"
-	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -19,6 +17,10 @@ import (
 // interface so PlanScan matches directly.
 //
 // Use pointers (*Oid, *Name, etc.) for nullable columns.
+//
+// NOTE: pg numeric is arbitrary precision. There is no single Go type that
+// fits all cases — use the appropriate Go primitive per column (e.g. Bigint
+// for large counters like wal_bytes, DoublePrecision for fractional values).
 
 type Oid uint32              // pg: oid — object identifier
 type Name string             // pg: name — 63-byte SQL identifier
@@ -30,7 +32,6 @@ type Real float64            // pg: real / float4
 type DoublePrecision float64 // pg: double precision / float8
 type Boolean bool            // pg: boolean
 type PgLsn string            // pg: pg_lsn — log sequence number
-type Numeric int64           // pg: numeric — arbitrary precision (lossy: mapped to int64)
 
 // Inet wraps string for pg inet columns.
 // Implements pgtype.NetipPrefixScanner so InetCodec's binary scan matches.
@@ -64,39 +65,27 @@ func (x *Xid) ScanText(v pgtype.Text) error {
 	return nil
 }
 
-// Interval wraps string for pg interval columns.
+// Interval stores a pg interval as total microseconds.
 // Implements pgtype.IntervalScanner so IntervalCodec's binary scan matches.
-type Interval string
+// PostgreSQL intervals have independent months/days/microseconds components;
+// this type normalises them to a single microsecond count using the same
+// conversion factors as PostgreSQL's EXTRACT(EPOCH): 1 month = 30 days,
+// 1 day = 24 hours.
+type Interval int64
+
+const (
+	microsecondsPerDay   = 24 * 60 * 60 * 1_000_000 // 86 400 000 000
+	microsecondsPerMonth = 30 * microsecondsPerDay  // 2 592 000 000 000
+)
 
 func (iv *Interval) ScanInterval(v pgtype.Interval) error {
 	if !v.Valid {
-		*iv = ""
+		*iv = 0
 		return nil
 	}
-	// Reproduce PG interval text format (matches IntervalCodec text encoder).
-	var buf []byte
-	if v.Months != 0 {
-		buf = append(buf, strconv.FormatInt(int64(v.Months), 10)...)
-		buf = append(buf, " mon "...)
-	}
-	if v.Days != 0 {
-		buf = append(buf, strconv.FormatInt(int64(v.Days), 10)...)
-		buf = append(buf, " day "...)
-	}
-	absMicroseconds := v.Microseconds
-	if absMicroseconds < 0 {
-		absMicroseconds = -absMicroseconds
-		buf = append(buf, '-')
-	}
-	hours := absMicroseconds / 3600000000
-	minutes := (absMicroseconds % 3600000000) / 60000000
-	seconds := (absMicroseconds % 60000000) / 1000000
-	buf = append(buf, fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)...)
-	microseconds := absMicroseconds % 1000000
-	if microseconds != 0 {
-		buf = append(buf, fmt.Sprintf(".%06d", microseconds)...)
-	}
-	*iv = Interval(string(buf))
+	*iv = Interval(int64(v.Months)*microsecondsPerMonth +
+		int64(v.Days)*microsecondsPerDay +
+		v.Microseconds)
 	return nil
 }
 

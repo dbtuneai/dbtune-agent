@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-SLRU
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -23,10 +21,6 @@ type PgStatSlruRow struct {
 	StatsReset  *TimestampTZ `json:"stats_reset" db:"stats_reset"`
 }
 
-type PgStatSlruPayload struct {
-	Rows []PgStatSlruRow `json:"rows"`
-}
-
 const (
 	PgStatSlruName     = "pg_stat_slru"
 	PgStatSlruInterval = 1 * time.Minute
@@ -34,25 +28,6 @@ const (
 
 const pgStatSlruQuery = `SELECT * FROM pg_stat_slru`
 
-func CollectPgStatSlru(pgPool *pgxpool.Pool, ctx context.Context, scanner *pgxutil.Scanner[PgStatSlruRow]) ([]PgStatSlruRow, error) {
-	return CollectView(pgPool, ctx, pgStatSlruQuery, "pg_stat_slru", scanner)
-}
-
 func PgStatSlruCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgStatSlruRow]()
-	return CatalogCollector{
-		Name:     PgStatSlruName,
-		Interval: PgStatSlruInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStatSlru(pool, ctx, scanner)
-			if err != nil {
-				return nil, err
-			}
-			return &PgStatSlruPayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgStatSlruRow](pool, prepareCtx, PgStatSlruName, PgStatSlruInterval, pgStatSlruQuery)
 }

@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ARCHIVER
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -21,10 +19,6 @@ type PgStatArchiverRow struct {
 	StatsReset       *TimestampTZ `json:"stats_reset" db:"stats_reset"`
 }
 
-type PgStatArchiverPayload struct {
-	Rows []PgStatArchiverRow `json:"rows"`
-}
-
 const (
 	PgStatArchiverName     = "pg_stat_archiver"
 	PgStatArchiverInterval = 1 * time.Minute
@@ -32,25 +26,6 @@ const (
 
 const pgStatArchiverQuery = `SELECT * FROM pg_stat_archiver`
 
-func CollectPgStatArchiver(pgPool *pgxpool.Pool, ctx context.Context, scanner *pgxutil.Scanner[PgStatArchiverRow]) ([]PgStatArchiverRow, error) {
-	return CollectView(pgPool, ctx, pgStatArchiverQuery, "pg_stat_archiver", scanner)
-}
-
 func PgStatArchiverCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgStatArchiverRow]()
-	return CatalogCollector{
-		Name:     PgStatArchiverName,
-		Interval: PgStatArchiverInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStatArchiver(pool, ctx, scanner)
-			if err != nil {
-				return nil, err
-			}
-			return &PgStatArchiverPayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgStatArchiverRow](pool, prepareCtx, PgStatArchiverName, PgStatArchiverInterval, pgStatArchiverQuery, WithSkipUnchanged())
 }

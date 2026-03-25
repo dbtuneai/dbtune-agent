@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-CHECKPOINTER
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -24,10 +22,6 @@ type PgStatCheckpointerRow struct {
 	SlruWritten        *Bigint          `json:"slru_written" db:"slru_written"`
 }
 
-type PgStatCheckpointerPayload struct {
-	Rows []PgStatCheckpointerRow `json:"rows"`
-}
-
 const (
 	PgStatCheckpointerName     = "pg_stat_checkpointer"
 	PgStatCheckpointerInterval = 1 * time.Minute
@@ -36,31 +30,6 @@ const (
 // PG 17+ only.
 const pgStatCheckpointerQuery = `SELECT * FROM pg_stat_checkpointer`
 
-func CollectPgStatCheckpointer(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion int, scanner *pgxutil.Scanner[PgStatCheckpointerRow]) ([]PgStatCheckpointerRow, error) {
-	if pgMajorVersion < 17 {
-		return nil, nil
-	}
-	return CollectView(pgPool, ctx, pgStatCheckpointerQuery, "pg_stat_checkpointer", scanner)
-}
-
 func PgStatCheckpointerCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgStatCheckpointerRow]()
-	return CatalogCollector{
-		Name:     PgStatCheckpointerName,
-		Interval: PgStatCheckpointerInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStatCheckpointer(pool, ctx, pgMajorVersion, scanner)
-			if err != nil {
-				return nil, err
-			}
-			if rows == nil {
-				return nil, nil
-			}
-			return &PgStatCheckpointerPayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgStatCheckpointerRow](pool, prepareCtx, PgStatCheckpointerName, PgStatCheckpointerInterval, pgStatCheckpointerQuery, WithMinPGVersion(pgMajorVersion, 17))
 }

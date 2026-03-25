@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-RECOVERY-PREFETCH
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -24,10 +22,6 @@ type PgStatRecoveryPrefetchRow struct {
 	IoDepth       *Integer     `json:"io_depth" db:"io_depth"`
 }
 
-type PgStatRecoveryPrefetchPayload struct {
-	Rows []PgStatRecoveryPrefetchRow `json:"rows"`
-}
-
 const (
 	PgStatRecoveryPrefetchName     = "pg_stat_recovery_prefetch"
 	PgStatRecoveryPrefetchInterval = 1 * time.Minute
@@ -36,31 +30,6 @@ const (
 // PG 15+ only.
 const pgStatRecoveryPrefetchQuery = `SELECT * FROM pg_stat_recovery_prefetch`
 
-func CollectPgStatRecoveryPrefetch(pgPool *pgxpool.Pool, ctx context.Context, pgMajorVersion int, scanner *pgxutil.Scanner[PgStatRecoveryPrefetchRow]) ([]PgStatRecoveryPrefetchRow, error) {
-	if pgMajorVersion < 15 {
-		return nil, nil
-	}
-	return CollectView(pgPool, ctx, pgStatRecoveryPrefetchQuery, "pg_stat_recovery_prefetch", scanner)
-}
-
 func PgStatRecoveryPrefetchCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgStatRecoveryPrefetchRow]()
-	return CatalogCollector{
-		Name:     PgStatRecoveryPrefetchName,
-		Interval: PgStatRecoveryPrefetchInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStatRecoveryPrefetch(pool, ctx, pgMajorVersion, scanner)
-			if err != nil {
-				return nil, err
-			}
-			if rows == nil {
-				return nil, nil
-			}
-			return &PgStatRecoveryPrefetchPayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgStatRecoveryPrefetchRow](pool, prepareCtx, PgStatRecoveryPrefetchName, PgStatRecoveryPrefetchInterval, pgStatRecoveryPrefetchQuery, WithMinPGVersion(pgMajorVersion, 15))
 }

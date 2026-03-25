@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-DATABASE
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -47,10 +45,6 @@ type PgStatDatabaseRow struct {
 	TempFilesWritten      *Bigint          `json:"temp_files_written" db:"temp_files_written"`
 }
 
-type PgStatDatabasePayload struct {
-	Rows []PgStatDatabaseRow `json:"rows"`
-}
-
 const (
 	PgStatDatabaseName     = "pg_stat_database"
 	PgStatDatabaseInterval = 1 * time.Minute
@@ -58,25 +52,6 @@ const (
 
 const pgStatDatabaseQuery = `SELECT * FROM pg_stat_database WHERE datname = current_database()`
 
-func CollectPgStatDatabase(pgPool *pgxpool.Pool, ctx context.Context, scanner *pgxutil.Scanner[PgStatDatabaseRow]) ([]PgStatDatabaseRow, error) {
-	return CollectView(pgPool, ctx, pgStatDatabaseQuery, "pg_stat_database", scanner)
-}
-
 func PgStatDatabaseCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgStatDatabaseRow]()
-	return CatalogCollector{
-		Name:     PgStatDatabaseName,
-		Interval: PgStatDatabaseInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStatDatabase(pool, ctx, scanner)
-			if err != nil {
-				return nil, err
-			}
-			return &PgStatDatabasePayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgStatDatabaseRow](pool, prepareCtx, PgStatDatabaseName, PgStatDatabaseInterval, pgStatDatabaseQuery)
 }

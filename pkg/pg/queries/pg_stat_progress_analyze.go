@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/progress-reporting.html#ANALYZE-PROGRESS-REPORTING
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -26,10 +24,6 @@ type PgStatProgressAnalyzeRow struct {
 	CurrentChildTableRelID *Oid     `json:"current_child_table_relid" db:"current_child_table_relid"`
 }
 
-type PgStatProgressAnalyzePayload struct {
-	Rows []PgStatProgressAnalyzeRow `json:"rows"`
-}
-
 const (
 	PgStatProgressAnalyzeName     = "pg_stat_progress_analyze"
 	PgStatProgressAnalyzeInterval = 30 * time.Second
@@ -37,25 +31,6 @@ const (
 
 const pgStatProgressAnalyzeQuery = `SELECT * FROM pg_stat_progress_analyze WHERE datname = current_database()`
 
-func CollectPgStatProgressAnalyze(pgPool *pgxpool.Pool, ctx context.Context, scanner *pgxutil.Scanner[PgStatProgressAnalyzeRow]) ([]PgStatProgressAnalyzeRow, error) {
-	return CollectView(pgPool, ctx, pgStatProgressAnalyzeQuery, "pg_stat_progress_analyze", scanner)
-}
-
 func PgStatProgressAnalyzeCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgStatProgressAnalyzeRow]()
-	return CatalogCollector{
-		Name:     PgStatProgressAnalyzeName,
-		Interval: PgStatProgressAnalyzeInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStatProgressAnalyze(pool, ctx, scanner)
-			if err != nil {
-				return nil, err
-			}
-			return &PgStatProgressAnalyzePayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgStatProgressAnalyzeRow](pool, prepareCtx, PgStatProgressAnalyzeName, PgStatProgressAnalyzeInterval, pgStatProgressAnalyzeQuery, WithSkipUnchanged())
 }

@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-BGWRITER
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -25,10 +23,6 @@ type PgStatBgwriterRow struct {
 	StatsReset          *TimestampTZ     `json:"stats_reset" db:"stats_reset"`
 }
 
-type PgStatBgwriterPayload struct {
-	Rows []PgStatBgwriterRow `json:"rows"`
-}
-
 const (
 	PgStatBgwriterName     = "pg_stat_bgwriter"
 	PgStatBgwriterInterval = 1 * time.Minute
@@ -36,25 +30,6 @@ const (
 
 const pgStatBgwriterQuery = `SELECT * FROM pg_stat_bgwriter`
 
-func CollectPgStatBgwriter(pgPool *pgxpool.Pool, ctx context.Context, scanner *pgxutil.Scanner[PgStatBgwriterRow]) ([]PgStatBgwriterRow, error) {
-	return CollectView(pgPool, ctx, pgStatBgwriterQuery, "pg_stat_bgwriter", scanner)
-}
-
 func PgStatBgwriterCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgStatBgwriterRow]()
-	return CatalogCollector{
-		Name:     PgStatBgwriterName,
-		Interval: PgStatBgwriterInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStatBgwriter(pool, ctx, scanner)
-			if err != nil {
-				return nil, err
-			}
-			return &PgStatBgwriterPayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgStatBgwriterRow](pool, prepareCtx, PgStatBgwriterName, PgStatBgwriterInterval, pgStatBgwriterQuery)
 }

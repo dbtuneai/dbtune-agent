@@ -3,10 +3,8 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-WAL-RECEIVER
 
 import (
-	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -28,10 +26,6 @@ type PgStatWalReceiverRow struct {
 	SenderPort         *Integer     `json:"sender_port" db:"sender_port"`
 }
 
-type PgStatWalReceiverPayload struct {
-	Rows []PgStatWalReceiverRow `json:"rows"`
-}
-
 const (
 	PgStatWalReceiverName     = "pg_stat_wal_receiver"
 	PgStatWalReceiverInterval = 1 * time.Minute
@@ -39,25 +33,6 @@ const (
 
 const pgStatWalReceiverQuery = `SELECT * FROM pg_stat_wal_receiver`
 
-func CollectPgStatWalReceiver(pgPool *pgxpool.Pool, ctx context.Context, scanner *pgxutil.Scanner[PgStatWalReceiverRow]) ([]PgStatWalReceiverRow, error) {
-	return CollectView(pgPool, ctx, pgStatWalReceiverQuery, "pg_stat_wal_receiver", scanner)
-}
-
 func PgStatWalReceiverCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	scanner := pgxutil.NewScanner[PgStatWalReceiverRow]()
-	return CatalogCollector{
-		Name:     PgStatWalReceiverName,
-		Interval: PgStatWalReceiverInterval,
-		Collect: func(ctx context.Context) (any, error) {
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-			rows, err := CollectPgStatWalReceiver(pool, ctx, scanner)
-			if err != nil {
-				return nil, err
-			}
-			return &PgStatWalReceiverPayload{Rows: rows}, nil
-		},
-	}
+	return NewCollector[PgStatWalReceiverRow](pool, prepareCtx, PgStatWalReceiverName, PgStatWalReceiverInterval, pgStatWalReceiverQuery)
 }
