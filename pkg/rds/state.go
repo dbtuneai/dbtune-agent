@@ -3,6 +3,7 @@ package rds
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -28,6 +29,9 @@ type DBInfo struct {
 	DBInstance          rdsTypes.DBInstance
 	EC2InstanceType     ec2types.InstanceType
 	EC2InstanceTypeInfo ec2types.InstanceTypeInfo
+	// ServerlessMaxACUs is set for Aurora Serverless v2 instances (db.serverless).
+	// 1 ACU = 2 GiB memory. Nil for non-serverless instances.
+	ServerlessMaxACUs *float64
 }
 
 func FetchDBInfo(
@@ -42,6 +46,21 @@ func FetchDBInfo(
 
 	instanceClass := rdsInstanceInfo.DBInstanceClass
 	instanceType := strings.TrimPrefix(*instanceClass, "db.")
+
+	// Aurora Serverless v2 uses "db.serverless" which is not a valid EC2 instance type.
+	// Fetch capacity from the cluster instead: 1 ACU = 2 GiB memory.
+	if instanceType == "serverless" {
+		clusterID := aws.ToString(rdsInstanceInfo.DBClusterIdentifier)
+		maxACUs, err := fetchAuroraServerlessMaxACUs(clusterID, clients, ctx)
+		if err != nil {
+			return DBInfo{}, fmt.Errorf("failed to fetch Aurora Serverless capacity: %w", err)
+		}
+		return DBInfo{
+			DBInstance:        *rdsInstanceInfo,
+			ServerlessMaxACUs: maxACUs,
+		}, nil
+	}
+
 	ec2InstanceTypeInfo, err := fetchEC2InstanceTypeInfo(ec2types.InstanceType(instanceType), clients, ctx)
 	if err != nil {
 		return DBInfo{}, fmt.Errorf("failed to fetch EC2 instance info: %w", err)
@@ -56,6 +75,11 @@ func FetchDBInfo(
 }
 
 func (info *DBInfo) VCPUs() (uint32, error) {
+	// Aurora Serverless v2: approximate 1 ACU ≈ 1 vCPU
+	if info.ServerlessMaxACUs != nil {
+		return uint32(math.Ceil(*info.ServerlessMaxACUs)), nil
+	}
+
 	vcpuInfo := info.EC2InstanceTypeInfo.VCpuInfo
 	if vcpuInfo == nil {
 		return 0, fmt.Errorf("VCPU information not available")
@@ -71,6 +95,11 @@ func (info *DBInfo) VCPUs() (uint32, error) {
 }
 
 func (info *DBInfo) TotalMemoryBytes() (uint64, error) {
+	// Aurora Serverless v2: 1 ACU = 2 GiB memory
+	if info.ServerlessMaxACUs != nil {
+		return uint64(*info.ServerlessMaxACUs * 2 * 1024 * 1024 * 1024), nil
+	}
+
 	memoryInfo := info.EC2InstanceTypeInfo.MemoryInfo
 	if memoryInfo == nil {
 		return 0, fmt.Errorf("memory information not available")
@@ -153,6 +182,28 @@ func fetchRDSDBInstance(
 	}
 	dbInstance := describeDBInstances.DBInstances[0]
 	return &dbInstance, nil
+}
+
+func fetchAuroraServerlessMaxACUs(
+	clusterIdentifier string,
+	clients *AWSClients,
+	ctx context.Context,
+) (*float64, error) {
+	input := &rds.DescribeDBClustersInput{
+		DBClusterIdentifier: aws.String(clusterIdentifier),
+	}
+	result, err := clients.RDSClient.DescribeDBClusters(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe DB cluster: %w", err)
+	}
+	if len(result.DBClusters) == 0 {
+		return nil, fmt.Errorf("cluster not found: %s", clusterIdentifier)
+	}
+	scaling := result.DBClusters[0].ServerlessV2ScalingConfiguration
+	if scaling == nil || scaling.MaxCapacity == nil {
+		return nil, fmt.Errorf("ServerlessV2ScalingConfiguration not available for cluster %s", clusterIdentifier)
+	}
+	return scaling.MaxCapacity, nil
 }
 
 func fetchEC2InstanceTypeInfo(
