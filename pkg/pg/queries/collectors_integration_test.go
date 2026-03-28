@@ -5,6 +5,7 @@ package queries
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -26,6 +27,48 @@ type pgInstance struct {
 }
 
 var pgInstances []pgInstance
+
+// setupTestFixtures creates tables, indexes, functions, inserts data, and
+// runs ANALYZE so that collectors have actual data to return.
+func setupTestFixtures(ctx context.Context, pool *pgxpool.Pool) error {
+	fixtures := []string{
+		// Create a table with columns exercising different types.
+		`CREATE TABLE test_users (
+			id serial PRIMARY KEY,
+			name text NOT NULL,
+			email text,
+			score integer DEFAULT 0,
+			created_at timestamptz DEFAULT now()
+		)`,
+		// Additional indexes for pg_index / pg_stat_user_indexes / pg_statio_user_indexes.
+		`CREATE INDEX idx_test_users_name ON test_users(name)`,
+		`CREATE INDEX idx_test_users_score ON test_users(score)`,
+		`CREATE UNIQUE INDEX idx_test_users_email ON test_users(email)`,
+		// Insert enough rows for pg_stats histograms and pg_class reltuples.
+		`INSERT INTO test_users (name, email, score)
+		 SELECT 'user_' || i, 'user_' || i || '@test.com', (i % 100)
+		 FROM generate_series(1, 500) AS i`,
+		// ANALYZE so pg_stats, pg_class, pg_stat_user_tables have data.
+		`ANALYZE test_users`,
+		// Read the table so pg_statio_user_tables shows I/O activity.
+		`SELECT count(*) FROM test_users WHERE score > 50`,
+		// Scan via the index so pg_stat_user_indexes and pg_statio_user_indexes have data.
+		`SELECT count(*) FROM test_users WHERE name = 'user_1'`,
+		// Create a PL/pgSQL function and call it so pg_stat_user_functions has data.
+		`CREATE FUNCTION test_add(a integer, b integer) RETURNS integer AS $$
+		 BEGIN RETURN a + b; END;
+		 $$ LANGUAGE plpgsql`,
+		`SELECT test_add(i, i) FROM generate_series(1, 10) AS i`,
+		// Enable pg_stat_statements (shared_preload_libraries is set at container start).
+		`CREATE EXTENSION IF NOT EXISTS pg_stat_statements`,
+	}
+	for _, sql := range fixtures {
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			return fmt.Errorf("fixture %q: %w", sql[:min(len(sql), 60)], err)
+		}
+	}
+	return nil
+}
 
 func TestMain(m *testing.M) {
 	var logBuf bytes.Buffer
@@ -56,6 +99,11 @@ func TestMain(m *testing.M) {
 			postgres.WithPassword("test"),
 			testcontainers.CustomizeRequest(testcontainers.GenericContainerRequest{
 				ContainerRequest: testcontainers.ContainerRequest{
+					// The entrypoint prepends "postgres" when Cmd starts with "-".
+					Cmd: []string{
+						"-c", "shared_preload_libraries=pg_stat_statements",
+						"-c", "track_functions=all",
+					},
 					HostConfigModifier: func(hc *container.HostConfig) {
 						hc.PortBindings = nat.PortMap{
 							"5432/tcp": []nat.PortBinding{
@@ -93,6 +141,12 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 
+		if err := setupTestFixtures(ctx, pool); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to setup fixtures for postgres %d: %v\n", v, err)
+			cleanup()
+			os.Exit(1)
+		}
+
 		pgInstances = append(pgInstances, pgInstance{pool: pool, version: v})
 	}
 
@@ -120,8 +174,11 @@ func noopPrepareCtx(ctx context.Context) (context.Context, error) {
 }
 
 // TestCollectors_AllVersions runs every collector against every PG version
-// and verifies that collection succeeds with a non-nil result (or nil for
-// version-gated collectors on older PG versions).
+// and verifies structural invariants:
+//   - Name and Interval are set
+//   - First Collect() succeeds (or returns nil for version-gated collectors)
+//   - Result is valid JSON with a non-empty hash
+//   - Second Collect() also succeeds (catches broken stateful collectors)
 func TestCollectors_AllVersions(t *testing.T) {
 	for _, inst := range pgInstances {
 		inst := inst
@@ -134,16 +191,36 @@ func TestCollectors_AllVersions(t *testing.T) {
 				c := c
 				t.Run(c.Name, func(t *testing.T) {
 					t.Parallel()
-					result, err := c.Collect(ctx)
+
+					if c.Name == "" {
+						t.Fatal("collector has empty Name")
+					}
+					if c.Interval <= 0 {
+						t.Fatalf("collector %s has non-positive Interval: %v", c.Name, c.Interval)
+					}
+
+					r1, err := c.Collect(ctx)
 					if err != nil {
-						t.Fatalf("Collect() error: %v", err)
+						t.Fatalf("first Collect() error: %v", err)
 					}
 					// Version-gated collectors return nil on unsupported versions
-					if result == nil {
+					if r1 == nil {
 						return
 					}
-					if len(result.JSON) == 0 {
+					if len(r1.JSON) == 0 {
 						t.Fatal("Collect() returned empty JSON")
+					}
+					if !json.Valid(r1.JSON) {
+						t.Fatalf("Collect() returned invalid JSON: %s", r1.JSON[:min(len(r1.JSON), 200)])
+					}
+					if r1.Hash() == "" {
+						t.Fatal("CollectResult.Hash() returned empty string")
+					}
+
+					// Second call must not error — catches broken stateful collectors.
+					_, err = c.Collect(ctx)
+					if err != nil {
+						t.Fatalf("second Collect() error: %v", err)
 					}
 				})
 			}
@@ -240,9 +317,549 @@ func TestPgStatActivity_QueryID_PG14Plus(t *testing.T) {
 	}
 }
 
+// ---------- Tests for new collectors ----------
+
+// collectJSON is a helper that calls Collect and returns the parsed JSON.
+func collectJSON(t *testing.T, c CatalogCollector) map[string]json.RawMessage {
+	t.Helper()
+	ctx := context.Background()
+	result, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("Collect() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Collect() returned nil")
+	}
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(result.JSON, &parsed); err != nil {
+		t.Fatalf("failed to parse JSON: %v", err)
+	}
+	return parsed
+}
+
+// requireRows is a helper that parses the "rows" field from a collector result
+// and returns the count. Fails if rows is missing or empty.
+func requireRows(t *testing.T, c CatalogCollector) int {
+	t.Helper()
+	parsed := collectJSON(t, c)
+	rowsRaw, ok := parsed["rows"]
+	if !ok {
+		t.Fatal("JSON missing 'rows' field")
+	}
+	var rows []json.RawMessage
+	if err := json.Unmarshal(rowsRaw, &rows); err != nil {
+		t.Fatalf("failed to parse rows: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected non-empty rows")
+	}
+	return len(rows)
+}
+
+// latestInstance returns the instance with the highest PG version.
+func latestInstance() pgInstance {
+	return pgInstances[len(pgInstances)-1]
+}
+
+func TestWaitEvents_ReturnsAllTypes(t *testing.T) {
+	inst := latestInstance()
+	c := WaitEventsCollector(inst.pool, noopPrepareCtx)
+	n := requireRows(t, c)
+	// 9 wait event types + 1 TOTAL row = 10
+	if n != 10 {
+		t.Fatalf("expected 10 rows (9 types + TOTAL), got %d", n)
+	}
+}
+
+func TestConnectionStats_ReturnsData(t *testing.T) {
+	inst := latestInstance()
+	c := ConnectionStatsCollector(inst.pool, noopPrepareCtx)
+	requireRows(t, c)
+}
+
+func TestDatabaseSize_ReturnsData(t *testing.T) {
+	inst := latestInstance()
+	c := DatabaseSizeCollector(inst.pool, noopPrepareCtx)
+	requireRows(t, c)
+}
+
+func TestUptimeMinutes_ReturnsData(t *testing.T) {
+	inst := latestInstance()
+	c := UptimeMinutesCollector(inst.pool, noopPrepareCtx)
+	requireRows(t, c)
+}
+
+func TestTransactionCommits_ComputesTPS(t *testing.T) {
+	inst := latestInstance()
+	c := TransactionCommitsCollector(inst.pool, noopPrepareCtx)
+	ctx := context.Background()
+
+	// First call: establishes baseline — TPS must be 0 (no prior sample).
+	r1, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("first Collect() error: %v", err)
+	}
+	if r1 == nil {
+		t.Fatal("first Collect() returned nil")
+	}
+	var p1 TransactionCommitsPayload
+	if err := json.Unmarshal(r1.JSON, &p1); err != nil {
+		t.Fatalf("failed to parse first result: %v", err)
+	}
+	if p1.XactCommit <= 0 {
+		t.Fatalf("expected xact_commit > 0 on first call, got %d", p1.XactCommit)
+	}
+	if p1.TPS != 0 {
+		t.Fatalf("expected TPS = 0 on first call (no baseline), got %f", p1.TPS)
+	}
+
+	// Generate some transactions and wait for PG stats collector to update.
+	for i := 0; i < 50; i++ {
+		_, _ = inst.pool.Exec(ctx, "SELECT 1")
+	}
+	time.Sleep(1 * time.Second)
+
+	// Second call: xact_commit must be monotonically non-decreasing, TPS >= 0.
+	r2, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("second Collect() error: %v", err)
+	}
+	if r2 == nil {
+		t.Fatal("second Collect() returned nil")
+	}
+	var p2 TransactionCommitsPayload
+	if err := json.Unmarshal(r2.JSON, &p2); err != nil {
+		t.Fatalf("failed to parse second result: %v", err)
+	}
+	if p2.XactCommit < p1.XactCommit {
+		t.Fatalf("xact_commit decreased: %d → %d", p1.XactCommit, p2.XactCommit)
+	}
+	if p2.TPS < 0 {
+		t.Fatalf("expected TPS >= 0, got %f", p2.TPS)
+	}
+}
+
+func TestPgStatUserTables_ReturnsFixtureTable(t *testing.T) {
+	inst := latestInstance()
+	c := PgStatUserTablesCollector(inst.pool, noopPrepareCtx, PgStatUserTablesCategoryLimit)
+	requireRows(t, c)
+}
+
+func TestPgStatUserIndexes_ReturnsFixtureIndexes(t *testing.T) {
+	inst := latestInstance()
+	c := PgStatUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatUserIndexesCategoryLimit)
+	requireRows(t, c)
+}
+
+func TestPgStatioUserTables_NoError(t *testing.T) {
+	inst := latestInstance()
+	c := PgStatioUserTablesCollector(inst.pool, noopPrepareCtx)
+	ctx := context.Background()
+	// On fresh test containers, all data may be in shared_buffers with zero
+	// I/O counters, so the WHERE filter may exclude everything. Just verify
+	// no error — the query and scanning work correctly.
+	_, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("Collect() error: %v", err)
+	}
+}
+
+func TestPgStatioUserIndexes_ReturnsFixtureData(t *testing.T) {
+	inst := latestInstance()
+	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesCategoryLimit)
+	requireRows(t, c)
+}
+
+func TestPgStatUserFunctions_ReturnsFixtureFunction(t *testing.T) {
+	inst := latestInstance()
+	ctx := context.Background()
+
+	// Verify track_functions is enabled; skip if the container didn't apply it.
+	var trackFunctions string
+	if err := inst.pool.QueryRow(ctx, "SHOW track_functions").Scan(&trackFunctions); err != nil {
+		t.Fatalf("SHOW track_functions: %v", err)
+	}
+	if trackFunctions == "none" {
+		t.Skipf("track_functions is %q — function stats not tracked", trackFunctions)
+	}
+
+	// Call the function and flush stats within a single connection so the
+	// stats collector picks it up. On PG15+ we can force a stats flush.
+	conn, err := inst.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire connection: %v", err)
+	}
+	_, _ = conn.Exec(ctx, "SELECT test_add(i, i) FROM generate_series(1, 100) AS i")
+	if inst.version >= 15 {
+		_, _ = conn.Exec(ctx, "SELECT pg_stat_force_next_flush()")
+	}
+	conn.Release()
+
+	// Give the stats collector time to flush.
+	time.Sleep(500 * time.Millisecond)
+
+	c := PgStatUserFunctionsCollector(inst.pool, noopPrepareCtx)
+	n := requireRows(t, c)
+	if n < 1 {
+		t.Fatalf("expected at least 1 function, got %d", n)
+	}
+}
+
+func TestPgIndex_ReturnsFixtureIndexes(t *testing.T) {
+	inst := latestInstance()
+	c := PgIndexCollector(inst.pool, noopPrepareCtx)
+	n := requireRows(t, c)
+	// We created 4 indexes: PK + 3 explicit
+	if n < 4 {
+		t.Fatalf("expected at least 4 indexes, got %d", n)
+	}
+}
+
+func TestPgAttribute_ReturnsFixtureColumns(t *testing.T) {
+	inst := latestInstance()
+	c := PgAttributeCollector(inst.pool, noopPrepareCtx)
+	n := requireRows(t, c)
+	// test_users has 5 columns + index columns (each index has entries)
+	if n < 5 {
+		t.Fatalf("expected at least 5 attribute rows, got %d", n)
+	}
+}
+
+func TestPgClass_BackfillThenDelta(t *testing.T) {
+	inst := latestInstance()
+	ctx := context.Background()
+
+	// Use batch size 1 to force multiple backfill ticks and test pagination.
+	c := PgClassCollector(inst.pool, noopPrepareCtx, 1)
+
+	// First call: backfill returns exactly 1 row (batch size 1).
+	r1, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("first Collect() error: %v", err)
+	}
+	if r1 == nil {
+		t.Fatal("first Collect() returned nil — expected backfill data")
+	}
+	var p1 Payload[PgClassRow]
+	if err := json.Unmarshal(r1.JSON, &p1); err != nil {
+		t.Fatalf("failed to parse first result: %v", err)
+	}
+	if len(p1.Rows) != 1 {
+		t.Fatalf("expected exactly 1 row with batch size 1, got %d", len(p1.Rows))
+	}
+	// Verify row has non-empty identifiers.
+	if p1.Rows[0].SchemaName == "" || p1.Rows[0].RelName == "" {
+		t.Fatalf("expected non-empty schemaname/relname, got %q/%q", p1.Rows[0].SchemaName, p1.Rows[0].RelName)
+	}
+
+	// Drain the remaining backfill ticks until we get nil (backfill exhausted).
+	for i := 0; i < 100; i++ {
+		r, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("backfill tick %d error: %v", i+2, err)
+		}
+		if r == nil {
+			break // backfill done, transitioned to delta
+		}
+	}
+
+	// Delta with no changes since last poll → nil.
+	rDelta, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("delta Collect() error: %v", err)
+	}
+	if rDelta != nil {
+		t.Fatal("expected nil delta result before any ANALYZE")
+	}
+
+	// ANALYZE triggers a timestamp change that the delta query detects.
+	_, _ = inst.pool.Exec(ctx, "ANALYZE test_users")
+
+	rAfterAnalyze, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("post-ANALYZE Collect() error: %v", err)
+	}
+	if rAfterAnalyze == nil {
+		t.Fatal("expected delta data after ANALYZE, got nil")
+	}
+}
+
+func TestPgStats_BackfillThenDelta(t *testing.T) {
+	inst := latestInstance()
+	ctx := context.Background()
+
+	// Use batch size 1 to force pagination.
+	c := PgStatsCollector(inst.pool, noopPrepareCtx, 1, true)
+
+	// First call: backfill returns stats for 1 table.
+	r1, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("first Collect() error: %v", err)
+	}
+	if r1 == nil {
+		t.Fatal("first Collect() returned nil — expected pg_stats backfill data")
+	}
+
+	var p1 Payload[PgStatsRow]
+	if err := json.Unmarshal(r1.JSON, &p1); err != nil {
+		t.Fatalf("failed to parse first result: %v", err)
+	}
+	if len(p1.Rows) == 0 {
+		t.Fatal("expected non-empty pg_stats rows")
+	}
+
+	// Verify rows have non-empty identifiers.
+	for _, row := range p1.Rows {
+		if row.SchemaName == "" || row.TableName == "" || row.AttName == "" {
+			t.Fatalf("expected non-empty schemaname/tablename/attname, got %q/%q/%q",
+				row.SchemaName, row.TableName, row.AttName)
+		}
+	}
+
+	// Verify array columns are valid JSON when non-null.
+	for _, row := range p1.Rows {
+		for _, col := range []struct {
+			name string
+			val  json.RawMessage
+		}{
+			{"most_common_vals", row.MostCommonVals},
+			{"most_common_freqs", row.MostCommonFreqs},
+			{"histogram_bounds", row.HistogramBounds},
+			{"most_common_elems", row.MostCommonElems},
+			{"most_common_elem_freqs", row.MostCommonElemFreqs},
+			{"elem_count_histogram", row.ElemCountHistogram},
+		} {
+			if col.val != nil && !json.Valid(col.val) {
+				t.Fatalf("%s.%s.%s %s is not valid JSON: %s",
+					row.SchemaName, row.TableName, row.AttName, col.name, col.val)
+			}
+		}
+	}
+
+	// Drain backfill.
+	for i := 0; i < 100; i++ {
+		r, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("backfill tick %d error: %v", i+2, err)
+		}
+		if r == nil {
+			break
+		}
+	}
+
+	// Delta with no ANALYZE → nil.
+	rDelta, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("delta Collect() error: %v", err)
+	}
+	if rDelta != nil {
+		t.Fatal("expected nil delta result before any ANALYZE")
+	}
+
+	// ANALYZE triggers delta.
+	_, _ = inst.pool.Exec(ctx, "ANALYZE test_users")
+
+	rAfterAnalyze, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("post-ANALYZE Collect() error: %v", err)
+	}
+	if rAfterAnalyze == nil {
+		t.Fatal("expected delta data after ANALYZE, got nil")
+	}
+}
+
+func TestPgStats_RedactsWhenIncludeTableDataFalse(t *testing.T) {
+	inst := latestInstance()
+	c := PgStatsCollector(inst.pool, noopPrepareCtx, PgStatsBackfillBatchSize, false)
+	ctx := context.Background()
+
+	r, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("Collect() error: %v", err)
+	}
+	if r == nil {
+		t.Fatal("Collect() returned nil")
+	}
+
+	var payload Payload[PgStatsRow]
+	if err := json.Unmarshal(r.JSON, &payload); err != nil {
+		t.Fatalf("failed to parse JSON: %v", err)
+	}
+
+	for _, row := range payload.Rows {
+		// After JSON round-trip, nil json.RawMessage becomes []byte("null").
+		if row.MostCommonVals != nil && string(row.MostCommonVals) != "null" {
+			t.Fatalf("expected most_common_vals to be null when includeTableData=false, got %s", string(row.MostCommonVals))
+		}
+		if row.HistogramBounds != nil && string(row.HistogramBounds) != "null" {
+			t.Fatalf("expected histogram_bounds to be null when includeTableData=false, got %s", string(row.HistogramBounds))
+		}
+		if row.MostCommonElems != nil && string(row.MostCommonElems) != "null" {
+			t.Fatalf("expected most_common_elems to be null when includeTableData=false, got %s", string(row.MostCommonElems))
+		}
+	}
+}
+
+func TestDDL_ReturnsCreateStatements(t *testing.T) {
+	inst := latestInstance()
+	c := DDLCollector(inst.pool, noopPrepareCtx)
+	ctx := context.Background()
+
+	// First call: should return DDL with our fixture table.
+	r1, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("first Collect() error: %v", err)
+	}
+	if r1 == nil {
+		t.Fatal("first Collect() returned nil")
+	}
+
+	var p1 DDLPayload
+	if err := json.Unmarshal(r1.JSON, &p1); err != nil {
+		t.Fatalf("failed to parse JSON: %v", err)
+	}
+	if p1.Hash == "" {
+		t.Fatal("expected non-empty DDL hash")
+	}
+	if !bytes.Contains([]byte(p1.DDL), []byte("test_users")) {
+		t.Fatalf("expected DDL to contain 'test_users', got:\n%s", p1.DDL)
+	}
+	if !bytes.Contains([]byte(p1.DDL), []byte("idx_test_users_name")) {
+		t.Fatalf("expected DDL to contain 'idx_test_users_name', got:\n%s", p1.DDL)
+	}
+
+	// Second call: schema unchanged → skip (nil).
+	r2, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("second Collect() error: %v", err)
+	}
+	if r2 != nil {
+		t.Fatal("expected nil on second call (unchanged schema)")
+	}
+
+	// Alter schema and collect again → should return non-nil with updated DDL.
+	_, _ = inst.pool.Exec(ctx, "ALTER TABLE test_users ADD COLUMN notes text")
+	r3, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("post-ALTER Collect() error: %v", err)
+	}
+	if r3 == nil {
+		t.Fatal("expected non-nil after schema change")
+	}
+	var p3 DDLPayload
+	if err := json.Unmarshal(r3.JSON, &p3); err != nil {
+		t.Fatalf("failed to parse post-ALTER JSON: %v", err)
+	}
+	if p3.Hash == p1.Hash {
+		t.Fatal("expected hash to change after ALTER TABLE")
+	}
+	if !bytes.Contains([]byte(p3.DDL), []byte("notes")) {
+		t.Fatalf("expected DDL to contain new 'notes' column, got:\n%s", p3.DDL)
+	}
+}
+
+func TestPgStatStatements_AllVersions(t *testing.T) {
+	for _, inst := range pgInstances {
+		inst := inst
+		t.Run(fmt.Sprintf("PG%d", inst.version), func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+
+			c := PgStatStatementsCollector(
+				inst.pool, noopPrepareCtx, true, 1000,
+				PgStatStatementsDiffLimit, inst.version,
+			)
+
+			// First call: snapshot, no deltas, no avg runtime.
+			r1, err := c.Collect(ctx)
+			if err != nil {
+				t.Fatalf("first Collect() error: %v", err)
+			}
+			if r1 == nil {
+				t.Fatal("first Collect() returned nil")
+			}
+
+			var p1 PgStatStatementsPayload
+			if err := json.Unmarshal(r1.JSON, &p1); err != nil {
+				t.Fatalf("failed to parse first result: %v", err)
+			}
+			if len(p1.Rows) == 0 {
+				t.Fatal("expected non-empty rows on first call")
+			}
+			if len(p1.Deltas) != 0 {
+				t.Fatalf("expected 0 deltas on first call, got %d", len(p1.Deltas))
+			}
+			if p1.DeltaCount != 0 {
+				t.Fatalf("expected delta_count = 0 on first call, got %d", p1.DeltaCount)
+			}
+			if p1.AverageQueryRuntime != 0 {
+				t.Fatalf("expected average_query_runtime = 0 on first call, got %f", p1.AverageQueryRuntime)
+			}
+
+			// Generate some activity.
+			for i := 0; i < 5; i++ {
+				_, _ = inst.pool.Exec(ctx, "SELECT count(*) FROM test_users WHERE score > $1", i*10)
+			}
+
+			// Second call: should have deltas.
+			r2, err := c.Collect(ctx)
+			if err != nil {
+				t.Fatalf("second Collect() error: %v", err)
+			}
+			if r2 == nil {
+				t.Fatal("second Collect() returned nil")
+			}
+
+			var p2 PgStatStatementsPayload
+			if err := json.Unmarshal(r2.JSON, &p2); err != nil {
+				t.Fatalf("failed to parse second result: %v", err)
+			}
+			if p2.DeltaCount == 0 {
+				t.Fatal("expected delta_count > 0 on second call")
+			}
+			if p2.AverageQueryRuntime <= 0 {
+				t.Fatalf("expected average_query_runtime > 0, got %f", p2.AverageQueryRuntime)
+			}
+
+			// Verify delta invariants.
+			if len(p2.Deltas) > PgStatStatementsDiffLimit {
+				t.Fatalf("len(deltas) = %d exceeds diffLimit %d", len(p2.Deltas), PgStatStatementsDiffLimit)
+			}
+			if p2.DeltaCount < len(p2.Deltas) {
+				t.Fatalf("delta_count (%d) < len(deltas) (%d) — count is pre-cap total", p2.DeltaCount, len(p2.Deltas))
+			}
+			for i, d := range p2.Deltas {
+				if d.Calls == nil || *d.Calls <= 0 {
+					t.Fatalf("delta[%d]: expected calls > 0", i)
+				}
+				if d.TotalExecTime == nil || *d.TotalExecTime <= 0 {
+					t.Fatalf("delta[%d]: expected total_exec_time > 0", i)
+				}
+				if d.Rows == nil || *d.Rows <= 0 {
+					t.Fatalf("delta[%d]: expected rows > 0", i)
+				}
+			}
+		})
+	}
+}
+
+func TestAutovacuumCount_ReturnsData(t *testing.T) {
+	inst := latestInstance()
+	c := AutovacuumCountCollector(inst.pool, noopPrepareCtx)
+	requireRows(t, c)
+}
+
 // buildCollectors creates all collectors for a given pool and PG version.
 func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector {
 	return []CatalogCollector{
+		AutovacuumCountCollector(pool, noopPrepareCtx),
+		ConnectionStatsCollector(pool, noopPrepareCtx),
+		DDLCollector(pool, noopPrepareCtx),
+		DatabaseSizeCollector(pool, noopPrepareCtx),
+		PgAttributeCollector(pool, noopPrepareCtx),
+		PgClassCollector(pool, noopPrepareCtx, PgClassBackfillBatchSize),
+		PgIndexCollector(pool, noopPrepareCtx),
+		PgLocksCollector(pool, noopPrepareCtx),
 		PgPreparedXactsCollector(pool, noopPrepareCtx),
 		PgReplicationSlotsCollector(pool, noopPrepareCtx),
 		PgStatActivityCollector(pool, noopPrepareCtx, pgMajorVersion),
@@ -259,9 +876,19 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		PgStatReplicationCollector(pool, noopPrepareCtx),
 		PgStatReplicationSlotsCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatSlruCollector(pool, noopPrepareCtx),
+		PgStatStatementsCollector(pool, noopPrepareCtx, true, 1000, PgStatStatementsDiffLimit, pgMajorVersion),
 		PgStatSubscriptionCollector(pool, noopPrepareCtx),
 		PgStatSubscriptionStatsCollector(pool, noopPrepareCtx, pgMajorVersion),
+		PgStatUserFunctionsCollector(pool, noopPrepareCtx),
+		PgStatUserIndexesCollector(pool, noopPrepareCtx, PgStatUserIndexesCategoryLimit),
+		PgStatUserTablesCollector(pool, noopPrepareCtx, PgStatUserTablesCategoryLimit),
 		PgStatWalCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatWalReceiverCollector(pool, noopPrepareCtx),
+		PgStatioUserIndexesCollector(pool, noopPrepareCtx, PgStatioUserIndexesCategoryLimit),
+		PgStatioUserTablesCollector(pool, noopPrepareCtx),
+		PgStatsCollector(pool, noopPrepareCtx, PgStatsBackfillBatchSize, true),
+		TransactionCommitsCollector(pool, noopPrepareCtx),
+		UptimeMinutesCollector(pool, noopPrepareCtx),
+		WaitEventsCollector(pool, noopPrepareCtx),
 	}
 }
