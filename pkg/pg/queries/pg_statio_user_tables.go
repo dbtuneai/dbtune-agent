@@ -1,0 +1,41 @@
+package queries
+
+// https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STATIO-ALL-TABLES
+
+import (
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// PgStatioUserTablesRow represents a row from pg_statio_user_tables.
+type PgStatioUserTablesRow struct {
+	RelID         *Oid    `json:"relid" db:"relid"`
+	SchemaName    *Name   `json:"schemaname" db:"schemaname"`
+	RelName       *Name   `json:"relname" db:"relname"`
+	HeapBlksRead  *Bigint `json:"heap_blks_read" db:"heap_blks_read"`
+	HeapBlksHit   *Bigint `json:"heap_blks_hit" db:"heap_blks_hit"`
+	IdxBlksRead   *Bigint `json:"idx_blks_read" db:"idx_blks_read"`
+	IdxBlksHit    *Bigint `json:"idx_blks_hit" db:"idx_blks_hit"`
+	ToastBlksRead *Bigint `json:"toast_blks_read" db:"toast_blks_read"`
+	ToastBlksHit  *Bigint `json:"toast_blks_hit" db:"toast_blks_hit"`
+	TidxBlksRead  *Bigint `json:"tidx_blks_read" db:"tidx_blks_read"`
+	TidxBlksHit   *Bigint `json:"tidx_blks_hit" db:"tidx_blks_hit"`
+}
+
+const (
+	PgStatioUserTablesName     = "pg_statio_user_tables"
+	PgStatioUserTablesInterval = 1 * time.Minute
+)
+
+const pgStatioUserTablesQuery = `
+SELECT * FROM pg_statio_user_tables
+WHERE COALESCE(heap_blks_read,0) + COALESCE(heap_blks_hit,0) +
+      COALESCE(idx_blks_read,0) + COALESCE(idx_blks_hit,0) > 0
+ORDER BY COALESCE(heap_blks_read,0) + COALESCE(idx_blks_read,0) DESC
+LIMIT 500
+`
+
+func PgStatioUserTablesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
+	return NewCollector[PgStatioUserTablesRow](pool, prepareCtx, PgStatioUserTablesName, PgStatioUserTablesInterval, pgStatioUserTablesQuery)
+}
