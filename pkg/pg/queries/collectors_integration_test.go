@@ -62,6 +62,12 @@ func setupTestFixtures(ctx context.Context, pool *pgxpool.Pool) error {
 		 BEGIN RETURN a + b; END;
 		 $$ LANGUAGE plpgsql`,
 		`SELECT test_add(i, i) FROM generate_series(1, 10) AS i`,
+		// A second table with an index that will stay cold after fixture setup,
+		// used to verify delta collectors only emit changed rows.
+		`CREATE TABLE test_cold (id serial PRIMARY KEY, val integer)`,
+		`CREATE INDEX idx_test_cold_val ON test_cold(val)`,
+		`INSERT INTO test_cold (val) SELECT i FROM generate_series(1, 100) AS i`,
+		`ANALYZE test_cold`,
 		// Enable pg_stat_statements (shared_preload_libraries is set at container start).
 		`CREATE EXTENSION IF NOT EXISTS pg_stat_statements`,
 	}
@@ -505,8 +511,141 @@ func TestPgStatioUserTables_NoError(t *testing.T) {
 
 func TestPgStatioUserIndexes_ReturnsFixtureData(t *testing.T) {
 	inst := latestInstance()
-	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesCategoryLimit)
+	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesBatchSize)
 	requireRows(t, c)
+}
+
+func TestPgStatioUserIndexes_BackfillThenDelta(t *testing.T) {
+	inst := latestInstance()
+	ctx := context.Background()
+
+	// Use batch size 1 to force multiple backfill ticks and test pagination.
+	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, 1)
+
+	// First call: backfill returns exactly 1 row (batch size 1).
+	r1, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("first Collect() error: %v", err)
+	}
+	if r1 == nil {
+		t.Fatal("first Collect() returned nil — expected backfill data")
+	}
+	var p1 Payload[PgStatioUserIndexesRow]
+	if err := json.Unmarshal(r1.JSON, &p1); err != nil {
+		t.Fatalf("failed to parse first result: %v", err)
+	}
+	if len(p1.Rows) != 1 {
+		t.Fatalf("expected exactly 1 row with batch size 1, got %d", len(p1.Rows))
+	}
+
+	// Drain the remaining backfill ticks until we get nil (backfill exhausted).
+	var totalBackfillRows int = 1
+	for i := 0; i < 200; i++ {
+		r, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("backfill tick %d error: %v", i+2, err)
+		}
+		if r == nil {
+			break // backfill done
+		}
+		var p Payload[PgStatioUserIndexesRow]
+		if err := json.Unmarshal(r.JSON, &p); err != nil {
+			t.Fatalf("failed to parse backfill tick %d: %v", i+2, err)
+		}
+		totalBackfillRows += len(p.Rows)
+	}
+	// We created 3 explicit indexes + 1 PK = 4 fixture indexes minimum.
+	if totalBackfillRows < 4 {
+		t.Fatalf("expected at least 4 backfill rows, got %d", totalBackfillRows)
+	}
+
+	// Delta with no I/O changes → nil.
+	rDelta, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("delta Collect() error: %v", err)
+	}
+	if rDelta != nil {
+		t.Fatal("expected nil delta result when no I/O has occurred")
+	}
+}
+
+func TestPgStatioUserIndexes_DeltaEmitsOnlyChangedRows(t *testing.T) {
+	inst := latestInstance()
+	ctx := context.Background()
+
+	// Flush any pending stats from fixture setup so the backfill snapshot
+	// captures the true current counters.
+	if inst.version >= 15 {
+		_, _ = inst.admin.Exec(ctx, "SELECT pg_stat_force_next_flush()")
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	// Large batch size so backfill finishes in one tick.
+	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, 10000)
+
+	// First call: backfill — all rows emitted.
+	r1, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("backfill Collect() error: %v", err)
+	}
+	if r1 == nil {
+		t.Fatal("backfill Collect() returned nil")
+	}
+	var p1 Payload[PgStatioUserIndexesRow]
+	if err := json.Unmarshal(r1.JSON, &p1); err != nil {
+		t.Fatalf("failed to parse backfill result: %v", err)
+	}
+	backfillCount := len(p1.Rows)
+	// test_users has 4 indexes (PK + 3), test_cold has 2 (PK + 1) = 6 minimum.
+	if backfillCount < 6 {
+		t.Fatalf("expected at least 6 backfill rows, got %d", backfillCount)
+	}
+
+	// Second call: empty page, transitions to delta mode.
+	r2, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("transition Collect() error: %v", err)
+	}
+	if r2 != nil {
+		t.Fatal("expected nil on transition tick")
+	}
+
+	// Generate I/O only on test_users indexes; test_cold indexes stay untouched.
+	for i := 0; i < 20; i++ {
+		_, _ = inst.admin.Exec(ctx, "SELECT count(*) FROM test_users WHERE name = $1", fmt.Sprintf("user_%d", i))
+	}
+
+	// Flush stats so the I/O counters are visible.
+	if inst.version >= 15 {
+		_, _ = inst.admin.Exec(ctx, "SELECT pg_stat_force_next_flush()")
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	// Delta: should emit only the changed index(es) from test_users,
+	// not the cold test_cold indexes.
+	r3, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("delta Collect() error: %v", err)
+	}
+	if r3 == nil {
+		t.Fatal("expected delta to emit changed rows after index I/O")
+	}
+	var p3 Payload[PgStatioUserIndexesRow]
+	if err := json.Unmarshal(r3.JSON, &p3); err != nil {
+		t.Fatalf("failed to parse delta result: %v", err)
+	}
+	if len(p3.Rows) == 0 {
+		t.Fatal("expected at least 1 changed row in delta")
+	}
+	if len(p3.Rows) >= backfillCount {
+		t.Fatalf("delta should emit fewer rows than backfill (%d), got %d", backfillCount, len(p3.Rows))
+	}
+	// Verify no test_cold indexes appear in the delta.
+	for _, row := range p3.Rows {
+		if row.RelName != nil && string(*row.RelName) == "test_cold" {
+			t.Fatalf("delta should not include untouched test_cold indexes, got %s", string(*row.IndexRelName))
+		}
+	}
 }
 
 func TestPgStatUserFunctions_ReturnsFixtureFunction(t *testing.T) {
@@ -863,7 +1002,7 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		PgStatUserTablesCollector(pool, noopPrepareCtx, PgStatUserTablesCategoryLimit),
 		PgStatWalCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatWalReceiverCollector(pool, noopPrepareCtx),
-		PgStatioUserIndexesCollector(pool, noopPrepareCtx, PgStatioUserIndexesCategoryLimit),
+		PgStatioUserIndexesCollector(pool, noopPrepareCtx, PgStatioUserIndexesBatchSize),
 		PgStatioUserTablesCollector(pool, noopPrepareCtx),
 		PgStatsCollector(pool, noopPrepareCtx, PgStatsBackfillBatchSize, true),
 		TransactionCommitsCollector(pool, noopPrepareCtx),
