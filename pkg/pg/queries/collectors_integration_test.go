@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -185,6 +186,8 @@ func TestMain(m *testing.M) {
 
 		pgInstances = append(pgInstances, pgInstance{pool: monitorPool, admin: adminPool, version: v})
 	}
+
+	slices.SortFunc(pgInstances, func(a, b pgInstance) int { return a.version - b.version })
 
 	code := m.Run()
 	cleanup()

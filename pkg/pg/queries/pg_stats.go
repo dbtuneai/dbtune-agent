@@ -105,6 +105,8 @@ ORDER BY ps.schemaname, ps.tablename, ps.attname
 }
 
 // pgtypeMap is reused across calls to pgArrayToJSON to avoid per-row allocation.
+// Concurrent use is safe: Scan only performs read-only lookups on the internal
+// codec registry; no mutation occurs after NewMap() returns.
 var pgtypeMap = pgtype.NewMap()
 
 // pgArrayToJSON converts a PG text array literal like {foo,"bar baz",qux}

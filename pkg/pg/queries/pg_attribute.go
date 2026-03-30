@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// PgAttributeRow represents a row from pg_attribute for a user-table column.
+// PgAttributeRow represents a row from pg_attribute for user-table and index columns.
 type PgAttributeRow struct {
 	AttRelID *Oid      `json:"attrelid" db:"attrelid"`
 	AttName  *Name     `json:"attname" db:"attname"`
@@ -22,7 +22,7 @@ const (
 	PgAttributeInterval = 5 * time.Minute
 )
 
-// pgAttributeQuery returns pg_attribute rows for all user-table columns,
+// pgAttributeQuery returns pg_attribute rows for all user-table and index columns,
 // filtered to user schemas and non-dropped, non-system columns.
 const pgAttributeQuery = `
 SELECT

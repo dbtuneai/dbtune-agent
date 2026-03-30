@@ -18,7 +18,7 @@ const (
 )
 
 const waitEventsQuery = `
-WITH RECURSIVE
+WITH
 current_waits AS (
 	SELECT
 		wait_event_type,

@@ -54,7 +54,7 @@ func TransactionCommitsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) Cata
 			}
 
 			now := time.Now()
-			if prev.count > 0 && xactCommit >= prev.count {
+			if !prev.timestamp.IsZero() && xactCommit >= prev.count {
 				duration := now.Sub(prev.timestamp).Seconds()
 				if duration > 0 {
 					payload.TPS = float64(xactCommit-prev.count) / duration

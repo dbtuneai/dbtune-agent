@@ -29,7 +29,7 @@ const (
 )
 
 // BuildPgStatioUserIndexesQuery samples index I/O stats from three perspectives:
-// disk reads, total I/O volume, and cache-miss indexes.
+// disk reads, total I/O volume, and low cache-hit ratio.
 // UNION deduplicates across categories automatically.
 func BuildPgStatioUserIndexesQuery(categoryLimit int) string {
 	return fmt.Sprintf(`
@@ -37,7 +37,7 @@ func BuildPgStatioUserIndexesQuery(categoryLimit int) string {
 UNION
 (SELECT * FROM pg_statio_user_indexes ORDER BY COALESCE(idx_blks_read,0) + COALESCE(idx_blks_hit,0) DESC LIMIT %d)
 UNION
-(SELECT * FROM pg_statio_user_indexes WHERE COALESCE(idx_blks_read,0) > 0 ORDER BY COALESCE(idx_blks_read,0) DESC LIMIT %d)
+(SELECT * FROM pg_statio_user_indexes WHERE COALESCE(idx_blks_read,0) + COALESCE(idx_blks_hit,0) > 0 ORDER BY COALESCE(idx_blks_hit,0)::float / (COALESCE(idx_blks_read,0) + COALESCE(idx_blks_hit,0)) ASC LIMIT %d)
 `, categoryLimit, categoryLimit, categoryLimit)
 }
 
