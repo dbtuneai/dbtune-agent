@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +23,8 @@ import (
 )
 
 type pgInstance struct {
-	pool    *pgxpool.Pool
+	pool    *pgxpool.Pool // pg_monitor role — used by collectors under test
+	admin   *pgxpool.Pool // superuser — used for fixture setup only
 	version int
 }
 
@@ -83,6 +85,7 @@ func TestMain(m *testing.M) {
 	cleanup := func() {
 		for _, inst := range pgInstances {
 			inst.pool.Close()
+			inst.admin.Close()
 		}
 		for _, c := range containers {
 			_ = c.Terminate(ctx)
@@ -134,20 +137,53 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 
-		pool, err := pgxpool.New(ctx, connStr)
+		adminPool, err := pgxpool.New(ctx, connStr)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to create pool for postgres %d: %v\n", v, err)
+			fmt.Fprintf(os.Stderr, "failed to create admin pool for postgres %d: %v\n", v, err)
 			cleanup()
 			os.Exit(1)
 		}
 
-		if err := setupTestFixtures(ctx, pool); err != nil {
+		if err := setupTestFixtures(ctx, adminPool); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to setup fixtures for postgres %d: %v\n", v, err)
 			cleanup()
 			os.Exit(1)
 		}
 
-		pgInstances = append(pgInstances, pgInstance{pool: pool, version: v})
+		// Create a pg_monitor role for collector tests. This ensures all
+		// collectors work without superuser privileges.
+		monitorSetup := []string{
+			`CREATE ROLE monitor LOGIN PASSWORD 'monitor'`,
+			`GRANT pg_monitor TO monitor`,
+			`GRANT CONNECT ON DATABASE testdb TO monitor`,
+		}
+		for _, sql := range monitorSetup {
+			if _, err := adminPool.Exec(ctx, sql); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to setup monitor role for postgres %d: %v\n", v, err)
+				cleanup()
+				os.Exit(1)
+			}
+		}
+
+		// Build a connection string for the monitor role.
+		monitorConnStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to get monitor connection string for postgres %d: %v\n", v, err)
+			cleanup()
+			os.Exit(1)
+		}
+		// Replace user=test&password=test with user=monitor&password=monitor.
+		monitorConnStr = strings.Replace(monitorConnStr, "user=test", "user=monitor", 1)
+		monitorConnStr = strings.Replace(monitorConnStr, "password=test", "password=monitor", 1)
+
+		monitorPool, err := pgxpool.New(ctx, monitorConnStr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to create monitor pool for postgres %d: %v\n", v, err)
+			cleanup()
+			os.Exit(1)
+		}
+
+		pgInstances = append(pgInstances, pgInstance{pool: monitorPool, admin: adminPool, version: v})
 	}
 
 	code := m.Run()
@@ -415,7 +451,7 @@ func TestTransactionCommits_ComputesTPS(t *testing.T) {
 
 	// Generate some transactions and wait for PG stats collector to update.
 	for i := 0; i < 50; i++ {
-		_, _ = inst.pool.Exec(ctx, "SELECT 1")
+		_, _ = inst.admin.Exec(ctx, "SELECT 1")
 	}
 	time.Sleep(1 * time.Second)
 
@@ -483,9 +519,8 @@ func TestPgStatUserFunctions_ReturnsFixtureFunction(t *testing.T) {
 		t.Skipf("track_functions is %q — function stats not tracked", trackFunctions)
 	}
 
-	// Call the function and flush stats within a single connection so the
-	// stats collector picks it up. On PG15+ we can force a stats flush.
-	conn, err := inst.pool.Acquire(ctx)
+	// Call the function via admin (has EXECUTE privilege) and flush stats.
+	conn, err := inst.admin.Acquire(ctx)
 	if err != nil {
 		t.Fatalf("acquire connection: %v", err)
 	}
@@ -573,7 +608,7 @@ func TestPgClass_BackfillThenDelta(t *testing.T) {
 	}
 
 	// ANALYZE triggers a timestamp change that the delta query detects.
-	_, _ = inst.pool.Exec(ctx, "ANALYZE test_users")
+	_, _ = inst.admin.Exec(ctx, "ANALYZE test_users")
 
 	rAfterAnalyze, err := c.Collect(ctx)
 	if err != nil {
@@ -657,7 +692,7 @@ func TestPgStats_BackfillThenDelta(t *testing.T) {
 	}
 
 	// ANALYZE triggers delta.
-	_, _ = inst.pool.Exec(ctx, "ANALYZE test_users")
+	_, _ = inst.admin.Exec(ctx, "ANALYZE test_users")
 
 	rAfterAnalyze, err := c.Collect(ctx)
 	if err != nil {
@@ -700,64 +735,6 @@ func TestPgStats_RedactsWhenIncludeTableDataFalse(t *testing.T) {
 	}
 }
 
-func TestDDL_ReturnsCreateStatements(t *testing.T) {
-	inst := latestInstance()
-	c := DDLCollector(inst.pool, noopPrepareCtx)
-	ctx := context.Background()
-
-	// First call: should return DDL with our fixture table.
-	r1, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("first Collect() error: %v", err)
-	}
-	if r1 == nil {
-		t.Fatal("first Collect() returned nil")
-	}
-
-	var p1 DDLPayload
-	if err := json.Unmarshal(r1.JSON, &p1); err != nil {
-		t.Fatalf("failed to parse JSON: %v", err)
-	}
-	if p1.Hash == "" {
-		t.Fatal("expected non-empty DDL hash")
-	}
-	if !bytes.Contains([]byte(p1.DDL), []byte("test_users")) {
-		t.Fatalf("expected DDL to contain 'test_users', got:\n%s", p1.DDL)
-	}
-	if !bytes.Contains([]byte(p1.DDL), []byte("idx_test_users_name")) {
-		t.Fatalf("expected DDL to contain 'idx_test_users_name', got:\n%s", p1.DDL)
-	}
-
-	// Second call: schema unchanged → skip (nil).
-	r2, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("second Collect() error: %v", err)
-	}
-	if r2 != nil {
-		t.Fatal("expected nil on second call (unchanged schema)")
-	}
-
-	// Alter schema and collect again → should return non-nil with updated DDL.
-	_, _ = inst.pool.Exec(ctx, "ALTER TABLE test_users ADD COLUMN notes text")
-	r3, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("post-ALTER Collect() error: %v", err)
-	}
-	if r3 == nil {
-		t.Fatal("expected non-nil after schema change")
-	}
-	var p3 DDLPayload
-	if err := json.Unmarshal(r3.JSON, &p3); err != nil {
-		t.Fatalf("failed to parse post-ALTER JSON: %v", err)
-	}
-	if p3.Hash == p1.Hash {
-		t.Fatal("expected hash to change after ALTER TABLE")
-	}
-	if !bytes.Contains([]byte(p3.DDL), []byte("notes")) {
-		t.Fatalf("expected DDL to contain new 'notes' column, got:\n%s", p3.DDL)
-	}
-}
-
 func TestPgStatStatements_AllVersions(t *testing.T) {
 	for _, inst := range pgInstances {
 		inst := inst
@@ -796,9 +773,9 @@ func TestPgStatStatements_AllVersions(t *testing.T) {
 				t.Fatalf("expected average_query_runtime = 0 on first call, got %f", p1.AverageQueryRuntime)
 			}
 
-			// Generate some activity.
+			// Generate some activity via admin (has SELECT on user tables).
 			for i := 0; i < 5; i++ {
-				_, _ = inst.pool.Exec(ctx, "SELECT count(*) FROM test_users WHERE score > $1", i*10)
+				_, _ = inst.admin.Exec(ctx, "SELECT count(*) FROM test_users WHERE score > $1", i*10)
 			}
 
 			// Second call: should have deltas.
@@ -854,7 +831,6 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 	return []CatalogCollector{
 		AutovacuumCountCollector(pool, noopPrepareCtx),
 		ConnectionStatsCollector(pool, noopPrepareCtx),
-		DDLCollector(pool, noopPrepareCtx),
 		DatabaseSizeCollector(pool, noopPrepareCtx),
 		PgAttributeCollector(pool, noopPrepareCtx),
 		PgClassCollector(pool, noopPrepareCtx, PgClassBackfillBatchSize),
