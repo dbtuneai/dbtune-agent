@@ -27,7 +27,9 @@ const pgClassColumns = `
     n.nspname AS schemaname,
     c.relname,
     c.reltuples,
-    c.relpages`
+    c.relpages,
+    c.relfrozenxid,
+    c.relminmxid`
 
 // pgClassQueryBatch paginates through user tables during backfill.
 const pgClassQueryBatch = `SELECT` + pgClassColumns + `
@@ -60,10 +62,12 @@ ORDER BY n.nspname, c.relname
 
 // PgClassRow represents a single row from pg_class for user tables.
 type PgClassRow struct {
-	SchemaName Name    `json:"schemaname"`
-	RelName    Name    `json:"relname"`
-	RelTuples  Real    `json:"reltuples"`
-	RelPages   Integer `json:"relpages"`
+	SchemaName   Name    `json:"schemaname"`
+	RelName      Name    `json:"relname"`
+	RelTuples    Real    `json:"reltuples"`
+	RelPages     Integer `json:"relpages"`
+	RelFrozenXID Xid     `json:"relfrozenxid"`
+	RelMinXID    Xid     `json:"relminxid"`
 }
 
 func collectPgClassRows(pool *pgxpool.Pool, ctx context.Context, query string, args ...any) ([]PgClassRow, error) {
@@ -76,7 +80,7 @@ func collectPgClassRows(pool *pgxpool.Pool, ctx context.Context, query string, a
 	result := make([]PgClassRow, 0)
 	for rows.Next() {
 		var r PgClassRow
-		err := rows.Scan(&r.SchemaName, &r.RelName, &r.RelTuples, &r.RelPages)
+		err := rows.Scan(&r.SchemaName, &r.RelName, &r.RelTuples, &r.RelPages, &r.RelFrozenXID, &r.RelMinXID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan pg_class row: %w", err)
 		}
