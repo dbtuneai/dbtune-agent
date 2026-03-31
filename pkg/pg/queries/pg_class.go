@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
+	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -91,7 +93,10 @@ func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSi
 			var classRows []PgClassRow
 
 			if !backfillDone {
-				classRows, err = CollectView(ctx, pool, pgClassQueryBatch, PgClassName, scanner, WithQueryArgs(backfillBatchSize, backfillOffset))
+				querier := func() (pgx.Rows, error) {
+					return utils.QueryWithPrefix(pool, ctx, pgClassQueryBatch, backfillBatchSize, backfillOffset)
+				}
+				classRows, err = CollectView(querier, PgClassName, scanner)
 				if err != nil {
 					return nil, err
 				}
@@ -103,7 +108,11 @@ func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSi
 				}
 			} else {
 				now := time.Now().UTC()
-				classRows, err = CollectView(ctx, pool, pgClassQueryDelta, PgClassName, scanner, WithQueryArgs(lastPoll))
+
+				querier := func() (pgx.Rows, error) {
+					return utils.QueryWithPrefix(pool, ctx, pgClassQueryDelta, lastPoll)
+				}
+				classRows, err = CollectView(querier, PgClassName, scanner)
 				if err != nil {
 					return nil, err
 				}

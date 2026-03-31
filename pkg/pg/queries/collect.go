@@ -130,7 +130,10 @@ func NewCollector[T any](
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectView(ctx, pool, query, name, scanner)
+			querier := func() (pgx.Rows, error) {
+				return utils.QueryWithPrefix(pool, ctx, query)
+			}
+			rows, err := CollectView(querier, name, scanner)
 			if err != nil {
 				return nil, err
 			}
@@ -152,27 +155,10 @@ func (r *CollectResult) Hash() string {
 	return strconv.FormatUint(xxhash.Sum64(r.JSON), 16)
 }
 
-type collectViewOpts struct {
-	QueryArgs []any
-}
-
-type CollectViewOptions func(*collectViewOpts)
-
-func WithQueryArgs(args ...any) CollectViewOptions {
-	return func(o *collectViewOpts) {
-		o.QueryArgs = args
-	}
-}
-
 // CollectView queries a pg catalog view and scans the results into a slice
-// of structs using the provided scanner. The caller must set a deadline on ctx.
-func CollectView[T any](ctx context.Context, pool *pgxpool.Pool, query string, viewName string, scanner *pgxutil.Scanner[T], opts ...CollectViewOptions) ([]T, error) {
-	opt := collectViewOpts{}
-	for _, o := range opts {
-		o(&opt)
-	}
-
-	rows, err := utils.QueryWithPrefix(pool, ctx, query, opt.QueryArgs...)
+// of structs using the provided scanner. The querier function should set a deadline, eg via a context.
+func CollectView[T any](querier func() (pgx.Rows, error), viewName string, scanner *pgxutil.Scanner[T]) ([]T, error) {
+	rows, err := querier()
 	if err != nil {
 		return nil, fmt.Errorf("failed to query %s: %w", viewName, err)
 	}
