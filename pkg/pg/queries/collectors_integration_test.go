@@ -24,9 +24,10 @@ import (
 )
 
 type pgInstance struct {
-	pool    *pgxpool.Pool // pg_monitor role — used by collectors under test
-	admin   *pgxpool.Pool // superuser — used for fixture setup only
-	version int
+	pool      *pgxpool.Pool               // pg_monitor role — used by collectors under test
+	admin     *pgxpool.Pool               // superuser — used for fixture setup only
+	container *postgres.PostgresContainer // container — for exec'ing pg_dump etc.
+	version   int
 }
 
 var pgInstances []pgInstance
@@ -190,7 +191,7 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 
-		pgInstances = append(pgInstances, pgInstance{pool: monitorPool, admin: adminPool, version: v})
+		pgInstances = append(pgInstances, pgInstance{pool: monitorPool, admin: adminPool, container: pgContainer, version: v})
 	}
 
 	slices.SortFunc(pgInstances, func(a, b pgInstance) int { return a.version - b.version })
