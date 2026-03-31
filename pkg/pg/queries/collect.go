@@ -130,7 +130,10 @@ func NewCollector[T any](
 			if err != nil {
 				return nil, err
 			}
-			rows, err := CollectView(ctx, pool, query, name, scanner)
+			querier := func() (pgx.Rows, error) {
+				return utils.QueryWithPrefix(pool, ctx, query)
+			}
+			rows, err := CollectView(querier, name, scanner)
 			if err != nil {
 				return nil, err
 			}
@@ -153,9 +156,9 @@ func (r *CollectResult) Hash() string {
 }
 
 // CollectView queries a pg catalog view and scans the results into a slice
-// of structs using the provided scanner. The caller must set a deadline on ctx.
-func CollectView[T any](ctx context.Context, pool *pgxpool.Pool, query string, viewName string, scanner *pgxutil.Scanner[T]) ([]T, error) {
-	rows, err := utils.QueryWithPrefix(pool, ctx, query)
+// of structs using the provided scanner. The querier function should set a deadline, eg via a context.
+func CollectView[T any](querier func() (pgx.Rows, error), viewName string, scanner *pgxutil.Scanner[T]) ([]T, error) {
+	rows, err := querier()
 	if err != nil {
 		return nil, fmt.Errorf("failed to query %s: %w", viewName, err)
 	}

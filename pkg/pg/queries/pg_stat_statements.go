@@ -12,6 +12,7 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -353,7 +354,10 @@ func PgStatStatementsCollector(
 				prevSnapshot = nil
 			}
 
-			rows, err := CollectView(ctx, pool, query, "pg_stat_statements", scanner)
+			querier := func() (pgx.Rows, error) {
+				return utils.QueryWithPrefix(pool, ctx, query)
+			}
+			rows, err := CollectView(querier, "pg_stat_statements", scanner)
 			if err != nil {
 				return nil, err
 			}

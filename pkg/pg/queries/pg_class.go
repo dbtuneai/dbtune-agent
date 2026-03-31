@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -27,7 +29,9 @@ const pgClassColumns = `
     n.nspname AS schemaname,
     c.relname,
     c.reltuples,
-    c.relpages`
+    c.relpages,
+    c.relfrozenxid,
+    c.relminmxid`
 
 // pgClassQueryBatch paginates through user tables during backfill.
 const pgClassQueryBatch = `SELECT` + pgClassColumns + `
@@ -60,32 +64,12 @@ ORDER BY n.nspname, c.relname
 
 // PgClassRow represents a single row from pg_class for user tables.
 type PgClassRow struct {
-	SchemaName Name    `json:"schemaname"`
-	RelName    Name    `json:"relname"`
-	RelTuples  Real    `json:"reltuples"`
-	RelPages   Integer `json:"relpages"`
-}
-
-func collectPgClassRows(pool *pgxpool.Pool, ctx context.Context, query string, args ...any) ([]PgClassRow, error) {
-	rows, err := utils.QueryWithPrefix(pool, ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query pg_class: %w", err)
-	}
-	defer rows.Close()
-
-	result := make([]PgClassRow, 0)
-	for rows.Next() {
-		var r PgClassRow
-		err := rows.Scan(&r.SchemaName, &r.RelName, &r.RelTuples, &r.RelPages)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan pg_class row: %w", err)
-		}
-		result = append(result, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating pg_class rows: %w", err)
-	}
-	return result, nil
+	SchemaName   Name    `json:"schemaname"`
+	RelName      Name    `json:"relname"`
+	RelTuples    Real    `json:"reltuples"`
+	RelPages     Integer `json:"relpages"`
+	RelFrozenXID Xid     `json:"relfrozenxid"`
+	RelMinXID    Xid     `json:"relminxid"`
 }
 
 func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSize int) CatalogCollector {
@@ -94,6 +78,8 @@ func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSi
 		backfillDone   = false
 		lastPoll       time.Time
 	)
+
+	scanner := pgxutil.NewScanner[PgClassRow]()
 
 	return CatalogCollector{
 		Name:     PgClassName,
@@ -107,7 +93,10 @@ func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSi
 			var classRows []PgClassRow
 
 			if !backfillDone {
-				classRows, err = collectPgClassRows(pool, ctx, pgClassQueryBatch, backfillBatchSize, backfillOffset)
+				querier := func() (pgx.Rows, error) {
+					return utils.QueryWithPrefix(pool, ctx, pgClassQueryBatch, backfillBatchSize, backfillOffset)
+				}
+				classRows, err = CollectView(querier, PgClassName, scanner)
 				if err != nil {
 					return nil, err
 				}
@@ -119,7 +108,11 @@ func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSi
 				}
 			} else {
 				now := time.Now().UTC()
-				classRows, err = collectPgClassRows(pool, ctx, pgClassQueryDelta, lastPoll)
+
+				querier := func() (pgx.Rows, error) {
+					return utils.QueryWithPrefix(pool, ctx, pgClassQueryDelta, lastPoll)
+				}
+				classRows, err = CollectView(querier, PgClassName, scanner)
 				if err != nil {
 					return nil, err
 				}
