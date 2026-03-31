@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -70,34 +70,14 @@ type PgClassRow struct {
 	RelMinXID    Xid     `json:"relminxid"`
 }
 
-func collectPgClassRows(pool *pgxpool.Pool, ctx context.Context, query string, args ...any) ([]PgClassRow, error) {
-	rows, err := utils.QueryWithPrefix(pool, ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query pg_class: %w", err)
-	}
-	defer rows.Close()
-
-	result := make([]PgClassRow, 0)
-	for rows.Next() {
-		var r PgClassRow
-		err := rows.Scan(&r.SchemaName, &r.RelName, &r.RelTuples, &r.RelPages, &r.RelFrozenXID, &r.RelMinXID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan pg_class row: %w", err)
-		}
-		result = append(result, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating pg_class rows: %w", err)
-	}
-	return result, nil
-}
-
 func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSize int) CatalogCollector {
 	var (
 		backfillOffset = 0
 		backfillDone   = false
 		lastPoll       time.Time
 	)
+
+	scanner := pgxutil.NewScanner[PgClassRow]()
 
 	return CatalogCollector{
 		Name:     PgClassName,
@@ -111,7 +91,7 @@ func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSi
 			var classRows []PgClassRow
 
 			if !backfillDone {
-				classRows, err = collectPgClassRows(pool, ctx, pgClassQueryBatch, backfillBatchSize, backfillOffset)
+				classRows, err = CollectView(ctx, pool, pgClassQueryBatch, PgClassName, scanner, WithQueryArgs(backfillBatchSize, backfillOffset))
 				if err != nil {
 					return nil, err
 				}
@@ -123,7 +103,7 @@ func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSi
 				}
 			} else {
 				now := time.Now().UTC()
-				classRows, err = collectPgClassRows(pool, ctx, pgClassQueryDelta, lastPoll)
+				classRows, err = CollectView(ctx, pool, pgClassQueryDelta, PgClassName, scanner, WithQueryArgs(lastPoll))
 				if err != nil {
 					return nil, err
 				}
