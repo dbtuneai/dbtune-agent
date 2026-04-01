@@ -1,4 +1,10 @@
+version: "2"
+
+run:
+  timeout: 5m
+
 linters:
+  default: none
   enable:
     - gocritic
     - gosec
@@ -14,20 +20,29 @@ linters:
     - errorlint
     - bodyclose
 
-linters-settings:
-  goconst:
-    min-len: 3
-    min-occurrences: 3
-  revive:
+  settings:
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    revive:
+      rules:
+        - name: blank-imports
+        - name: exported
+          disabled: true
+        - name: unused-parameter
+        - name: unreachable-code
+        - name: redefines-builtin-id
+    exhaustive:
+      default-signifies-exhaustive: true
+    gosec:
+      excludes:
+        - G104 # unhandled errors — already covered by errcheck
+
+  exclusions:
+    presets:
+      - common-false-positives
     rules:
-      - name: blank-imports
-      - name: exported
-        disabled: true
-      - name: unused-parameter
-      - name: unreachable-code
-      - name: redefines-builtin-id
-  exhaustive:
-    default-signifies-exhaustive: true
-  gosec:
-    excludes:
-      - G104 # unhandled errors — already covered by errcheck
+      - path: _test\.go
+        text: "G101:"
+        linters:
+          - gosec

@@ -152,7 +152,7 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	d.Logger().Println("Collecting system info for Docker container")
 
-	var systemInfo []metrics.FlatValue
+	systemInfo := make([]metrics.FlatValue, 0, 7)
 
 	// Get PostgreSQL version using the existing collector
 	pgDriver := d.PGDriver

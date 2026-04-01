@@ -537,8 +537,8 @@ func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
 	wg.Wait()
 
 	// Collect errors before closing the channel
-	var collectorErrors []error //nolint:prealloc // size unknown, collecting from channel
-	close(errorsChan)           // Close channel after all collectors are done
+	var collectorErrors []error
+	close(errorsChan) // Close channel after all collectors are done
 	for err := range errorsChan {
 		collectorErrors = append(collectorErrors, err)
 	}
