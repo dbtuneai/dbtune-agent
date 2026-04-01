@@ -9,7 +9,7 @@ import (
 
 func TestServerURLsValidation(t *testing.T) {
 	validDbID := "550e8400-e29b-41d4-a716-446655440000"
-	validApiKey := "a1b2c3d4-e5f6-7890-abcd-ef1234567890" //nolint:gosec // test value, not a real credential
+	validApiKey := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 	validURL := "https://app.dbtune.com"
 
 	tests := []struct {
