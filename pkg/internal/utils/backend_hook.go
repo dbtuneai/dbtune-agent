@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	flushInterval = 15 * time.Second
-	maxBufferSize = 20
-	sendTimeout   = 5 * time.Second
+	defaultFlushInterval = 15 * time.Second
+	defaultBufferSize    = 20
+	sendTimeout          = 5 * time.Second
 )
 
 type backendLogEntry struct {
@@ -24,31 +24,43 @@ type backendLogEntry struct {
 	Timestamp string `json:"timestamp"`
 }
 
-// BackendHook is a logrus hook that captures warn/error level logs
+// BackendHook is a logrus.Hook that captures warn/error/fatal/panic level logs
 // and sends them to the DBtune backend for internal observability.
 type BackendHook struct {
 	client *http.Client
 	url    string
 	apiKey string
 
-	mu      sync.Mutex
-	buffer  []backendLogEntry
-	sending bool
-	stop    chan struct{}
+	entries  chan backendLogEntry
+	flushReq chan chan struct{}
+	stop     chan struct{}
+	done     chan struct{}
+	once     sync.Once
 }
 
+// CreateBackendHook creates a new BackendHook with default configuration.
 func CreateBackendHook(url, apiKey string) *BackendHook {
+	return CreateBackendHookWithConfig(url, apiKey, defaultFlushInterval, defaultBufferSize)
+}
+
+// CreateBackendHookWithConfig creates a new BackendHook with custom flush interval
+// and channel buffer size.
+func CreateBackendHookWithConfig(url, apiKey string, flushInterval time.Duration, bufferSize int) *BackendHook {
 	h := &BackendHook{
-		client: &http.Client{Timeout: sendTimeout},
-		url:    url,
-		apiKey: apiKey,
-		buffer: make([]backendLogEntry, 0, maxBufferSize),
-		stop:   make(chan struct{}),
+		client:   &http.Client{Timeout: sendTimeout},
+		url:      url,
+		apiKey:   apiKey,
+		entries:  make(chan backendLogEntry, bufferSize),
+		flushReq: make(chan chan struct{}),
+		stop:     make(chan struct{}),
+		done:     make(chan struct{}),
 	}
-	go h.flushLoop()
+	go h.flushLoop(flushInterval)
 	return h
 }
 
+// Levels implements logrus.Hook. It returns the log levels that this hook
+// should be fired for (warn, error, fatal, and panic).
 func (h *BackendHook) Levels() []logrus.Level {
 	return []logrus.Level{
 		logrus.WarnLevel,
@@ -59,14 +71,6 @@ func (h *BackendHook) Levels() []logrus.Level {
 }
 
 func (h *BackendHook) Fire(entry *logrus.Entry) error {
-	h.mu.Lock()
-
-	// Prevent recursion: HTTP calls during flush may trigger logs
-	if h.sending {
-		h.mu.Unlock()
-		return nil
-	}
-
 	caller := ""
 	if entry.Caller != nil {
 		caller = fmt.Sprintf("%s:%d", path.Base(entry.Caller.File), entry.Caller.Line)
@@ -84,20 +88,19 @@ func (h *BackendHook) Fire(entry *logrus.Entry) error {
 		}
 	}
 
-	if len(h.buffer) >= maxBufferSize {
-		h.buffer = h.buffer[1:]
-	}
-
-	h.buffer = append(h.buffer, backendLogEntry{
+	le := backendLogEntry{
 		Message:   message,
 		Level:     entry.Level.String(),
 		Timestamp: entry.Time.UTC().Format(time.RFC3339),
-	})
+	}
 
-	needsSync := entry.Level == logrus.FatalLevel || entry.Level == logrus.PanicLevel
-	h.mu.Unlock()
+	// Non-blocking send: drop the entry if the channel is full.
+	select {
+	case h.entries <- le:
+	default:
+	}
 
-	if needsSync {
+	if entry.Level == logrus.FatalLevel || entry.Level == logrus.PanicLevel {
 		h.Flush()
 	}
 
@@ -105,42 +108,73 @@ func (h *BackendHook) Fire(entry *logrus.Entry) error {
 }
 
 // Close stops the flush loop and drains any remaining buffered entries.
+// It is safe to call multiple times.
 func (h *BackendHook) Close() {
-	close(h.stop)
-	h.Flush()
+	h.once.Do(func() {
+		close(h.stop)
+	})
+	<-h.done
 }
 
-func (h *BackendHook) flushLoop() {
+// Flush triggers an immediate send of all buffered entries.
+func (h *BackendHook) Flush() {
+	ack := make(chan struct{})
+	select {
+	case h.flushReq <- ack:
+		<-ack
+	case <-h.stop:
+	}
+}
+
+func (h *BackendHook) flushLoop(flushInterval time.Duration) {
+	defer close(h.done)
+
 	ticker := time.NewTicker(flushInterval)
 	defer ticker.Stop()
 
+	var buf []backendLogEntry
+
 	for {
 		select {
+		case e := <-h.entries:
+			buf = append(buf, e)
+
 		case <-ticker.C:
-			h.Flush()
+			if len(buf) > 0 {
+				h.sendBatch(buf)
+				buf = buf[:0]
+			}
+
+		case ack := <-h.flushReq:
+		drain:
+			for {
+				select {
+				case e := <-h.entries:
+					buf = append(buf, e)
+				default:
+					break drain
+				}
+			}
+			if len(buf) > 0 {
+				h.sendBatch(buf)
+				buf = buf[:0]
+			}
+			close(ack)
+
 		case <-h.stop:
-			return
+			for {
+				select {
+				case e := <-h.entries:
+					buf = append(buf, e)
+				default:
+					if len(buf) > 0 {
+						h.sendBatch(buf)
+					}
+					return
+				}
+			}
 		}
 	}
-}
-
-func (h *BackendHook) Flush() {
-	h.mu.Lock()
-	if len(h.buffer) == 0 || h.sending {
-		h.mu.Unlock()
-		return
-	}
-
-	entries := h.buffer
-	h.buffer = make([]backendLogEntry, 0, maxBufferSize)
-	h.sending = true
-	h.mu.Unlock()
-
-	h.sendBatch(entries)
-
-	h.mu.Lock()
-	h.sending = false
-	h.mu.Unlock()
 }
 
 func (h *BackendHook) sendBatch(entries []backendLogEntry) {

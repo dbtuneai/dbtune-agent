@@ -14,8 +14,47 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func newTestServer(t *testing.T) (*httptest.Server, *[]backendLogEntry, *sync.Mutex) {
+	t.Helper()
+	var mu sync.Mutex
+	var received []backendLogEntry
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+
+		var entries []backendLogEntry
+		require.NoError(t, json.Unmarshal(body, &entries))
+
+		mu.Lock()
+		received = append(received, entries...)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	t.Cleanup(server.Close)
+	return server, &received, &mu
+}
+
+func fireEntry(t *testing.T, hook *BackendHook, level logrus.Level, message string) {
+	t.Helper()
+	err := hook.Fire(&logrus.Entry{
+		Logger:  logrus.New(),
+		Level:   level,
+		Message: message,
+		Time:    time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		Data:    logrus.Fields{},
+	})
+	require.NoError(t, err)
+}
+
 func TestBackendHookLevels(t *testing.T) {
 	hook := CreateBackendHook("http://localhost", "test-key")
+	defer hook.Close()
+
 	levels := hook.Levels()
 
 	assert.Contains(t, levels, logrus.WarnLevel)
@@ -27,71 +66,48 @@ func TestBackendHookLevels(t *testing.T) {
 }
 
 func TestBackendHookBuffersEntries(t *testing.T) {
-	hook := CreateBackendHook("http://localhost", "test-key")
+	server, received, mu := newTestServer(t)
 
-	err := hook.Fire(&logrus.Entry{
-		Logger:  logrus.New(),
-		Level:   logrus.ErrorLevel,
-		Message: "test error",
-		Time:    time.Now(),
-		Data:    logrus.Fields{},
-	})
-	require.NoError(t, err)
+	hook := CreateBackendHook(server.URL, "test-key")
+	defer hook.Close()
 
-	hook.mu.Lock()
-	assert.Len(t, hook.buffer, 1)
-	assert.Equal(t, "error", hook.buffer[0].Level)
-	assert.Contains(t, hook.buffer[0].Message, "test error")
-	hook.mu.Unlock()
+	fireEntry(t, hook, logrus.ErrorLevel, "test error")
+	hook.Flush()
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, *received, 1)
+	assert.Equal(t, "error", (*received)[0].Level)
+	assert.Contains(t, (*received)[0].Message, "test error")
 }
 
-func TestBackendHookBufferCap(t *testing.T) {
-	hook := CreateBackendHook("http://localhost", "test-key")
+func TestBackendHookDropsOnFullChannel(t *testing.T) {
+	server, received, mu := newTestServer(t)
 
-	for i := 0; i < maxBufferSize+10; i++ {
-		err := hook.Fire(&logrus.Entry{
-			Logger:  logrus.New(),
-			Level:   logrus.WarnLevel,
-			Message: "warn",
-			Time:    time.Now(),
-			Data:    logrus.Fields{},
-		})
-		require.NoError(t, err)
+	bufSize := 5
+	hook := CreateBackendHookWithConfig(server.URL, "test-key", time.Hour, bufSize)
+	defer hook.Close()
+
+	// Fire many more entries than the channel can hold. Some may be read by
+	// the flush loop before the channel fills, so we can't assert an exact count.
+	for i := 0; i < bufSize*10; i++ {
+		fireEntry(t, hook, logrus.WarnLevel, "warn")
 	}
 
-	hook.mu.Lock()
-	assert.Len(t, hook.buffer, maxBufferSize)
-	hook.mu.Unlock()
-}
+	hook.Flush()
 
-func TestBackendHookRecursionGuard(t *testing.T) {
-	hook := CreateBackendHook("http://localhost", "test-key")
-
-	hook.mu.Lock()
-	hook.sending = true
-	hook.mu.Unlock()
-
-	err := hook.Fire(&logrus.Entry{
-		Logger:  logrus.New(),
-		Level:   logrus.ErrorLevel,
-		Message: "should be dropped",
-		Time:    time.Now(),
-		Data:    logrus.Fields{},
-	})
-	require.NoError(t, err)
-
-	hook.mu.Lock()
-	assert.Empty(t, hook.buffer)
-	hook.mu.Unlock()
+	mu.Lock()
+	defer mu.Unlock()
+	// We should have received some entries, but not necessarily all of them.
+	assert.Greater(t, len(*received), 0)
 }
 
 func TestBackendHookFlushSendsBatch(t *testing.T) {
 	var mu sync.Mutex
-	var batches [][]backendLogEntry
+	var batchCount int
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "test-api-key", r.Header.Get("DBTUNE-API-KEY"))
-		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
@@ -100,14 +116,23 @@ func TestBackendHookFlushSendsBatch(t *testing.T) {
 		require.NoError(t, json.Unmarshal(body, &entries))
 
 		mu.Lock()
-		batches = append(batches, entries)
+		batchCount++
 		mu.Unlock()
+
+		assert.Len(t, entries, 3)
+		assert.Equal(t, "first warning", entries[0].Message)
+		assert.Equal(t, "warning", entries[0].Level)
+		assert.Equal(t, "an error occurred", entries[1].Message)
+		assert.Equal(t, "error", entries[1].Level)
+		assert.Equal(t, "second warning", entries[2].Message)
+		assert.Equal(t, "warning", entries[2].Level)
 
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
 
 	hook := CreateBackendHook(server.URL, "test-api-key")
+	defer hook.Close()
 
 	for _, e := range []struct {
 		level   logrus.Level
@@ -117,58 +142,52 @@ func TestBackendHookFlushSendsBatch(t *testing.T) {
 		{logrus.ErrorLevel, "an error occurred"},
 		{logrus.WarnLevel, "second warning"},
 	} {
-		err := hook.Fire(&logrus.Entry{
-			Logger:  logrus.New(),
-			Level:   e.level,
-			Message: e.message,
-			Time:    time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-			Data:    logrus.Fields{},
-		})
-		require.NoError(t, err)
+		fireEntry(t, hook, e.level, e.message)
 	}
 
 	hook.Flush()
 
 	mu.Lock()
 	defer mu.Unlock()
-
-	// Single batch POST, not 3 individual ones
-	require.Len(t, batches, 1)
-	require.Len(t, batches[0], 3)
-	assert.Equal(t, "first warning", batches[0][0].Message)
-	assert.Equal(t, "warning", batches[0][0].Level)
-	assert.Equal(t, "an error occurred", batches[0][1].Message)
-	assert.Equal(t, "error", batches[0][1].Level)
-	assert.Equal(t, "second warning", batches[0][2].Message)
-	assert.Equal(t, "warning", batches[0][2].Level)
+	assert.Equal(t, 1, batchCount, "should send a single batch, not individual entries")
 }
 
 func TestBackendHookFlushClearsBuffer(t *testing.T) {
+	var mu sync.Mutex
+	var batchCount int
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		batchCount++
+		mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
 
 	hook := CreateBackendHook(server.URL, "key")
+	defer hook.Close()
 
-	err := hook.Fire(&logrus.Entry{
-		Logger:  logrus.New(),
-		Level:   logrus.ErrorLevel,
-		Message: "test",
-		Time:    time.Now(),
-		Data:    logrus.Fields{},
-	})
-	require.NoError(t, err)
-
+	fireEntry(t, hook, logrus.ErrorLevel, "test")
 	hook.Flush()
 
-	hook.mu.Lock()
-	assert.Empty(t, hook.buffer)
-	hook.mu.Unlock()
+	mu.Lock()
+	count := batchCount
+	mu.Unlock()
+	assert.Equal(t, 1, count)
+
+	// Second flush should not send anything.
+	hook.Flush()
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 1, batchCount)
 }
 
 func TestBackendHookIncludesFields(t *testing.T) {
-	hook := CreateBackendHook("http://localhost", "key")
+	server, received, mu := newTestServer(t)
+
+	hook := CreateBackendHook(server.URL, "key")
+	defer hook.Close()
 
 	err := hook.Fire(&logrus.Entry{
 		Logger:  logrus.New(),
@@ -183,55 +202,35 @@ func TestBackendHookIncludesFields(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	hook.mu.Lock()
-	defer hook.mu.Unlock()
+	hook.Flush()
 
-	require.Len(t, hook.buffer, 1)
-	assert.Contains(t, hook.buffer[0].Message, "db connection failed")
-	assert.Contains(t, hook.buffer[0].Message, "localhost")
-	assert.Contains(t, hook.buffer[0].Message, "5432")
-	assert.Contains(t, hook.buffer[0].Message, "connection refused")
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, *received, 1)
+	assert.Contains(t, (*received)[0].Message, "db connection failed")
+	assert.Contains(t, (*received)[0].Message, "localhost")
+	assert.Contains(t, (*received)[0].Message, "5432")
+	assert.Contains(t, (*received)[0].Message, "connection refused")
 }
 
 func TestBackendHookFlushNoopWhenEmpty(t *testing.T) {
 	hook := CreateBackendHook("http://localhost", "key")
-	hook.Flush()
+	defer hook.Close()
 
-	hook.mu.Lock()
-	assert.Empty(t, hook.buffer)
-	hook.mu.Unlock()
+	// Should not panic or block.
+	hook.Flush()
 }
 
 func TestBackendHookCloseDrainsBuffer(t *testing.T) {
-	var mu sync.Mutex
-	var received []backendLogEntry
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var entries []backendLogEntry
-		_ = json.Unmarshal(body, &entries)
-
-		mu.Lock()
-		received = append(received, entries...)
-		mu.Unlock()
-
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer server.Close()
+	server, received, mu := newTestServer(t)
 
 	hook := CreateBackendHook(server.URL, "key")
 
-	_ = hook.Fire(&logrus.Entry{
-		Logger:  logrus.New(),
-		Level:   logrus.ErrorLevel,
-		Message: "should be flushed on close",
-		Time:    time.Now(),
-		Data:    logrus.Fields{},
-	})
+	fireEntry(t, hook, logrus.ErrorLevel, "should be flushed on close")
 
 	hook.Close()
 
-	// Verify stop channel is closed (flushLoop will exit)
+	// Verify stop channel is closed (flushLoop exited).
 	select {
 	case <-hook.stop:
 		// expected
@@ -239,37 +238,27 @@ func TestBackendHookCloseDrainsBuffer(t *testing.T) {
 		t.Fatal("stop channel should be closed after Close()")
 	}
 
-	// Verify buffer was drained
-	hook.mu.Lock()
-	assert.Empty(t, hook.buffer)
-	hook.mu.Unlock()
-
-	// Verify the entry was actually sent to the backend
+	// Verify the entry was sent to the backend.
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(t, received, 1)
-	assert.Contains(t, received[0].Message, "should be flushed on close")
+	require.Len(t, *received, 1)
+	assert.Contains(t, (*received)[0].Message, "should be flushed on close")
+}
+
+func TestBackendHookCloseIsIdempotent(t *testing.T) {
+	hook := CreateBackendHook("http://localhost", "key")
+
+	// Calling Close multiple times must not panic.
+	hook.Close()
+	hook.Close()
 }
 
 func TestBackendHookIntegrationWithLogger(t *testing.T) {
-	var mu sync.Mutex
-	var received []backendLogEntry
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var entries []backendLogEntry
-		_ = json.Unmarshal(body, &entries)
-
-		mu.Lock()
-		received = append(received, entries...)
-		mu.Unlock()
-
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer server.Close()
+	server, received, mu := newTestServer(t)
 
 	logger := logrus.New()
 	hook := CreateBackendHook(server.URL, "key")
+	defer hook.Close()
 	logger.AddHook(hook)
 
 	logger.Warn("a warning")
@@ -282,7 +271,7 @@ func TestBackendHookIntegrationWithLogger(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	assert.Len(t, received, 2)
-	assert.Contains(t, received[0].Message, "a warning")
-	assert.Contains(t, received[1].Message, "an error")
+	assert.Len(t, *received, 2)
+	assert.Contains(t, (*received)[0].Message, "a warning")
+	assert.Contains(t, (*received)[1].Message, "an error")
 }
