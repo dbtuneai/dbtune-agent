@@ -33,68 +33,77 @@ func CollectDDL(pgPool *pgxpool.Pool, ctx context.Context) (string, error) {
 		defer cancel()
 	}
 
+	// Discover all non-system schemas in the database.
+	schemas, err := discoverSchemas(pgPool, ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(schemas) == 0 {
+		return "", nil
+	}
+
 	// Run all catalog queries.
-	enums, err := queryDDLEnumTypes(pgPool, ctx)
+	enums, err := queryDDLEnumTypes(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
-	domains, err := queryDDLDomainTypes(pgPool, ctx)
+	domains, err := queryDDLDomainTypes(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
-	composites, err := queryDDLCompositeTypes(pgPool, ctx)
+	composites, err := queryDDLCompositeTypes(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
-	functions, err := queryDDLFunctions(pgPool, ctx)
+	functions, err := queryDDLFunctions(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
-	tables, err := queryDDLTables(pgPool, ctx)
+	tables, err := queryDDLTables(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
-	columns, err := queryDDLColumns(pgPool, ctx)
+	columns, err := queryDDLColumns(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
-	constraints, err := queryDDLConstraints(pgPool, ctx)
+	constraints, err := queryDDLConstraints(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
-	allSeqsRaw, err := queryDDLAllSequences(pgPool, ctx)
+	allSeqsRaw, err := queryDDLAllSequences(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
-	partitions, err := queryDDLPartitionChildren(pgPool, ctx)
+	partitions, err := queryDDLPartitionChildren(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
-	indexes, err := queryDDLIndexes(pgPool, ctx)
+	indexes, err := queryDDLIndexes(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
-	fks, err := queryDDLForeignKeys(pgPool, ctx)
+	fks, err := queryDDLForeignKeys(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
-	views, err := queryDDLViews(pgPool, ctx)
+	views, err := queryDDLViews(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
-	matviews, err := queryDDLMaterializedViews(pgPool, ctx)
+	matviews, err := queryDDLMaterializedViews(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
-	rlsEnabled, err := queryDDLRLSEnabled(pgPool, ctx)
+	rlsEnabled, err := queryDDLRLSEnabled(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
-	rlsPolicies, err := queryDDLRLSPolicies(pgPool, ctx)
+	rlsPolicies, err := queryDDLRLSPolicies(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
-	triggers, err := queryDDLTriggers(pgPool, ctx)
+	triggers, err := queryDDLTriggers(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
@@ -106,7 +115,7 @@ func CollectDDL(pgPool *pgxpool.Pool, ctx context.Context) (string, error) {
 	columnsByOID := groupBy(columns, func(c DDLColumn) uint32 { return c.TableOID })
 	serialCols := colSet(serialSeqs, func(s DDLSerialSequence) (string, string) { return s.TableName, s.ColumnName })
 	identityCols := colSet(identitySeqs, func(s DDLIdentitySequence) (string, string) { return s.TableName, s.ColumnName })
-	pkCols, err := buildPKColSet(pgPool, ctx)
+	pkCols, err := buildPKColSet(pgPool, ctx, schemas)
 	if err != nil {
 		return "", err
 	}
@@ -124,8 +133,12 @@ func CollectDDL(pgPool *pgxpool.Pool, ctx context.Context) (string, error) {
 	// Extensions.
 	writeExtensions(&b, pgPool, ctx)
 
-	// Schemas for cross-schema types.
-	writeNonPublicSchemas(&b, enums, domains, composites)
+	// Schemas (emit CREATE SCHEMA for non-public schemas).
+	writeSchemas(&b, schemas)
+
+	// Non-public schemas for cross-schema types (types may live outside
+	// the collected schemas, e.g. in a shared type schema).
+	writeNonCollectedTypeSchemas(&b, schemas, enums, domains, composites)
 
 	// Types.
 	emit(&b, enums, formatDDLEnumType)
@@ -234,12 +247,12 @@ func filter[T any](items []T, pred func(T) bool) []T {
 
 // buildPKColSet queries for PK column positions and returns a set of
 // "tableOID:attnum" keys.
-func buildPKColSet(pool *pgxpool.Pool, ctx context.Context) (map[string]bool, error) {
+func buildPKColSet(pool *pgxpool.Pool, ctx context.Context, schemas []string) (map[string]bool, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT con.conrelid::integer, unnest(con.conkey)::integer
 		FROM pg_constraint con
 		JOIN pg_namespace n ON n.oid = (SELECT relnamespace FROM pg_class WHERE oid = con.conrelid)
-		WHERE n.nspname = 'public' AND con.contype = 'p'`)
+		WHERE n.nspname = ANY($1::text[]) AND con.contype = 'p'`, schemas)
 	if err != nil {
 		return nil, fmt.Errorf("pk columns: %w", err)
 	}
@@ -256,14 +269,14 @@ func buildPKColSet(pool *pgxpool.Pool, ctx context.Context) (map[string]bool, er
 	return m, rows.Err()
 }
 
-// writeExtensions emits CREATE EXTENSION statements for public-schema extensions.
+// writeExtensions emits CREATE EXTENSION statements for all user-installed extensions.
 func writeExtensions(b *strings.Builder, pool *pgxpool.Pool, ctx context.Context) {
 	rows, _ := pool.Query(ctx, `
 		SELECT 'CREATE EXTENSION IF NOT EXISTS ' || quote_ident(e.extname) ||
 		       ' WITH SCHEMA ' || quote_ident(n.nspname) || ';'
 		FROM pg_extension e
 		JOIN pg_namespace n ON n.oid = e.extnamespace
-		WHERE n.nspname = 'public' AND e.extname <> 'plpgsql'
+		WHERE e.extname <> 'plpgsql'
 		ORDER BY e.extname`)
 	if rows == nil {
 		return
@@ -278,12 +291,29 @@ func writeExtensions(b *strings.Builder, pool *pgxpool.Pool, ctx context.Context
 	}
 }
 
-// writeNonPublicSchemas emits CREATE SCHEMA for any non-public schema
-// referenced by types (enums, domains, composites).
-func writeNonPublicSchemas(b *strings.Builder, enums []DDLEnumType, domains []DDLDomainType, composites []DDLCompositeType) {
+// writeSchemas emits CREATE SCHEMA for all collected schemas except 'public'
+// (which always exists).
+func writeSchemas(b *strings.Builder, schemas []string) {
+	for _, s := range schemas {
+		if s != "public" {
+			b.WriteString("CREATE SCHEMA IF NOT EXISTS ")
+			b.WriteString(s)
+			b.WriteString(";\n\n")
+		}
+	}
+}
+
+// writeNonCollectedTypeSchemas emits CREATE SCHEMA for any type schema that
+// is not among the collected schemas (e.g. a shared type schema).
+func writeNonCollectedTypeSchemas(b *strings.Builder, collectedSchemas []string, enums []DDLEnumType, domains []DDLDomainType, composites []DDLCompositeType) {
+	collected := make(map[string]bool, len(collectedSchemas))
+	for _, s := range collectedSchemas {
+		collected[s] = true
+	}
+
 	seen := make(map[string]bool)
 	emitSchema := func(schema string) {
-		if schema != "public" && !seen[schema] {
+		if !collected[schema] && !seen[schema] {
 			seen[schema] = true
 			b.WriteString("CREATE SCHEMA IF NOT EXISTS ")
 			b.WriteString(schema)

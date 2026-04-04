@@ -510,7 +510,7 @@ var goldenSchemaFixtures = []string{
 	 ON orders (user_id ASC, ordered_at DESC NULLS FIRST)`,
 
 	// ================================================================
-	// Scope exclusions — non-public schema table (must NOT appear in output)
+	// Non-public schema — table must appear in output with schema qualification
 	// ================================================================
 	`CREATE SCHEMA IF NOT EXISTS private_schema`,
 	`CREATE TABLE private_schema.hidden_table (val integer)`,
@@ -885,8 +885,6 @@ var pgDumpStripPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?m)^\\restrict\s+.*$`),                                            // \restrict lines
 	regexp.MustCompile(`(?m)^\\unrestrict\s+.*$`),                                          // \unrestrict lines
 	regexp.MustCompile(`(?m)^CREATE EXTENSION .*;\s*$`),                                    // extension creation
-	regexp.MustCompile(`(?m)^CREATE SCHEMA .*;\s*$`),                                       // non-public schema creation
-	regexp.MustCompile(`(?ms)^CREATE TABLE private_schema\..*?;\s*$`),                      // non-public schema tables (multiline)
 	regexp.MustCompile(`(?m)^ALTER SEQUENCE .* OWNED BY .*;\s*$`),                          // sequence ownership
 	regexp.MustCompile(`(?m)^ALTER TABLE .* ALTER COLUMN .* SET DEFAULT nextval\(.*;\s*$`), // serial default setup
 }

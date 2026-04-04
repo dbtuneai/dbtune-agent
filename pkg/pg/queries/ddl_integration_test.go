@@ -315,15 +315,23 @@ func TestDDL_ScopeExclusions(t *testing.T) {
 	inst := ddlLatestInstance()
 	ctx := context.Background()
 
-	t.Run("non_public_schema_excluded", func(t *testing.T) {
+	t.Run("non_public_schema_included", func(t *testing.T) {
 		schema := "ddl_other_schema"
-		table := "ddl_scope_hidden"
+		table := "ddl_scope_visible"
 		_, _ = inst.admin.Exec(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", schema))
 		_, _ = inst.admin.Exec(ctx, fmt.Sprintf("CREATE TABLE %s.%s (val integer)", schema, table))
 		t.Cleanup(func() { _, _ = inst.admin.Exec(ctx, fmt.Sprintf("DROP SCHEMA %s CASCADE", schema)) })
 		ddl := collectDDLString(t, inst.pool)
-		if strings.Contains(ddl, table) {
-			t.Fatalf("non-public schema table should not appear in DDL:\n%s", ddl)
+		qualifiedName := schema + "." + table
+		if !strings.Contains(ddl, qualifiedName) {
+			t.Fatalf("non-public schema table should appear as %s in DDL:\n%s", qualifiedName, ddl)
+		}
+	})
+
+	t.Run("system_schemas_excluded", func(t *testing.T) {
+		ddl := collectDDLString(t, inst.pool)
+		if strings.Contains(ddl, "pg_catalog.") || strings.Contains(ddl, "information_schema.") {
+			t.Fatalf("system schema objects should not appear in DDL:\n%s", ddl)
 		}
 	})
 }
@@ -343,8 +351,8 @@ func TestDDL_IdentifierQuoting(t *testing.T) {
 	t.Run("reserved_word_table", func(t *testing.T) {
 		execDDL(t, inst.admin, `CREATE TABLE "user" (id integer)`, `"user"`)
 		ddl := collectDDLString(t, inst.pool)
-		if !strings.Contains(ddl, `CREATE TABLE "user"`) {
-			t.Fatalf("expected 'CREATE TABLE \"user\"' in DDL:\n%s", ddl)
+		if !strings.Contains(ddl, `CREATE TABLE public."user"`) {
+			t.Fatalf("expected 'CREATE TABLE public.\"user\"' in DDL:\n%s", ddl)
 		}
 	})
 }
@@ -443,14 +451,14 @@ func TestDDL_Sequences(t *testing.T) {
 
 	t.Run("standalone_sequence", func(t *testing.T) {
 		seqName := "ddl_seq_standalone"
+		qualifiedSeqName := "public." + seqName
 		table := "ddl_seq_standalone_tbl"
 		_, _ = inst.admin.Exec(ctx, fmt.Sprintf("CREATE SEQUENCE %s", seqName))
 		t.Cleanup(func() { _, _ = inst.admin.Exec(ctx, "DROP SEQUENCE IF EXISTS "+seqName+" CASCADE") })
 		execDDL(t, inst.admin, fmt.Sprintf("CREATE TABLE %s (id integer DEFAULT nextval('%s'))", table, seqName), table)
 		ddl := collectDDLString(t, inst.pool)
-		if !strings.Contains(ddl, "CREATE SEQUENCE "+seqName) &&
-			!strings.Contains(ddl, fmt.Sprintf("CREATE SEQUENCE %q", seqName)) {
-			t.Fatalf("expected CREATE SEQUENCE %s in DDL:\n%s", seqName, ddl)
+		if !strings.Contains(ddl, "CREATE SEQUENCE "+qualifiedSeqName) {
+			t.Fatalf("expected CREATE SEQUENCE %s in DDL:\n%s", qualifiedSeqName, ddl)
 		}
 	})
 }
@@ -718,6 +726,157 @@ func TestDDL_CrossSchemaTypes(t *testing.T) {
 	if !strings.Contains(ddl, "CREATE TYPE") || !strings.Contains(ddl, typeName) {
 		t.Fatalf("expected CREATE TYPE for cross-schema enum in DDL:\n%s", ddl)
 	}
+}
+
+// TestDDL_NonPublicSchema verifies that objects in non-public schemas are
+// correctly collected with schema-qualified names, and that the output
+// can be replayed and matches pg_dump.
+func TestDDL_NonPublicSchema(t *testing.T) {
+	inst := ddlLatestInstance()
+	ctx := context.Background()
+
+	t.Run("table_in_custom_schema", func(t *testing.T) {
+		schema := "app_data"
+		table := "customers"
+		_, _ = inst.admin.Exec(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", schema))
+		_, _ = inst.admin.Exec(ctx, fmt.Sprintf("CREATE TABLE %s.%s (id integer PRIMARY KEY, name text NOT NULL)", schema, table))
+		t.Cleanup(func() { _, _ = inst.admin.Exec(ctx, fmt.Sprintf("DROP SCHEMA %s CASCADE", schema)) })
+
+		ddl := collectDDLString(t, inst.pool)
+
+		// Must contain the schema-qualified table name.
+		qualifiedTable := schema + "." + table
+		if !strings.Contains(ddl, "CREATE TABLE "+qualifiedTable) {
+			t.Fatalf("expected CREATE TABLE %s in DDL:\n%s", qualifiedTable, ddl)
+		}
+		// Must contain the CREATE SCHEMA statement.
+		if !strings.Contains(ddl, "CREATE SCHEMA IF NOT EXISTS "+schema) {
+			t.Fatalf("expected CREATE SCHEMA %s in DDL:\n%s", schema, ddl)
+		}
+		// The constraint should also be schema-qualified.
+		if !strings.Contains(ddl, "ALTER TABLE ONLY "+qualifiedTable) {
+			t.Fatalf("expected ALTER TABLE ONLY %s for PK in DDL:\n%s", qualifiedTable, ddl)
+		}
+	})
+
+	t.Run("fk_across_schemas", func(t *testing.T) {
+		schema := "orders_schema"
+		parentTable := "ddl_ns_parent"
+		childTable := "ddl_ns_child"
+		_, _ = inst.admin.Exec(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", schema))
+		_, _ = inst.admin.Exec(ctx, fmt.Sprintf("CREATE TABLE %s.%s (id integer PRIMARY KEY)", schema, parentTable))
+		_, _ = inst.admin.Exec(ctx, fmt.Sprintf(
+			"CREATE TABLE %s.%s (id integer PRIMARY KEY, parent_id integer REFERENCES %s.%s(id))",
+			schema, childTable, schema, parentTable,
+		))
+		t.Cleanup(func() { _, _ = inst.admin.Exec(ctx, fmt.Sprintf("DROP SCHEMA %s CASCADE", schema)) })
+
+		ddl := collectDDLString(t, inst.pool)
+
+		qualifiedChild := schema + "." + childTable
+		if !strings.Contains(ddl, "ALTER TABLE ONLY "+qualifiedChild) || !strings.Contains(ddl, "FOREIGN KEY") {
+			t.Fatalf("expected schema-qualified FK constraint for %s in DDL:\n%s", qualifiedChild, ddl)
+		}
+	})
+
+	t.Run("index_in_custom_schema", func(t *testing.T) {
+		schema := "idx_schema"
+		table := "ddl_ns_indexed"
+		_, _ = inst.admin.Exec(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", schema))
+		_, _ = inst.admin.Exec(ctx, fmt.Sprintf("CREATE TABLE %s.%s (id integer, val text)", schema, table))
+		_, _ = inst.admin.Exec(ctx, fmt.Sprintf("CREATE INDEX idx_ns_val ON %s.%s (val)", schema, table))
+		t.Cleanup(func() { _, _ = inst.admin.Exec(ctx, fmt.Sprintf("DROP SCHEMA %s CASCADE", schema)) })
+
+		ddl := collectDDLString(t, inst.pool)
+		// pg_indexes.indexdef is schema-qualified by PostgreSQL itself.
+		qualifiedTable := schema + "." + table
+		if !strings.Contains(ddl, qualifiedTable) || !strings.Contains(ddl, "idx_ns_val") {
+			t.Fatalf("expected schema-qualified index on %s in DDL:\n%s", qualifiedTable, ddl)
+		}
+	})
+
+	t.Run("roundtrip_non_public_schema", func(t *testing.T) {
+		// Create a fresh database with objects in a non-public schema,
+		// collect DDL, replay it, and verify it reproduces the same schema.
+		sourceDB := "ddl_ns_source"
+		replayDB := "ddl_ns_replay"
+
+		_, _ = inst.admin.Exec(ctx, "DROP DATABASE IF EXISTS "+sourceDB)
+		_, err := inst.admin.Exec(ctx, "CREATE DATABASE "+sourceDB)
+		if err != nil {
+			t.Fatalf("CREATE DATABASE %s failed: %v", sourceDB, err)
+		}
+		t.Cleanup(func() { _, _ = inst.admin.Exec(ctx, "DROP DATABASE IF EXISTS "+sourceDB) })
+
+		sourceConnStr := replaceDBInConnStr(inst.admin, sourceDB)
+		sourceAdmin, err := pgxpool.New(ctx, sourceConnStr)
+		if err != nil {
+			t.Fatalf("connect to source: %v", err)
+		}
+		defer sourceAdmin.Close()
+
+		// Create schema with tables, FK, and index.
+		for _, sql := range []string{
+			"CREATE SCHEMA myapp",
+			"CREATE TABLE myapp.users (id integer PRIMARY KEY, name text NOT NULL)",
+			"CREATE TABLE myapp.orders (id integer PRIMARY KEY, user_id integer REFERENCES myapp.users(id), total numeric(10,2))",
+			"CREATE INDEX idx_orders_user ON myapp.orders (user_id)",
+		} {
+			if _, err := sourceAdmin.Exec(ctx, sql); err != nil {
+				t.Fatalf("setup: %v\nSQL: %s", err, sql)
+			}
+		}
+
+		// Create monitor role.
+		for _, sql := range []string{
+			`DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'monitor') THEN CREATE ROLE monitor LOGIN PASSWORD 'monitor'; END IF; END $$`,
+			`GRANT pg_monitor TO monitor`,
+		} {
+			if _, err := sourceAdmin.Exec(ctx, sql); err != nil {
+				t.Fatalf("monitor setup: %v", err)
+			}
+		}
+
+		monitorConnStr := strings.Replace(sourceConnStr, "user=test", "user=monitor", 1)
+		monitorConnStr = strings.Replace(monitorConnStr, "password=test", "password=monitor", 1)
+		sourceMonitor, err := pgxpool.New(ctx, monitorConnStr)
+		if err != nil {
+			t.Fatalf("connect as monitor: %v", err)
+		}
+		defer sourceMonitor.Close()
+
+		ourDDL, err := CollectDDL(sourceMonitor, ctx)
+		if err != nil {
+			t.Fatalf("CollectDDL: %v", err)
+		}
+
+		// Replay into fresh DB.
+		_, _ = inst.admin.Exec(ctx, "DROP DATABASE IF EXISTS "+replayDB)
+		_, err = inst.admin.Exec(ctx, "CREATE DATABASE "+replayDB)
+		if err != nil {
+			t.Fatalf("CREATE DATABASE %s failed: %v", replayDB, err)
+		}
+		t.Cleanup(func() { _, _ = inst.admin.Exec(ctx, "DROP DATABASE IF EXISTS "+replayDB) })
+
+		replayConnStr := replaceDBInConnStr(inst.admin, replayDB)
+		replayPool, err := pgxpool.New(ctx, replayConnStr)
+		if err != nil {
+			t.Fatalf("connect to replay: %v", err)
+		}
+		defer replayPool.Close()
+
+		if _, err := replayPool.Exec(ctx, ourDDL); err != nil {
+			t.Fatalf("replay failed:\nerror: %v\nDDL:\n%s", err, ourDDL)
+		}
+
+		// Compare pg_dump output between source and replay.
+		sourceDump := pgDumpSchemaOnly(t, inst, sourceDB)
+		replayDump := pgDumpSchemaOnly(t, inst, replayDB)
+
+		if sourceDump != replayDump {
+			t.Errorf("pg_dump output differs:\n%s", unifiedTextDiff(sourceDump, replayDump))
+		}
+	})
 }
 
 // TestDDL_MultiVersion runs CollectDDL against all PG versions to ensure no SQL
