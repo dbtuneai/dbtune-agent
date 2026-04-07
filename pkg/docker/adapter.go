@@ -149,7 +149,7 @@ func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
 	return collectors
 }
 
-func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (d *DockerContainerAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	d.Logger().Println("Collecting system info for Docker container")
 
 	systemInfo := make([]metrics.FlatValue, 0, 7)
@@ -168,7 +168,7 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	}
 
 	// Get container stats
-	stats, err := d.dockerClient.ContainerStats(context.Background(), d.Config.ContainerName, false)
+	stats, err := d.dockerClient.ContainerStats(ctx, d.Config.ContainerName, false)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +182,7 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	}
 
 	// Get container info for additional details
-	containerInfo, err := d.dockerClient.ContainerInspect(context.Background(), d.Config.ContainerName)
+	containerInfo, err := d.dockerClient.ContainerInspect(ctx, d.Config.ContainerName)
 	if err != nil {
 		return nil, err
 	}
@@ -251,9 +251,9 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return systemInfo, nil
 }
 
-func (d *DockerContainerAdapter) Guardrails() *guardrails.Signal {
+func (d *DockerContainerAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	// Get container stats
-	stats, err := d.dockerClient.ContainerStats(context.Background(), d.Config.ContainerName, false)
+	stats, err := d.dockerClient.ContainerStats(ctx, d.Config.ContainerName, false)
 	if err != nil {
 		d.Logger().Warnf("guardrail: could not fetch docker stats: %v", err)
 		return nil
@@ -287,14 +287,12 @@ func (d *DockerContainerAdapter) Guardrails() *guardrails.Signal {
 	return nil
 }
 
-func (d *DockerContainerAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(d.PGDriver, context.Background(), d.Logger())
+func (d *DockerContainerAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
+	return pg.GetActiveConfig(d.PGDriver, ctx, d.Logger())
 }
 
-func (d *DockerContainerAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	d.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
-
-	ctx := context.Background()
 
 	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
 	if err != nil {

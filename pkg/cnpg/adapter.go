@@ -135,9 +135,8 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 	return adapter, nil
 }
 
-func (adapter *CNPGAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	// https://cloudnative-pg.io/documentation/1.27/postgresql_conf/#changing-configuration
-	ctx := context.Background()
 	logger := adapter.Logger()
 
 	logger.Infof("[FAILOVER_RECOVERY] ApplyConfig called: knob_application=%s, num_params=%d",
@@ -358,12 +357,12 @@ func (adapter *CNPGAdapter) getClusterName(_ context.Context) (string, error) {
 	return adapter.Config.ClusterName, nil
 }
 
-func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
+func (adapter *CNPGAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	logger := adapter.Logger()
 
 	// Check for failover before querying PostgreSQL
 	// During recovery, PostgreSQL may be unavailable or unreliable
-	if err := adapter.CheckForFailover(context.Background()); err != nil {
+	if err := adapter.CheckForFailover(ctx); err != nil {
 		// Block operation for ANY error from CheckForFailover
 		var failoverErr *FailoverDetectedError
 		if errors.As(err, &failoverErr) {
@@ -377,12 +376,12 @@ func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 
 	// Get operations context AFTER CheckForFailover passes
 	// This ensures we get the fresh context created by recovery completion, not the pre-cancelled one
-	ctx := adapter.State.GetOperationsContext()
+	dbCtx := adapter.State.GetOperationsContext()
 
-	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx, logger)
+	config, err := pg.GetActiveConfig(adapter.PGDriver, dbCtx, logger)
 	if err != nil {
 		// If context was cancelled (failover detected mid-query), return FailoverDetectedError
-		if ctx.Err() == context.Canceled {
+		if dbCtx.Err() == context.Canceled {
 			logger.Infof("[FAILOVER_RECOVERY] GetActiveConfig aborted due to context cancellation")
 			return agent.ConfigArraySchema{}, &FailoverDetectedError{
 				OldPrimary: adapter.State.GetLastKnownPrimary(),
@@ -413,7 +412,7 @@ func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 					ErrorType:    "failover_detected",
 					Timestamp:    time.Now().UTC().Format(time.RFC3339),
 				}
-				if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+				if sendErr := adapter.SendError(ctx, errorPayload); sendErr != nil {
 					logger.Errorf("failed to send error report: %v", sendErr)
 				}
 			}
@@ -435,12 +434,12 @@ func (adapter *CNPGAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
 }
 
 // GetMetrics overrides CommonAgent.GetMetrics to check for failover before collecting metrics
-func (adapter *CNPGAdapter) GetMetrics() ([]metrics.FlatValue, error) {
+func (adapter *CNPGAdapter) GetMetrics(ctx context.Context) ([]metrics.FlatValue, error) {
 	logger := adapter.Logger()
 
 	// Check for failover before collecting metrics
 	// During recovery, PostgreSQL and primary pod may be unavailable
-	if err := adapter.CheckForFailover(context.Background()); err != nil {
+	if err := adapter.CheckForFailover(ctx); err != nil {
 		// Block operation for ANY error from CheckForFailover
 		var failoverErr *FailoverDetectedError
 		if errors.As(err, &failoverErr) {
@@ -454,16 +453,16 @@ func (adapter *CNPGAdapter) GetMetrics() ([]metrics.FlatValue, error) {
 
 	// Cluster is healthy - proceed with normal metrics collection
 	// Note: collectors internally use their own context, but this is the entry point check
-	return adapter.CommonAgent.GetMetrics()
+	return adapter.CommonAgent.GetMetrics(ctx)
 }
 
-func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *CNPGAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	logger := adapter.Logger()
 	var flatValues []metrics.FlatValue
 
 	// Check for failover before collecting system info
 	// During recovery, PostgreSQL and primary pod may be unavailable
-	if err := adapter.CheckForFailover(context.Background()); err != nil {
+	if err := adapter.CheckForFailover(ctx); err != nil {
 		// Block operation for ANY error from CheckForFailover
 		var failoverErr *FailoverDetectedError
 		if errors.As(err, &failoverErr) {
@@ -479,7 +478,7 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 
 	// Get operations context AFTER CheckForFailover passes
 	// This ensures we get the fresh context created by recovery completion, not the pre-cancelled one
-	ctx := adapter.State.GetOperationsContext()
+	dbCtx := adapter.State.GetOperationsContext()
 
 	// Get PostgreSQL version
 	pgVersionMetric, err := metrics.PGVersion.AsFlatValue(adapter.PGVersion)
@@ -492,7 +491,7 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
 	if err != nil {
 		// Check if context was cancelled (failover during operation)
-		if ctx.Err() == context.Canceled {
+		if dbCtx.Err() == context.Canceled {
 			logger.Infof("[FAILOVER_RECOVERY] GetSystemInfo aborted due to context cancellation")
 			return []metrics.FlatValue{}, &FailoverDetectedError{
 				OldPrimary: adapter.State.GetLastKnownPrimary(),
@@ -523,10 +522,10 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	flatValues = append(flatValues, maxConnectionsMetric)
 
 	// Dynamically discover current primary pod for system info
-	primaryPod, err := adapter.K8sClient.FindCNPGPrimaryPod(ctx, adapter.Config.ClusterName)
+	primaryPod, err := adapter.K8sClient.FindCNPGPrimaryPod(dbCtx, adapter.Config.ClusterName)
 	if err != nil {
 		// Check if context was cancelled (failover during operation)
-		if ctx.Err() == context.Canceled {
+		if dbCtx.Err() == context.Canceled {
 			logger.Infof("[FAILOVER_RECOVERY] GetSystemInfo aborted due to context cancellation")
 			return []metrics.FlatValue{}, nil
 		}
@@ -543,10 +542,10 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	}
 
 	containerClient := adapter.K8sClient.ContainerClient(primaryPod, adapter.Config.ContainerName)
-	systemInfo, err := containerClient.GetContainerSystemInfo(ctx)
+	systemInfo, err := containerClient.GetContainerSystemInfo(dbCtx)
 	if err != nil {
 		// Check if context was cancelled (failover during operation)
-		if ctx.Err() == context.Canceled {
+		if dbCtx.Err() == context.Canceled {
 			logger.Infof("[FAILOVER_RECOVERY] GetSystemInfo aborted due to context cancellation")
 			return []metrics.FlatValue{}, nil
 		}
@@ -557,16 +556,13 @@ func (adapter *CNPGAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return flatValues, nil
 }
 
-func (adapter *CNPGAdapter) Guardrails() *guardrails.Signal {
+func (adapter *CNPGAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	// Check if enough time has passed since the last guardrail check
 	if adapter.State.TimeSinceLastGuardrailCheck() < 5*time.Second {
 		return nil
 	}
 	adapter.Logger().Debugf("Checking Guardrails")
 	adapter.State.UpdateLastGuardrailCheck()
-
-	// Get pod resources to determine memory limit
-	ctx := context.Background()
 
 	// This provides continuous failover detection even when ApplyConfig isn't running
 	if err := adapter.CheckForFailover(ctx); err != nil {

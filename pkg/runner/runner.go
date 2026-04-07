@@ -10,6 +10,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/pg"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
 )
 
@@ -23,10 +24,10 @@ func isRecoveryError(err error) bool {
 		strings.Contains(errMsg, "recovery in progress")
 }
 
-func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger *logrus.Logger, skipFirst bool, fn func() error) {
+func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger *logrus.Logger, skipFirst bool, fn func(ctx context.Context) error) {
 	// Run immediately
 	if !skipFirst {
-		if err := fn(); err != nil {
+		if err := fn(ctx); err != nil {
 			logger.Errorf("initial %s error: %v", name, err)
 		}
 	}
@@ -36,7 +37,7 @@ func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := fn(); err != nil {
+			if err := fn(ctx); err != nil {
 				logger.Errorf("%s error: %v", name, err)
 			}
 		}
@@ -65,15 +66,18 @@ func withHealthGate(hg *agent.HealthGate, logger *logrus.Logger, fn func() error
 
 // Runner is the main entry point for the agent
 // that executes the different tasks
-func Runner(adapter agent.AgentLooper) {
+func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	logger := adapter.Logger()
 
-	// Create a context that we can cancel
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// Extract pool for health gate via type assertion — Pool() is not part of
+	// the AgentLooper interface but is available on all adapters via CommonAgent.
+	var pool *pgxpool.Pool
+	if pp, ok := adapter.(interface{ Pool() *pgxpool.Pool }); ok {
+		pool = pp.Pool()
+	}
 
 	// Create a HealthGate to short-circuit DB-hitting calls when the database is unreachable.
-	hg := agent.NewHealthGate(ctx, adapter.Pool(), pg.IsConnectionError, logger)
+	hg := agent.NewHealthGate(ctx, pool, pg.IsConnectionError, logger)
 
 	// Create tickers for different intervals
 	metricsTicker := time.NewTicker(5 * time.Second)
@@ -83,52 +87,54 @@ func Runner(adapter agent.AgentLooper) {
 	guardrailTicker := time.NewTicker(1 * time.Second)
 
 	// Heartbeat goroutine
-	go runWithTicker(ctx, heartbeatTicker, "heartbeat", logger, true, adapter.SendHeartbeat)
+	go runWithTicker(ctx, heartbeatTicker, "heartbeat", logger, true, func(ctx context.Context) error {
+		return adapter.SendHeartbeat(ctx)
+	})
 
 	// Metrics collection goroutine
-	go runWithTicker(ctx, metricsTicker, "metrics", logger, false, func() error {
+	go runWithTicker(ctx, metricsTicker, "metrics", logger, false, func(ctx context.Context) error {
 		return withHealthGate(hg, logger, func() error {
-			data, err := adapter.GetMetrics()
+			data, err := adapter.GetMetrics(ctx)
 			if err != nil {
 				// Send partial data even when some collectors failed.
 				if len(data) > 0 {
-					if sendErr := adapter.SendMetrics(data); sendErr != nil {
+					if sendErr := adapter.SendMetrics(ctx, data); sendErr != nil {
 						logger.Errorf("failed to send partial metrics: %v", sendErr)
 					}
 				}
 				return fmt.Errorf("failed to collect metrics: %w", err)
 			}
-			return adapter.SendMetrics(data)
+			return adapter.SendMetrics(ctx, data)
 		})
 	})
 
 	// System metrics collection goroutine
-	go runWithTicker(ctx, systemMetricsTicker, "system info", logger, false, func() error {
+	go runWithTicker(ctx, systemMetricsTicker, "system info", logger, false, func(ctx context.Context) error {
 		return withHealthGate(hg, logger, func() error {
-			data, err := adapter.GetSystemInfo()
+			data, err := adapter.GetSystemInfo(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to collect system information: %w", err)
 			}
-			return adapter.SendSystemInfo(data)
+			return adapter.SendSystemInfo(ctx, data)
 		})
 	})
 
 	// Config management goroutine
-	go runWithTicker(ctx, configTicker, "config", logger, false, func() error {
+	go runWithTicker(ctx, configTicker, "config", logger, false, func(ctx context.Context) error {
 		return withHealthGate(hg, logger, func() error {
-			config, err := adapter.GetActiveConfig()
+			config, err := adapter.GetActiveConfig(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to get active configuration: %w", err)
 			}
 
 			// Check for proposed configs BEFORE sending current config
 			// This is critical after failover recovery - we need to apply baseline first
-			proposedConfig, err := adapter.GetProposedConfig()
+			proposedConfig, err := adapter.GetProposedConfig(ctx)
 			if err != nil {
 				return err
 			}
 			if proposedConfig != nil {
-				err := adapter.ApplyConfig(proposedConfig)
+				err := adapter.ApplyConfig(ctx, proposedConfig)
 				if err != nil {
 					errorType := "config_apply_error"
 					var restartErr *agent.RestartNotAllowedError
@@ -140,7 +146,7 @@ func Runner(adapter agent.AgentLooper) {
 						ErrorType:    errorType,
 						Timestamp:    time.Now().UTC().Format(time.RFC3339),
 					}
-					if sendErr := adapter.SendError(errorPayload); sendErr != nil {
+					if sendErr := adapter.SendError(ctx, errorPayload); sendErr != nil {
 						logger.Errorf("failed to send error report: %v", sendErr)
 					}
 					return err
@@ -148,13 +154,13 @@ func Runner(adapter agent.AgentLooper) {
 
 				// Re-fetch config after applying proposed config
 				// This ensures we send the newly applied config
-				config, err = adapter.GetActiveConfig()
+				config, err = adapter.GetActiveConfig(ctx)
 				if err != nil {
 					return err
 				}
 			}
 
-			return adapter.SendActiveConfig(config)
+			return adapter.SendActiveConfig(ctx, config)
 		})
 	})
 
@@ -162,13 +168,13 @@ func Runner(adapter agent.AgentLooper) {
 	// Time is kept in a pointer to keep a persistent reference
 	// May need to refactor this for testing
 	var lastCheck *time.Time
-	go runWithTicker(ctx, guardrailTicker, "guardrail", logger, false, func() error {
+	go runWithTicker(ctx, guardrailTicker, "guardrail", logger, false, func(ctx context.Context) error {
 		if lastCheck != nil && time.Since(*lastCheck) < 15*time.Second {
 			return nil
 		}
-		signal := adapter.Guardrails()
+		signal := adapter.Guardrails(ctx)
 		if signal != nil {
-			if err := adapter.SendGuardrailSignal(*signal); err != nil {
+			if err := adapter.SendGuardrailSignal(ctx, *signal); err != nil {
 				now := time.Now()
 				lastCheck = &now
 				return err
@@ -179,6 +185,6 @@ func Runner(adapter agent.AgentLooper) {
 		return nil
 	})
 
-	// Block forever
-	select {}
+	// Block until context is cancelled
+	<-ctx.Done()
 }

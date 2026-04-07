@@ -209,37 +209,37 @@ func TestServerURLsGeneration(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		path     AgentPath
+		path     string
 		expected string
 	}{
 		{
 			name:     "heartbeat",
-			path:     PathHeartbeat,
+			path:     "heartbeat",
 			expected: "https://app.dbtune.com/api/v1/agent/heartbeat?uuid=550e8400-e29b-41d4-a716-446655440000",
 		},
 		{
 			name:     "system-info",
-			path:     PathSystemInfo,
+			path:     "system-info",
 			expected: "https://app.dbtune.com/api/v1/agent/system-info?uuid=550e8400-e29b-41d4-a716-446655440000",
 		},
 		{
 			name:     "metrics",
-			path:     PathMetrics,
+			path:     "metrics",
 			expected: "https://app.dbtune.com/api/v1/agent/metrics?uuid=550e8400-e29b-41d4-a716-446655440000",
 		},
 		{
 			name:     "configurations",
-			path:     PathConfigurations,
+			path:     "configurations",
 			expected: "https://app.dbtune.com/api/v1/agent/configurations?uuid=550e8400-e29b-41d4-a716-446655440000",
 		},
 		{
 			name:     "guardrails",
-			path:     PathGuardrails,
+			path:     "guardrails",
 			expected: "https://app.dbtune.com/api/v1/agent/guardrails?uuid=550e8400-e29b-41d4-a716-446655440000",
 		},
 		{
 			name:     "log-entries",
-			path:     PathLogEntries,
+			path:     "log-entries",
 			expected: "https://app.dbtune.com/api/v1/agent/log-entries?uuid=550e8400-e29b-41d4-a716-446655440000",
 		},
 	}

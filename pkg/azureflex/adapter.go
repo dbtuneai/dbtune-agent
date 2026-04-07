@@ -74,8 +74,7 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 	return &adpt, nil
 }
 
-func (adapter *AzureFlexAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
-	ctx := context.Background()
+func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
 		return err
@@ -185,9 +184,7 @@ func ApplyParameter(ctx context.Context, logger *logrus.Logger, paramsClient *ar
 	return *res.Configuration.Properties.IsConfigPendingRestart, nil
 }
 
-func (adapter *AzureFlexAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
-	ctx := context.Background()
-
+func (adapter *AzureFlexAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx, adapter.Logger())
 	if err != nil {
 		return nil, err
@@ -196,7 +193,7 @@ func (adapter *AzureFlexAdapter) GetActiveConfig() (agent.ConfigArraySchema, err
 	return config, err
 }
 
-func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *AzureFlexAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
 		return nil, err
@@ -207,7 +204,7 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 		return nil, err
 	}
 
-	serverInfo, err := clientFactory.NewServersClient().Get(context.Background(), adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, nil)
+	serverInfo, err := clientFactory.NewServersClient().Get(ctx, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +287,7 @@ func (adapter *AzureFlexAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return systemInfo, nil
 }
 
-func (adapter *AzureFlexAdapter) Guardrails() *guardrails.Signal {
+func (adapter *AzureFlexAdapter) Guardrails(_ context.Context) *guardrails.Signal {
 	memoryUsagePercent, err := MemoryPercent(adapter.AzureFlexConfig.SubscriptionID, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName)()
 	if err != nil {
 		adapter.Logger().Errorf("Failed to get memory metric for guardrail: %v", err)

@@ -14,7 +14,6 @@ import (
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/hashicorp/go-retryablehttp"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -30,74 +29,70 @@ func (m *MockAgentLooper) Logger() *logrus.Logger {
 	return args.Get(0).(*logrus.Logger)
 }
 
-func (m *MockAgentLooper) SendHeartbeat() error {
-	args := m.Called()
+func (m *MockAgentLooper) SendHeartbeat(ctx context.Context) error {
+	args := m.Called(ctx)
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) GetMetrics() ([]metrics.FlatValue, error) {
-	args := m.Called()
+func (m *MockAgentLooper) GetMetrics(ctx context.Context) ([]metrics.FlatValue, error) {
+	args := m.Called(ctx)
 	return args.Get(0).([]metrics.FlatValue), args.Error(1)
 }
 
-func (m *MockAgentLooper) SendMetrics(metrics []metrics.FlatValue) error {
-	args := m.Called(metrics)
+func (m *MockAgentLooper) SendMetrics(ctx context.Context, metrics []metrics.FlatValue) error {
+	args := m.Called(ctx, metrics)
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) GetSystemInfo() ([]metrics.FlatValue, error) {
-	args := m.Called()
+func (m *MockAgentLooper) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
+	args := m.Called(ctx)
 	return args.Get(0).([]metrics.FlatValue), args.Error(1)
 }
 
-func (m *MockAgentLooper) SendSystemInfo(info []metrics.FlatValue) error {
-	args := m.Called(info)
+func (m *MockAgentLooper) SendSystemInfo(ctx context.Context, info []metrics.FlatValue) error {
+	args := m.Called(ctx, info)
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) GetActiveConfig() (agent.ConfigArraySchema, error) {
-	args := m.Called()
+func (m *MockAgentLooper) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
+	args := m.Called(ctx)
 	return args.Get(0).(agent.ConfigArraySchema), args.Error(1)
 }
 
-func (m *MockAgentLooper) SendActiveConfig(config agent.ConfigArraySchema) error {
-	args := m.Called(config)
+func (m *MockAgentLooper) SendActiveConfig(ctx context.Context, config agent.ConfigArraySchema) error {
+	args := m.Called(ctx, config)
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) GetProposedConfig() (*agent.ProposedConfigResponse, error) {
-	args := m.Called()
+func (m *MockAgentLooper) GetProposedConfig(ctx context.Context) (*agent.ProposedConfigResponse, error) {
+	args := m.Called(ctx)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*agent.ProposedConfigResponse), args.Error(1)
 }
 
-func (m *MockAgentLooper) ApplyConfig(config *agent.ProposedConfigResponse) error {
-	args := m.Called(config)
+func (m *MockAgentLooper) ApplyConfig(ctx context.Context, config *agent.ProposedConfigResponse) error {
+	args := m.Called(ctx, config)
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) Guardrails() *guardrails.Signal {
-	args := m.Called()
+func (m *MockAgentLooper) Guardrails(ctx context.Context) *guardrails.Signal {
+	args := m.Called(ctx)
 	if args.Get(0) == nil {
 		return nil
 	}
 	return args.Get(0).(*guardrails.Signal)
 }
 
-func (m *MockAgentLooper) SendGuardrailSignal(signal guardrails.Signal) error {
-	args := m.Called(signal)
+func (m *MockAgentLooper) SendGuardrailSignal(ctx context.Context, signal guardrails.Signal) error {
+	args := m.Called(ctx, signal)
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) SendError(payload agent.ErrorPayload) error {
-	args := m.Called(payload)
+func (m *MockAgentLooper) SendError(ctx context.Context, payload agent.ErrorPayload) error {
+	args := m.Called(ctx, payload)
 	return args.Error(0)
-}
-
-func (m *MockAgentLooper) Pool() *pgxpool.Pool {
-	return nil
 }
 
 // Test runWithTicker function
@@ -114,7 +109,7 @@ func TestRunWithTicker(t *testing.T) {
 		counter := 0
 		var mu sync.Mutex
 
-		fn := func() error {
+		fn := func(_ context.Context) error {
 			mu.Lock()
 			counter++
 			mu.Unlock()
@@ -143,7 +138,7 @@ func TestRunWithTicker(t *testing.T) {
 		var mu sync.Mutex
 
 		expectedErr := errors.New("test error")
-		fn := func() error {
+		fn := func(_ context.Context) error {
 			mu.Lock()
 			counter++
 			mu.Unlock()
@@ -171,24 +166,26 @@ func TestRunner(t *testing.T) {
 	// Note: SendHeartbeat is not expected to be called during the short test window
 	// because the heartbeat ticker has skipFirst: true
 	mockAgent.On("Logger").Return(logger)
-	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, nil)
-	mockAgent.On("SendMetrics", mock.Anything).Return(nil)
-	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, nil)
-	mockAgent.On("SendSystemInfo", mock.Anything).Return(nil)
-	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, nil)
-	mockAgent.On("SendActiveConfig", mock.Anything).Return(nil)
-	mockAgent.On("GetProposedConfig").Return(nil, nil)
-	mockAgent.On("Guardrails").Return(nil)
+	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
+	mockAgent.On("Guardrails", mock.Anything).Return(nil)
 
 	// Run the Runner in a goroutine with a timeout
-	done := make(chan bool)
-	go func() {
-		Runner(mockAgent)
-		done <- true
-	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
 
-	// Wait a short time to allow the Runner to execute a few cycles
-	time.Sleep(200 * time.Millisecond)
+	go Runner(ctx, mockAgent)
+
+	// Wait for context to be done
+	<-ctx.Done()
+
+	// Small grace period for goroutines to finish
+	time.Sleep(50 * time.Millisecond)
 
 	// Verify that the mock expectations were met
 	mockAgent.AssertExpectations(t)
@@ -205,20 +202,22 @@ func TestRunnerWithErrors(t *testing.T) {
 	// withHealthGate no longer calls SendError for collection failures — it reports
 	// to the health gate and returns the error to runWithTicker for logging.
 	mockAgent.On("Logger").Return(logger)
-	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, errors.New("metrics error"))
-	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, errors.New("system info error"))
-	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, errors.New("config error"))
-	mockAgent.On("Guardrails").Return(nil)
+	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, errors.New("metrics error"))
+	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, errors.New("system info error"))
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, errors.New("config error"))
+	mockAgent.On("Guardrails", mock.Anything).Return(nil)
 
 	// Run the Runner in a goroutine with a timeout
-	done := make(chan bool)
-	go func() {
-		Runner(mockAgent)
-		done <- true
-	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
 
-	// Wait a short time to allow the Runner to execute a few cycles
-	time.Sleep(200 * time.Millisecond)
+	go Runner(ctx, mockAgent)
+
+	// Wait for context to be done
+	<-ctx.Done()
+
+	// Small grace period for goroutines to finish
+	time.Sleep(50 * time.Millisecond)
 
 	// Verify that the mock expectations were met
 	mockAgent.AssertExpectations(t)
@@ -234,25 +233,27 @@ func TestRunnerWhenGetProposedConfigReturnsAConfigThenApplyConfigShouldBeCalled(
 	// Note: SendHeartbeat is not expected to be called during the short test window
 	// because the heartbeat ticker has skipFirst: true
 	mockAgent.On("Logger").Return(logger)
-	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, nil)
-	mockAgent.On("SendMetrics", mock.Anything).Return(nil)
-	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, nil)
-	mockAgent.On("SendSystemInfo", mock.Anything).Return(nil)
-	mockAgent.On("Guardrails").Return(nil)
-	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, nil)
-	mockAgent.On("SendActiveConfig", mock.Anything).Return(nil)
-	mockAgent.On("GetProposedConfig").Return(mockRecommendation, nil)
-	mockAgent.On("ApplyConfig", mockRecommendation).Return(nil)
+	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetProposedConfig", mock.Anything).Return(mockRecommendation, nil)
+	mockAgent.On("ApplyConfig", mock.Anything, mockRecommendation).Return(nil)
 
 	// Run the Runner in a goroutine with a timeout
-	done := make(chan bool)
-	go func() {
-		Runner(mockAgent)
-		done <- true
-	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
 
-	// Wait a short time to allow the Runner to execute a few cycles
-	time.Sleep(200 * time.Millisecond)
+	go Runner(ctx, mockAgent)
+
+	// Wait for context to be done
+	<-ctx.Done()
+
+	// Small grace period for goroutines to finish
+	time.Sleep(50 * time.Millisecond)
 
 	// Verify that the mock expectations were met
 	mockAgent.AssertExpectations(t)
@@ -266,24 +267,26 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 	// Note: SendHeartbeat is not expected to be called during the short test window
 	// because the heartbeat ticker has skipFirst: true
 	mockAgent.On("Logger").Return(logger)
-	mockAgent.On("GetMetrics").Return([]metrics.FlatValue{}, nil)
-	mockAgent.On("SendMetrics", mock.Anything).Return(nil)
-	mockAgent.On("GetSystemInfo").Return([]metrics.FlatValue{}, nil)
-	mockAgent.On("SendSystemInfo", mock.Anything).Return(nil)
-	mockAgent.On("Guardrails").Return(nil)
-	mockAgent.On("GetActiveConfig").Return(agent.ConfigArraySchema{}, nil)
-	mockAgent.On("SendActiveConfig", mock.Anything).Return(nil)
-	mockAgent.On("GetProposedConfig").Return(nil, nil)
+	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 
 	// Run the Runner in a goroutine with a timeout
-	done := make(chan bool)
-	go func() {
-		Runner(mockAgent)
-		done <- true
-	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
 
-	// Wait a short time to allow the Runner to execute a few cycles
-	time.Sleep(200 * time.Millisecond)
+	go Runner(ctx, mockAgent)
+
+	// Wait for context to be done
+	<-ctx.Done()
+
+	// Small grace period for goroutines to finish
+	time.Sleep(50 * time.Millisecond)
 
 	// Verify that ApplyConfig was never called
 	mockAgent.AssertNotCalled(t, "ApplyConfig")
@@ -300,19 +303,19 @@ type stubAgentLooper struct {
 }
 
 // Stub out the database interactions here (but note: not the DBtune API)
-func (s *stubAgentLooper) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (s *stubAgentLooper) GetSystemInfo(_ context.Context) ([]metrics.FlatValue, error) {
 	return []metrics.FlatValue{}, nil
 }
 
-func (s *stubAgentLooper) GetActiveConfig() (agent.ConfigArraySchema, error) {
+func (s *stubAgentLooper) GetActiveConfig(_ context.Context) (agent.ConfigArraySchema, error) {
 	return agent.ConfigArraySchema{}, nil
 }
 
-func (s *stubAgentLooper) ApplyConfig(_ *agent.ProposedConfigResponse) error {
+func (s *stubAgentLooper) ApplyConfig(_ context.Context, _ *agent.ProposedConfigResponse) error {
 	return nil
 }
 
-func (s *stubAgentLooper) Guardrails() *guardrails.Signal {
+func (s *stubAgentLooper) Guardrails(_ context.Context) *guardrails.Signal {
 	return &guardrails.Signal{Level: guardrails.Critical, Type: guardrails.Memory}
 }
 
@@ -352,15 +355,16 @@ func TestRunnerCallsAllAPIActions(t *testing.T) {
 
 	stub := createStubAgentLooper(transport)
 
-	// Runner blocks forever, so we start it in a goroutine so
-	// that we can later check that it has done something.
-	// It might be a good idea if Runner takes a context
-	// because the cancelable context in Runner doesn't seem
-	// to be able to be accessed outside of it? So how do we
-	// cancel?
-	go Runner(stub)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
 
-	time.Sleep(200 * time.Millisecond)
+	go Runner(ctx, stub)
+
+	// Wait for context to be done
+	<-ctx.Done()
+
+	// Small grace period for goroutines to finish
+	time.Sleep(50 * time.Millisecond)
 
 	transport.AllActionsCalled(t)
 }

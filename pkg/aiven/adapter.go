@@ -110,12 +110,12 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 }
 
 // GetSystemInfo returns system information for the Aiven PostgreSQL service
-func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *AivenPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	adapter.Logger().Info("Collecting Aiven system info")
 
 	// Get service information from Aiven API
 	service, err := adapter.Client.ServiceGet(
-		context.Background(),
+		ctx,
 		adapter.Config.ProjectName,
 		adapter.Config.ServiceName,
 		[2]string{"include_secrets", "false"},
@@ -197,7 +197,7 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo() ([]metrics.FlatValue, err
 }
 
 // ApplyConfig applies configuration changes to the Aiven PostgreSQL service
-func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	adapter.Logger().Infof("Applying config")
 
 	// List of knobs to be applied
@@ -240,7 +240,7 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propose
 
 		// Apply the configuration update
 		_, err := adapter.Client.ServiceUpdate(
-			context.Background(),
+			ctx,
 			adapter.Config.ProjectName,
 			adapter.Config.ServiceName,
 			&service.ServiceUpdateIn{UserConfig: &userConfig, Powered: boolPtr(true)},
@@ -301,7 +301,7 @@ func (adapter *AivenPostgreSQLAdapter) waitForServiceState(state service.Service
 // Guardrails implements resource usage guardrails
 // Aiven only provides 30 second resolution data for hardware info, which we
 // need for guardrails.
-func (adapter *AivenPostgreSQLAdapter) Guardrails() *guardrails.Signal {
+func (adapter *AivenPostgreSQLAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	timeSinceLastGuardrailCheck := time.Since(adapter.State.LastGuardrailCheck)
 	if timeSinceLastGuardrailCheck < adapter.Config.MetricResolution {
 		adapter.Logger().Debugf(
@@ -331,7 +331,7 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails() *guardrails.Signal {
 			adapter.Config.MetricResolution,
 		)
 		metrics, err := GetFetchedMetrics(
-			context.Background(),
+			ctx,
 			FetchedMetricsIn{
 				Client:      &adapter.Client,
 				ProjectName: adapter.Config.ProjectName,
@@ -508,7 +508,7 @@ func getInitialServiceLevelParameters(client *aivenclient.Client, projectName st
 
 // GetActiveConfig returns the active configuration for the Aiven API
 // as well as through PostgreSQL
-func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
+func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	// Main differences from the PostgreSQL version:
 	// * We need to query Aiven's service for the `shared_buffers_percentage` parameter.
 	// The problem here is that until we modify `shared_buffers_percentage`, we don't get
@@ -520,7 +520,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 	logger.Debug("Getting active config for Aiven PostgreSQL")
 	var configRows agent.ConfigArraySchema
 	service, err := adapter.Client.ServiceGet(
-		context.Background(),
+		ctx,
 		adapter.Config.ProjectName,
 		adapter.Config.ServiceName,
 		[2]string{"include_secrets", "false"},
@@ -562,7 +562,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 		Context: "service",
 	})
 
-	numericRows, err := utils.QueryWithPrefix(adapter.PGDriver, context.Background(), pg.SELECT_NUMERIC_SETTINGS)
+	numericRows, err := utils.QueryWithPrefix(adapter.PGDriver, ctx, pg.SELECT_NUMERIC_SETTINGS)
 
 	if err != nil {
 		return nil, err
@@ -609,7 +609,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig() (agent.ConfigArraySchem
 	}
 
 	// Query for non-numeric types
-	nonNumericRows, err := utils.QueryWithPrefix(adapter.PGDriver, context.Background(), pg.SELECT_NON_NUMERIC_SETTINGS)
+	nonNumericRows, err := utils.QueryWithPrefix(adapter.PGDriver, ctx, pg.SELECT_NON_NUMERIC_SETTINGS)
 	if err != nil {
 		return nil, err
 	}
