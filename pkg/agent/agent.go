@@ -118,7 +118,7 @@ type ProposedConfigResponse struct {
 
 type AgentLooper interface {
 	// SendHeartbeat sends a heartbeat to the DBtune server
-	SendHeartbeat() error
+	SendHeartbeat(ctx context.Context) error
 
 	// GetMetrics returns the metrics for the agent
 	// The metrics should have a format of:
@@ -130,8 +130,8 @@ type AgentLooper interface {
 	// approach, where the collectors are executed in parallel and the errors are
 	// collected in a channel. The channel is then closed and the results are
 	// returned. Uses the errgroup package to delegate the concurrent execution.
-	GetMetrics() ([]metrics.FlatValue, error)
-	SendMetrics([]metrics.FlatValue) error
+	GetMetrics(ctx context.Context) ([]metrics.FlatValue, error)
+	SendMetrics(ctx context.Context, ms []metrics.FlatValue) error
 
 	// GetSystemInfo returns the system info of the PostgresSQL server
 	// Example of system info:
@@ -144,17 +144,17 @@ type AgentLooper interface {
 	// This is because if only a partial amount of the SystemInfo can be observed, then
 	// it means that DBtune will detect this as the system information having been changed
 	// and potentially abort an inprogress tuning session.
-	GetSystemInfo() ([]metrics.FlatValue, error)
-	SendSystemInfo([]metrics.FlatValue) error
+	GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error)
+	SendSystemInfo(ctx context.Context, systemInfo []metrics.FlatValue) error
 
-	GetActiveConfig() (ConfigArraySchema, error)
-	SendActiveConfig(ConfigArraySchema) error
-	GetProposedConfig() (*ProposedConfigResponse, error)
+	GetActiveConfig(ctx context.Context) (ConfigArraySchema, error)
+	SendActiveConfig(ctx context.Context, config ConfigArraySchema) error
+	GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error)
 
 	// ApplyConfig applies the configuration to the PostgresSQL server
 	// The configuration is applied with the appropriate method, either with a
 	// restart or a reload operation
-	ApplyConfig(knobs *ProposedConfigResponse) error
+	ApplyConfig(ctx context.Context, knobs *ProposedConfigResponse) error
 
 	// Guardrails is responsible for triggering a signal to the DBtune server
 	// that something is heading towards a failure.
@@ -162,16 +162,13 @@ type AgentLooper interface {
 	// or a rate of disk growth that is more than usual and not acceptable.
 	// Returns nil if no guardrail is triggered, otherwise returns the type of guardrail
 	// and the metric that is monitored.
-	Guardrails() *guardrails.Signal
+	Guardrails(ctx context.Context) *guardrails.Signal
 	// SendGuardrailSignal sends a signal to the DBtune server that something is heading towards a failure.
 	// The signal will be send maximum once every 15 seconds.
-	SendGuardrailSignal(signal guardrails.Signal) error
+	SendGuardrailSignal(ctx context.Context, signal guardrails.Signal) error
 
 	// SendError sends an error report to the DBtune server
-	SendError(payload ErrorPayload) error
-
-	// Pool returns the pgxpool.Pool used for database connections.
-	Pool() *pgxpool.Pool
+	SendError(ctx context.Context, payload ErrorPayload) error
 
 	// GetLogger returns the logger for the agent
 	Logger() *log.Logger
@@ -425,11 +422,40 @@ func (a *CommonAgent) Pool() *pgxpool.Pool {
 	return a.DBPool
 }
 
+// postJSON sends a POST request with JSON body using the provided context.
+func (a *CommonAgent) postJSON(ctx context.Context, url string, jsonData []byte) (*http.Response, error) {
+	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return a.APIClient.Do(req)
+}
+
+// putJSON sends a PUT request with JSON body using the provided context.
+func (a *CommonAgent) putJSON(ctx context.Context, url string, jsonData []byte) (*http.Response, error) {
+	req, err := retryablehttp.NewRequestWithContext(ctx, "PUT", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return a.APIClient.Do(req)
+}
+
+// getRequest sends a GET request using the provided context.
+func (a *CommonAgent) getRequest(ctx context.Context, url string) (*http.Response, error) {
+	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return a.APIClient.Do(req)
+}
+
 // SendHeartbeat sends a heartbeat to the DBtune server
 // to indicate that the agent is running.
 // This method does not need to be overridden by any adapter
-func (a *CommonAgent) SendHeartbeat() error {
-	url := a.ServerURLs.AgentURL(dbtune.PathHeartbeat)
+func (a *CommonAgent) SendHeartbeat(ctx context.Context) error {
+	url := a.ServerURLs.AgentURL("heartbeat")
 	a.Logger().Infof("Sending heartbeat to %s", url)
 
 	payload := AgentPayload{
@@ -445,18 +471,11 @@ func (a *CommonAgent) SendHeartbeat() error {
 		return err
 	}
 
-	// Add a timeout context to avoid hanging
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Add a timeout to avoid hanging
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		a.Logger().Errorf("Failed to create heartbeat request: %v", err)
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := a.APIClient.Do(req)
+	resp, err := a.postJSON(ctx, url, jsonData)
 	if err != nil {
 		a.Logger().Errorf("Failed to send heartbeat: %v", err)
 		return err
@@ -481,14 +500,14 @@ func (a *CommonAgent) InitCollectors(collectors []MetricCollector) {
 // GetMetrics will have a default implementation to handle gracefully
 // error and send partial metrics rather than failing.
 // It is discouraged for every adapter overriding this one.
-func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
+func (a *CommonAgent) GetMetrics(ctx context.Context) ([]metrics.FlatValue, error) {
 	a.Logger().Println("Staring metric collection")
 
 	// Cleanup metrics from the previous heartbeat
 	a.MetricsState.Metrics = []metrics.FlatValue{}
 
 	// Create context with configured timeout
-	ctx, cancel := context.WithTimeout(context.Background(), a.CollectionTimeout)
+	ctx, cancel := context.WithTimeout(ctx, a.CollectionTimeout)
 	defer cancel()
 
 	// Use WaitGroup to wait for all collectors
@@ -551,7 +570,7 @@ func (a *CommonAgent) GetMetrics() ([]metrics.FlatValue, error) {
 	return a.MetricsState.Metrics, nil
 }
 
-func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
+func (a *CommonAgent) SendMetrics(ctx context.Context, ms []metrics.FlatValue) error {
 	a.Logger().Println("Sending metrics to server")
 
 	formattedMetrics := metrics.FormatMetrics(ms)
@@ -561,7 +580,7 @@ func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL(dbtune.PathMetrics), "application/json", jsonData)
+	resp, err := a.postJSON(ctx, a.ServerURLs.AgentURL("metrics"), jsonData)
 	if err != nil {
 		return err
 	}
@@ -576,7 +595,7 @@ func (a *CommonAgent) SendMetrics(ms []metrics.FlatValue) error {
 	return nil
 }
 
-func (a *CommonAgent) SendSystemInfo(systemInfo []metrics.FlatValue) error {
+func (a *CommonAgent) SendSystemInfo(ctx context.Context, systemInfo []metrics.FlatValue) error {
 	a.Logger().Println("Sending system info to server")
 
 	formattedMetrics := metrics.FormatSystemInfo(systemInfo)
@@ -586,10 +605,7 @@ func (a *CommonAgent) SendSystemInfo(systemInfo []metrics.FlatValue) error {
 		return err
 	}
 
-	req, _ := retryablehttp.NewRequest("PUT", a.ServerURLs.AgentURL(dbtune.PathSystemInfo), bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := a.APIClient.Do(req)
+	resp, err := a.putJSON(ctx, a.ServerURLs.AgentURL("system-info"), jsonData)
 	if err != nil {
 		return err
 	}
@@ -604,7 +620,7 @@ func (a *CommonAgent) SendSystemInfo(systemInfo []metrics.FlatValue) error {
 	return nil
 }
 
-func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
+func (a *CommonAgent) SendActiveConfig(ctx context.Context, config ConfigArraySchema) error {
 	a.Logger().Println("Sending active configuration to server")
 
 	type Payload struct {
@@ -621,7 +637,7 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 
 	a.Logger().Debugf("Active config payload: %s", string(jsonData))
 
-	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL(dbtune.PathConfigurations), "application/json", jsonData)
+	resp, err := a.postJSON(ctx, a.ServerURLs.AgentURL("configurations"), jsonData)
 	if err != nil {
 		return err
 	}
@@ -636,10 +652,10 @@ func (a *CommonAgent) SendActiveConfig(config ConfigArraySchema) error {
 	return nil
 }
 
-func (a *CommonAgent) GetProposedConfig() (*ProposedConfigResponse, error) {
+func (a *CommonAgent) GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error) {
 	a.Logger().Println("Fetching proposed configurations")
 
-	resp, err := a.APIClient.Get(a.ServerURLs.GetKnobRecommendations())
+	resp, err := a.getRequest(ctx, a.ServerURLs.GetKnobRecommendations())
 	if err != nil {
 		return nil, err
 	}
@@ -665,7 +681,7 @@ func (a *CommonAgent) GetProposedConfig() (*ProposedConfigResponse, error) {
 
 // SendGuardrailSignal sends a guardrail signal to the DBtune server
 // that something is heading towards a failure.
-func (a *CommonAgent) SendGuardrailSignal(signal guardrails.Signal) error {
+func (a *CommonAgent) SendGuardrailSignal(ctx context.Context, signal guardrails.Signal) error {
 	a.Logger().Warnf("🚨 Sending Guardrail, level: %s, type: %s", signal.Level, signal.Type)
 
 	jsonData, err := json.Marshal(signal)
@@ -673,7 +689,7 @@ func (a *CommonAgent) SendGuardrailSignal(signal guardrails.Signal) error {
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL(dbtune.PathGuardrails), "application/json", jsonData)
+	resp, err := a.postJSON(ctx, a.ServerURLs.AgentURL("guardrails"), jsonData)
 	if err != nil {
 		return err
 	}
@@ -688,7 +704,7 @@ func (a *CommonAgent) SendGuardrailSignal(signal guardrails.Signal) error {
 	return nil
 }
 
-func (a *CommonAgent) SendError(payload ErrorPayload) error {
+func (a *CommonAgent) SendError(ctx context.Context, payload ErrorPayload) error {
 	a.Logger().Errorf("🚨 Sending Error Report, type: %s, message: %s", payload.ErrorType, payload.ErrorMessage)
 
 	jsonData, err := json.Marshal(payload)
@@ -696,7 +712,7 @@ func (a *CommonAgent) SendError(payload ErrorPayload) error {
 		return err
 	}
 
-	resp, err := a.APIClient.Post(a.ServerURLs.AgentURL(dbtune.PathLogEntries), "application/json", jsonData)
+	resp, err := a.postJSON(ctx, a.ServerURLs.AgentURL("log-entries"), jsonData)
 	if err != nil {
 		return err
 	}

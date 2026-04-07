@@ -61,7 +61,7 @@ func TestGetMetrics(t *testing.T) {
 			IndividualTimeout: 500 * time.Millisecond,
 		}
 
-		flat_metrics, err := agent.GetMetrics()
+		flat_metrics, err := agent.GetMetrics(context.Background())
 		assert.NoError(t, err)
 		assert.Len(t, flat_metrics, 2)
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric1", Value: 1, Type: "int"})
@@ -86,7 +86,7 @@ func TestGetMetrics(t *testing.T) {
 			IndividualTimeout: 500 * time.Millisecond,
 		}
 
-		flat_metrics, err := agent.GetMetrics()
+		flat_metrics, err := agent.GetMetrics(context.Background())
 		assert.Error(t, err) // GetMetrics now returns collector errors
 		assert.Len(t, flat_metrics, 1)
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric2", Value: 2, Type: "int"})
@@ -114,7 +114,7 @@ func TestGetMetrics(t *testing.T) {
 			IndividualTimeout: 500 * time.Millisecond,
 		}
 
-		flat_metrics, err := agent.GetMetrics()
+		flat_metrics, err := agent.GetMetrics(context.Background())
 		assert.Error(t, err) // timed-out collector produces an error
 		assert.Len(t, flat_metrics, 1)
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric1", Value: 1, Type: "int"})
@@ -153,7 +153,7 @@ func TestCommonAgent_SendHeartbeat_Succeeds(t *testing.T) {
 	transport := dbtunetest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
 
-	err := agent.SendHeartbeat()
+	err := agent.SendHeartbeat(context.Background())
 	assert.NoError(t, err)
 
 	transport.ActionWasCalled(t, "/api/v1/agent/heartbeat", http.MethodPost)
@@ -164,7 +164,7 @@ func TestCommonAgent_SendActiveConfig_Succeeds(t *testing.T) {
 	agent := CreateCommonAgentForTests(transport)
 	config := ConfigArraySchema{}
 
-	err := agent.SendActiveConfig(config)
+	err := agent.SendActiveConfig(context.Background(), config)
 	assert.NoError(t, err)
 
 	transport.ActionWasCalled(t, "/api/v1/agent/configurations", http.MethodPost)
@@ -174,7 +174,7 @@ func TestCommonAgent_SendError_Succeeds(t *testing.T) {
 	transport := dbtunetest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
 
-	err := agent.SendError(ErrorPayload{
+	err := agent.SendError(context.Background(), ErrorPayload{
 		ErrorMessage: "something went wrong",
 		ErrorType:    "test_error",
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),
@@ -188,7 +188,7 @@ func TestCommonAgent_SendGuardrailSignal_Succeeds(t *testing.T) {
 	transport := dbtunetest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
 
-	err := agent.SendGuardrailSignal(guardrails.Signal{
+	err := agent.SendGuardrailSignal(context.Background(), guardrails.Signal{
 		Level: guardrails.Critical,
 		Type:  guardrails.Memory,
 	})
@@ -201,7 +201,7 @@ func TestCommonAgent_SendMetrics_Succeeds(t *testing.T) {
 	transport := dbtunetest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
 
-	err := agent.SendMetrics([]metrics.FlatValue{
+	err := agent.SendMetrics(context.Background(), []metrics.FlatValue{
 		{Key: "metric1", Value: 1, Type: "int"},
 		{Key: "metric2", Value: 3.14, Type: "float"},
 	})
@@ -214,7 +214,7 @@ func TestCommonAgent_SendSystemInfo_Succeeds(t *testing.T) {
 	transport := dbtunetest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
 
-	err := agent.SendSystemInfo([]metrics.FlatValue{
+	err := agent.SendSystemInfo(context.Background(), []metrics.FlatValue{
 		{Key: "os", Value: "linux", Type: "string"},
 		{Key: "cpu_count", Value: 4, Type: "int"},
 	})
@@ -227,7 +227,7 @@ func TestCommonAgent_GetProposedConfig_Succeeds(t *testing.T) {
 	transport := dbtunetest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
 
-	config, err := agent.GetProposedConfig()
+	config, err := agent.GetProposedConfig(context.Background())
 	if assert.NoError(t, err) && assert.NotNil(t, config) {
 		assert.Len(t, config.Config, 3)
 		assert.Equal(t, "shared_buffers", config.Config[0].Name)

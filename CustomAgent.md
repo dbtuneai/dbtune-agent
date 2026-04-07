@@ -56,11 +56,11 @@ func (a *CustomAdapter) PGDriver() *pgPool.Pool
 func (a *CustomAdapter) APIClient() *retryablehttp.Client
 
 // Optional: Implement additional methods to extend/override functionality
-func (a *CustomAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (a *CustomAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
     // Custom system info implementation
 }
 
-func (a *CustomAdapter) Guardrails() *agent.GuardrailSignal {
+func (a *CustomAdapter) Guardrails(ctx context.Context) *agent.GuardrailSignal {
     // Custom guardrails implementation
 }
 ```

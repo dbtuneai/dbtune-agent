@@ -107,14 +107,14 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 	return rdsAdapter, nil
 }
 
-func (adapter *RDSAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
+func (adapter *RDSAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	adapter.Logger().Info("Collecting system info")
 
 	// Refreshes self
 	dbInfo, err := FetchDBInfo(
 		adapter.Config.RDSDatabaseIdentifier,
 		&adapter.AWSClients,
-		context.Background(),
+		ctx,
 	)
 	if err != nil {
 		return nil, err
@@ -157,11 +157,11 @@ func (adapter *RDSAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 	return info, nil
 }
 
-func (adapter *RDSAdapter) GetActiveConfig() (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(adapter.PGDriver, context.Background(), adapter.Logger())
+func (adapter *RDSAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
+	return pg.GetActiveConfig(adapter.PGDriver, ctx, adapter.Logger())
 }
 
-func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	// If the last applied config is less than 1 minute ago, return
 	if adapter.State.LastAppliedConfig.Add(1 * time.Minute).After(time.Now()) {
 		adapter.Logger().Info("Last applied config is less than 1 minute ago, skipping")
@@ -174,7 +174,7 @@ func (adapter *RDSAdapter) ApplyConfig(proposedConfig *agent.ProposedConfigRespo
 		adapter.Config.RDSParameterGroupName,
 		adapter.Config.RDSDatabaseIdentifier,
 		adapter.Logger(),
-		context.Background(),
+		ctx,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to apply config: %w", err)
@@ -275,7 +275,7 @@ func (adapter *RDSAdapter) Collectors(aurora bool) []agent.MetricCollector {
 }
 
 // Guardrails checks memory utilization and returns Critical if thresholds are exceeded
-func (adapter *RDSAdapter) Guardrails() *guardrails.Signal {
+func (adapter *RDSAdapter) Guardrails(_ context.Context) *guardrails.Signal {
 	if time.Since(adapter.State.LastGuardrailCheck) < 5*time.Second {
 		return nil
 	}

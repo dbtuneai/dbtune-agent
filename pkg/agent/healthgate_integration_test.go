@@ -142,7 +142,7 @@ func TestIntegration_HealthGate_BlocksAndRecovers(t *testing.T) {
 	}
 	a.WithLogger(logger)
 
-	result, err := a.GetMetrics()
+	result, err := a.GetMetrics(context.Background())
 	require.NoError(t, err)
 	require.Len(t, result, numCollectors)
 
@@ -155,7 +155,7 @@ func TestIntegration_HealthGate_BlocksAndRecovers(t *testing.T) {
 	collectorCalls = 0
 	mu.Unlock()
 
-	result, err = a.GetMetrics()
+	result, err = a.GetMetrics(context.Background())
 	t.Logf("phase 2: got %d metrics, err=%v", len(result), err)
 
 	// Report errors to the gate (as the runner would do).
@@ -183,7 +183,7 @@ func TestIntegration_HealthGate_BlocksAndRecovers(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 
-	result, err = a.GetMetrics()
+	result, err = a.GetMetrics(context.Background())
 	assert.NoError(t, err)
 	assert.Len(t, result, numCollectors)
 }

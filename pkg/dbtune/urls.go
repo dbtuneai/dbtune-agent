@@ -47,21 +47,9 @@ func CreateServerURLs() (ServerURLs, error) {
 	}, nil
 }
 
-// AgentPath identifies a known agent API endpoint.
-type AgentPath string
-
-const (
-	PathHeartbeat      AgentPath = "heartbeat"
-	PathSystemInfo     AgentPath = "system-info"
-	PathMetrics        AgentPath = "metrics"
-	PathConfigurations AgentPath = "configurations"
-	PathGuardrails     AgentPath = "guardrails"
-	PathLogEntries     AgentPath = "log-entries"
-)
-
 // AgentURL builds a URL for the given agent API path segment.
-// e.g. AgentURL(PathHeartbeat) => "https://app.dbtune.com/api/v1/agent/heartbeat?uuid=<db-id>"
-func (s ServerURLs) AgentURL(path AgentPath) string {
+// e.g. AgentURL("heartbeat") => "https://app.dbtune.com/api/v1/agent/heartbeat?uuid=<db-id>"
+func (s ServerURLs) AgentURL(path string) string {
 	return fmt.Sprintf("%s/api/v1/agent/%s?uuid=%s", s.ServerUrl, path, s.DbID)
 }
 
