@@ -26,6 +26,7 @@ const (
 
 // pgClassColumns is the SELECT list shared by batch and delta queries.
 const pgClassColumns = `
+	c.oid AS oid,
     n.nspname AS schemaname,
     c.relname,
     c.reltuples,
@@ -64,6 +65,7 @@ ORDER BY n.nspname, c.relname
 
 // PgClassRow represents a single row from pg_class for user tables.
 type PgClassRow struct {
+	Oid          Oid     `json:"oid"`
 	SchemaName   Name    `json:"schemaname"`
 	RelName      Name    `json:"relname"`
 	RelTuples    Real    `json:"reltuples"`
