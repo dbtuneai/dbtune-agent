@@ -305,7 +305,7 @@ var pgMajorVersionRegex = regexp.MustCompile(`PostgreSQL (\d+)`)
 
 const pgVersionQuery = `SELECT version()`
 
-func queryPGMajorVersion(pool *pgxpool.Pool, ctx context.Context) (int, error) {
+func QueryPGMajorVersion(pool *pgxpool.Pool, ctx context.Context) (int, error) {
 	var versionStr string
 	err := utils.QueryRowWithPrefix(pool, ctx, pgVersionQuery).Scan(&versionStr)
 	if err != nil {
@@ -344,7 +344,7 @@ func PgStatStatementsCollector(
 				return nil, err
 			}
 
-			detectedVersion, err := queryPGMajorVersion(pool, ctx)
+			detectedVersion, err := QueryPGMajorVersion(pool, ctx)
 			if err != nil {
 				return nil, err
 			}

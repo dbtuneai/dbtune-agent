@@ -879,3 +879,12 @@ func (adapter *PatroniAdapter) Collectors() []agent.MetricCollector {
 
 	return collectors
 }
+
+func (adapter *PatroniAdapter) PrepareCtx() func(context.Context) (context.Context, error) {
+	return func(ctx context.Context) (context.Context, error) {
+		if err := adapter.CheckForFailover(ctx); err != nil {
+			return nil, err
+		}
+		return ctx, nil
+	}
+}

@@ -175,6 +175,10 @@ type AgentLooper interface {
 
 	// GetLogger returns the logger for the agent
 	Logger() *log.Logger
+
+	// PrepareCtx returns a hook called before each catalog query.
+	// Adapters use it to perform failover checks or inject a replacement context.
+	PrepareCtx() func(context.Context) (context.Context, error)
 }
 
 type AgentPayload struct {
@@ -423,6 +427,10 @@ func (a *CommonAgent) WithLogger(logger *log.Logger) {
 
 func (a *CommonAgent) Pool() *pgxpool.Pool {
 	return a.DBPool
+}
+
+func (a *CommonAgent) PrepareCtx() func(context.Context) (context.Context, error) {
+	return func(ctx context.Context) (context.Context, error) { return ctx, nil }
 }
 
 // SendHeartbeat sends a heartbeat to the DBtune server

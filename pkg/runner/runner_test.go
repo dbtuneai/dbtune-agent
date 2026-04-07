@@ -100,6 +100,10 @@ func (m *MockAgentLooper) Pool() *pgxpool.Pool {
 	return nil
 }
 
+func (m *MockAgentLooper) PrepareCtx() func(context.Context) (context.Context, error) {
+	return func(ctx context.Context) (context.Context, error) { return ctx, nil }
+}
+
 // Test runWithTicker function
 func TestRunWithTicker(t *testing.T) {
 	logger := logrus.New()

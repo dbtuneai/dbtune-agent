@@ -803,3 +803,12 @@ func (adapter *CNPGAdapter) CheckRestartRequired(ctx context.Context, changedPar
 
 	return len(restartParams) > 0, restartParams, nil
 }
+
+func (adapter *CNPGAdapter) PrepareCtx() func(context.Context) (context.Context, error) {
+	return func(ctx context.Context) (context.Context, error) {
+		if err := adapter.CheckForFailover(ctx); err != nil {
+			return nil, err
+		}
+		return ctx, nil
+	}
+}
