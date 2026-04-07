@@ -261,6 +261,7 @@ func TestCollectors_AllVersions(t *testing.T) {
 					if r1.Hash() == "" {
 						t.Fatal("CollectResult.Hash() returned empty string")
 					}
+					requireCollectedAt(t, r1.JSON)
 
 					// Second call must not error — catches broken stateful collectors.
 					_, err = c.Collect(ctx)
@@ -382,6 +383,27 @@ func collectJSON(t *testing.T, c CatalogCollector) map[string]json.RawMessage {
 	return parsed
 }
 
+// requireCollectedAt verifies that the JSON payload contains a non-zero
+// "collected_at" timestamp.
+func requireCollectedAt(t *testing.T, data []byte) {
+	t.Helper()
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		t.Fatalf("requireCollectedAt: failed to parse JSON: %v", err)
+	}
+	raw, ok := top["collected_at"]
+	if !ok {
+		t.Fatal("JSON missing 'collected_at' field")
+	}
+	var ts time.Time
+	if err := json.Unmarshal(raw, &ts); err != nil {
+		t.Fatalf("failed to parse collected_at as time: %v", err)
+	}
+	if ts.IsZero() {
+		t.Fatal("collected_at is zero")
+	}
+}
+
 // requireRows is a helper that parses the "rows" field from a collector result
 // and returns the count. Fails if rows is missing or empty.
 func requireRows(t *testing.T, c CatalogCollector) int {
@@ -451,6 +473,9 @@ func TestTransactionCommits_ComputesTPS(t *testing.T) {
 	if err := json.Unmarshal(r1.JSON, &p1); err != nil {
 		t.Fatalf("failed to parse first result: %v", err)
 	}
+	if p1.CollectedAt.IsZero() {
+		t.Fatal("expected non-zero collected_at on first call")
+	}
 	if p1.XactCommit <= 0 {
 		t.Fatalf("expected xact_commit > 0 on first call, got %d", p1.XactCommit)
 	}
@@ -475,6 +500,9 @@ func TestTransactionCommits_ComputesTPS(t *testing.T) {
 	var p2 TransactionCommitsPayload
 	if err := json.Unmarshal(r2.JSON, &p2); err != nil {
 		t.Fatalf("failed to parse second result: %v", err)
+	}
+	if p2.CollectedAt.IsZero() {
+		t.Fatal("expected non-zero collected_at on second call")
 	}
 	if p2.XactCommit < p1.XactCommit {
 		t.Fatalf("xact_commit decreased: %d → %d", p1.XactCommit, p2.XactCommit)
@@ -536,6 +564,9 @@ func TestPgStatioUserIndexes_BackfillThenDelta(t *testing.T) {
 	}
 	if len(p1.Rows) != 1 {
 		t.Fatalf("expected exactly 1 row with batch size 1, got %d", len(p1.Rows))
+	}
+	if p1.CollectedAt.IsZero() {
+		t.Fatal("expected non-zero collected_at on first backfill result")
 	}
 
 	// Drain the remaining backfill ticks until we get nil (backfill exhausted).
@@ -600,6 +631,9 @@ func TestPgStatioUserIndexes_DeltaEmitsOnlyChangedRows(t *testing.T) {
 	if backfillCount < 6 {
 		t.Fatalf("expected at least 6 backfill rows, got %d", backfillCount)
 	}
+	if p1.CollectedAt.IsZero() {
+		t.Fatal("expected non-zero collected_at on backfill result")
+	}
 
 	// Second call: empty page, transitions to delta mode.
 	r2, err := c.Collect(ctx)
@@ -633,6 +667,9 @@ func TestPgStatioUserIndexes_DeltaEmitsOnlyChangedRows(t *testing.T) {
 	var p3 Payload[PgStatioUserIndexesRow]
 	if err := json.Unmarshal(r3.JSON, &p3); err != nil {
 		t.Fatalf("failed to parse delta result: %v", err)
+	}
+	if p3.CollectedAt.IsZero() {
+		t.Fatal("expected non-zero collected_at on delta result")
 	}
 	if len(p3.Rows) == 0 {
 		t.Fatal("expected at least 1 changed row in delta")
@@ -724,6 +761,9 @@ func TestPgClass_BackfillThenDelta(t *testing.T) {
 	if len(p1.Rows) != 1 {
 		t.Fatalf("expected exactly 1 row with batch size 1, got %d", len(p1.Rows))
 	}
+	if p1.CollectedAt.IsZero() {
+		t.Fatal("expected non-zero collected_at on first backfill result")
+	}
 	// Verify row has non-empty identifiers.
 	if p1.Rows[0].SchemaName == "" || p1.Rows[0].RelName == "" {
 		t.Fatalf("expected non-empty schemaname/relname, got %q/%q", p1.Rows[0].SchemaName, p1.Rows[0].RelName)
@@ -783,6 +823,9 @@ func TestPgStats_BackfillThenDelta(t *testing.T) {
 	}
 	if len(p1.Rows) == 0 {
 		t.Fatal("expected non-empty pg_stats rows")
+	}
+	if p1.CollectedAt.IsZero() {
+		t.Fatal("expected non-zero collected_at on first backfill result")
 	}
 
 	// Verify rows have non-empty identifiers.
@@ -863,6 +906,9 @@ func TestPgStats_RedactsWhenIncludeTableDataFalse(t *testing.T) {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
 
+	if payload.CollectedAt.IsZero() {
+		t.Fatal("expected non-zero collected_at")
+	}
 	for _, row := range payload.Rows {
 		// After JSON round-trip, nil json.RawMessage becomes []byte("null").
 		if row.MostCommonVals != nil && string(row.MostCommonVals) != "null" {
@@ -905,6 +951,9 @@ func TestPgStatStatements_AllVersions(t *testing.T) {
 			if len(p1.Rows) == 0 {
 				t.Fatal("expected non-empty rows on first call")
 			}
+			if p1.CollectedAt.IsZero() {
+				t.Fatal("expected non-zero collected_at on first call")
+			}
 			if len(p1.Deltas) != 0 {
 				t.Fatalf("expected 0 deltas on first call, got %d", len(p1.Deltas))
 			}
@@ -932,6 +981,9 @@ func TestPgStatStatements_AllVersions(t *testing.T) {
 			var p2 PgStatStatementsPayload
 			if err := json.Unmarshal(r2.JSON, &p2); err != nil {
 				t.Fatalf("failed to parse second result: %v", err)
+			}
+			if p2.CollectedAt.IsZero() {
+				t.Fatal("expected non-zero collected_at on second call")
 			}
 			if p2.DeltaCount == 0 {
 				t.Fatal("expected delta_count > 0 on second call")
