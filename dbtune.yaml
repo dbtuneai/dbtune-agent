@@ -18,3 +18,30 @@ dbtune:
 
 guardrail_settings:
   memory_threshold: 90 # percentage of total memory.
+
+# Collector overrides — uncomment to customize individual collectors.
+# All collectors are enabled by default. Use `enabled: false` to disable.
+# interval_seconds can only increase the default (slow down), not decrease it.
+# Environment variable pattern: DBT_COLLECTOR_{NAME}_{FIELD}
+#
+# collectors:
+#   pg_stat_statements:
+#     enabled: true
+#     interval_seconds: 10
+#     diff_limit: 500
+#     include_queries: true
+#     max_query_text_length: 4096
+#   pg_class:
+#     backfill_batch_size: 500
+#   pg_stats:
+#     backfill_batch_size: 200
+#     include_table_data: true
+#   pg_stat_user_tables:
+#     category_limit: 200
+#   pg_stat_user_indexes:
+#     category_limit: 200
+#   pg_statio_user_indexes:
+#     backfill_batch_size: 2000
+#   database_average_query_runtime:
+#     include_queries: true
+#     max_query_text_length: 4096
