@@ -766,8 +766,8 @@ func TestPgClass_BackfillThenDelta(t *testing.T) {
 		t.Fatal("expected non-zero collected_at on first backfill result")
 	}
 	// Verify row has non-empty identifiers.
-	if p1.Rows[0].SchemaName == "" || p1.Rows[0].RelName == "" {
-		t.Fatalf("expected non-empty schemaname/relname, got %q/%q", p1.Rows[0].SchemaName, p1.Rows[0].RelName)
+	if p1.Rows[0].SchemaName == "" || p1.Rows[0].Oid == 0 || p1.Rows[0].RelName == "" {
+		t.Fatalf("expected non-empty schemaname/oid/relname, got %q/%q/%q", p1.Rows[0].SchemaName, p1.Rows[0].Oid, p1.Rows[0].RelName)
 	}
 
 	// Drain the remaining backfill ticks until we get nil (backfill exhausted).
