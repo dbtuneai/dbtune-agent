@@ -879,6 +879,126 @@ func TestDDL_NonPublicSchema(t *testing.T) {
 	})
 }
 
+// TestDDL_HashChangesOnAlter verifies that altering a table produces a different
+// DDL snapshot and a different hash.
+func TestDDL_HashChangesOnAlter(t *testing.T) {
+	inst := ddlLatestInstance()
+	ctx := context.Background()
+
+	t.Run("add_column", func(t *testing.T) {
+		table := "ddl_hash_add_col"
+		execDDL(t, inst.admin, fmt.Sprintf("CREATE TABLE %s (id integer PRIMARY KEY)", table), table)
+
+		ddl1 := collectDDLString(t, inst.pool)
+		hash1 := HashDDL(ddl1)
+
+		if _, err := inst.admin.Exec(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN name text", table)); err != nil {
+			t.Fatalf("ALTER TABLE: %v", err)
+		}
+
+		ddl2 := collectDDLString(t, inst.pool)
+		hash2 := HashDDL(ddl2)
+
+		if hash1 == hash2 {
+			t.Fatal("hash should differ after adding a column")
+		}
+		if !strings.Contains(ddl2, "name text") {
+			t.Fatalf("expected new column in DDL:\n%s", ddl2)
+		}
+	})
+
+	t.Run("drop_column", func(t *testing.T) {
+		table := "ddl_hash_drop_col"
+		execDDL(t, inst.admin, fmt.Sprintf("CREATE TABLE %s (id integer PRIMARY KEY, old_col text)", table), table)
+
+		ddl1 := collectDDLString(t, inst.pool)
+		hash1 := HashDDL(ddl1)
+
+		if !strings.Contains(ddl1, "old_col") {
+			t.Fatalf("expected old_col in initial DDL:\n%s", ddl1)
+		}
+
+		if _, err := inst.admin.Exec(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN old_col", table)); err != nil {
+			t.Fatalf("ALTER TABLE: %v", err)
+		}
+
+		ddl2 := collectDDLString(t, inst.pool)
+		hash2 := HashDDL(ddl2)
+
+		if hash1 == hash2 {
+			t.Fatal("hash should differ after dropping a column")
+		}
+		if strings.Contains(ddl2, "old_col") {
+			t.Fatalf("dropped column should not appear in DDL:\n%s", ddl2)
+		}
+	})
+
+	t.Run("add_index", func(t *testing.T) {
+		table := "ddl_hash_add_idx"
+		execDDL(t, inst.admin, fmt.Sprintf("CREATE TABLE %s (id integer PRIMARY KEY, val text)", table), table)
+
+		ddl1 := collectDDLString(t, inst.pool)
+		hash1 := HashDDL(ddl1)
+
+		if _, err := inst.admin.Exec(ctx, fmt.Sprintf("CREATE INDEX idx_%s_val ON %s (val)", table, table)); err != nil {
+			t.Fatalf("CREATE INDEX: %v", err)
+		}
+		t.Cleanup(func() {
+			_, _ = inst.admin.Exec(ctx, fmt.Sprintf("DROP INDEX IF EXISTS idx_%s_val", table))
+		})
+
+		ddl2 := collectDDLString(t, inst.pool)
+		hash2 := HashDDL(ddl2)
+
+		if hash1 == hash2 {
+			t.Fatal("hash should differ after adding an index")
+		}
+		if !strings.Contains(ddl2, fmt.Sprintf("idx_%s_val", table)) {
+			t.Fatalf("expected new index in DDL:\n%s", ddl2)
+		}
+	})
+
+	t.Run("add_constraint", func(t *testing.T) {
+		table := "ddl_hash_add_con"
+		execDDL(t, inst.admin, fmt.Sprintf("CREATE TABLE %s (id integer, val integer)", table), table)
+
+		ddl1 := collectDDLString(t, inst.pool)
+		hash1 := HashDDL(ddl1)
+
+		if _, err := inst.admin.Exec(ctx, fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s_val_check CHECK (val > 0)", table, table)); err != nil {
+			t.Fatalf("ALTER TABLE ADD CONSTRAINT: %v", err)
+		}
+
+		ddl2 := collectDDLString(t, inst.pool)
+		hash2 := HashDDL(ddl2)
+
+		if hash1 == hash2 {
+			t.Fatal("hash should differ after adding a constraint")
+		}
+		if !strings.Contains(ddl2, fmt.Sprintf("%s_val_check", table)) {
+			t.Fatalf("expected new constraint in DDL:\n%s", ddl2)
+		}
+	})
+
+	t.Run("idempotent_when_unchanged", func(t *testing.T) {
+		table := "ddl_hash_stable"
+		execDDL(t, inst.admin, fmt.Sprintf("CREATE TABLE %s (id integer PRIMARY KEY, val text)", table), table)
+
+		ddl1 := collectDDLString(t, inst.pool)
+		hash1 := HashDDL(ddl1)
+
+		ddl2 := collectDDLString(t, inst.pool)
+		hash2 := HashDDL(ddl2)
+
+		if hash1 != hash2 {
+			t.Fatalf("hash should be stable when schema is unchanged: %s != %s", hash1, hash2)
+		}
+		if ddl1 != ddl2 {
+			t.Fatalf("DDL should be identical when schema is unchanged")
+		}
+	})
+}
+
 // TestDDL_MultiVersion runs CollectDDL against all PG versions to ensure no SQL
 // compatibility issues.
 func TestDDL_MultiVersion(t *testing.T) {
