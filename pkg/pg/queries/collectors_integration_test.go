@@ -976,6 +976,7 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		DatabaseSizeCollector(pool, noopPrepareCtx),
 		PgAttributeCollector(pool, noopPrepareCtx),
 		PgClassCollector(pool, noopPrepareCtx, PgClassBackfillBatchSize),
+		PgDatabaseCollector(pool, noopPrepareCtx),
 		PgIndexCollector(pool, noopPrepareCtx),
 		PgLocksCollector(pool, noopPrepareCtx),
 		PgPreparedXactsCollector(pool, noopPrepareCtx),
