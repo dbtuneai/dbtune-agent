@@ -35,7 +35,8 @@ type PrepareCtx func(ctx context.Context) (context.Context, error)
 
 // Payload wraps a slice of rows collected from a catalog view.
 type Payload[T any] struct {
-	Rows []T `json:"rows"`
+	CollectedAt time.Time `json:"collected_at"`
+	Rows        []T       `json:"rows"`
 }
 
 // collectorOpts holds optional configuration for NewCollector.
@@ -130,6 +131,7 @@ func NewCollector[T any](
 			if err != nil {
 				return nil, err
 			}
+			collectedAt := time.Now().UTC()
 			querier := func() (pgx.Rows, error) {
 				return utils.QueryWithPrefix(pool, ctx, query)
 			}
@@ -137,12 +139,18 @@ func NewCollector[T any](
 			if err != nil {
 				return nil, err
 			}
-			data, err := json.Marshal(&Payload[T]{Rows: rows})
+			if cfg.skipUnchanged {
+				rowsData, err := json.Marshal(rows)
+				if err != nil {
+					return nil, fmt.Errorf("failed to marshal %s rows for hash: %w", name, err)
+				}
+				if tracker.shouldSkip(rowsData) {
+					return nil, nil
+				}
+			}
+			data, err := json.Marshal(&Payload[T]{CollectedAt: collectedAt, Rows: rows})
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal %s: %w", name, err)
-			}
-			if cfg.skipUnchanged && tracker.shouldSkip(data) {
-				return nil, nil
 			}
 			return &CollectResult{JSON: data}, nil
 		},
