@@ -14,7 +14,7 @@ import (
 
 const (
 	defaultFlushInterval = 15 * time.Second
-	defaultBufferSize    = 20
+	defaultBufferSize    = 100
 	sendTimeout          = 5 * time.Second
 )
 
