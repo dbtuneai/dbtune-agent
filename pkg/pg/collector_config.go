@@ -8,6 +8,10 @@ import (
 
 // CollectorOverride holds per-collector configuration that can be set via
 // the collectors section in dbtune.yaml or via environment variables.
+//
+// These settings override the global postgresql config (Config.IncludeQueries,
+// Config.MaximumQueryTextLength) on a per-collector basis. When both are set,
+// the per-collector value takes precedence.
 type CollectorOverride struct {
 	Enabled            *bool `mapstructure:"enabled"`
 	IntervalSeconds    *int  `mapstructure:"interval_seconds"`
@@ -43,16 +47,16 @@ func (o CollectorOverride) IntervalOr(def time.Duration) time.Duration {
 	return configured
 }
 
-// IntOr returns *ptr if non-nil, otherwise def.
-func IntOr(ptr *int, def int) int {
+// intOr returns *ptr if non-nil, otherwise def.
+func intOr(ptr *int, def int) int {
 	if ptr == nil {
 		return def
 	}
 	return *ptr
 }
 
-// BoolOr returns *ptr if non-nil, otherwise def.
-func BoolOr(ptr *bool, def bool) bool {
+// boolOr returns *ptr if non-nil, otherwise def.
+func boolOr(ptr *bool, def bool) bool {
 	if ptr == nil {
 		return def
 	}
@@ -66,6 +70,12 @@ const (
 
 // knownCollectorFields maps each known collector name to its valid extra fields
 // (beyond the universal "enabled" and "interval_seconds").
+//
+// Catalog collector names are cross-referenced by TestKnownCollectorFields_ContainsAllCatalogCollectors.
+// Metric collector names come from adapter Collectors() functions in:
+//   - pkg/docker/adapter.go, pkg/aiven/adapter.go, pkg/patroni/adapter.go,
+//     pkg/cnpg/adapter.go, pkg/cloudsql/adapter.go, pkg/pgprem/adapter.go,
+//     pkg/azureflex/adapter.go
 var knownCollectorFields = map[string][]string{
 	// Metric collectors
 	"database_average_query_runtime":   {"include_queries", "max_query_text_length"},

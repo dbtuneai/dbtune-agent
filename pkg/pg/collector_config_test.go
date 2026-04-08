@@ -52,14 +52,14 @@ func TestCollectorOverride_IntervalOr(t *testing.T) {
 }
 
 func TestIntOr(t *testing.T) {
-	assert.Equal(t, 42, IntOr(intPtr(42), 10))
-	assert.Equal(t, 10, IntOr(nil, 10))
+	assert.Equal(t, 42, intOr(intPtr(42), 10))
+	assert.Equal(t, 10, intOr(nil, 10))
 }
 
 func TestBoolOr(t *testing.T) {
-	assert.True(t, BoolOr(boolPtr(true), false))
-	assert.False(t, BoolOr(nil, false))
-	assert.True(t, BoolOr(nil, true))
+	assert.True(t, boolOr(boolPtr(true), false))
+	assert.False(t, boolOr(nil, false))
+	assert.True(t, boolOr(nil, true))
 }
 
 func TestValidateCollectorsConfig(t *testing.T) {
@@ -157,6 +157,46 @@ func TestValidateCollectorsConfig(t *testing.T) {
 	})
 }
 
+func TestValidateCollectorsConfig_BoundaryValues(t *testing.T) {
+	t.Run("diff_limit at zero", func(t *testing.T) {
+		cfg := CollectorsConfig{"pg_stat_statements": {DiffLimit: intPtr(0)}}
+		require.NoError(t, validateCollectorsConfig(cfg))
+	})
+
+	t.Run("diff_limit at max", func(t *testing.T) {
+		cfg := CollectorsConfig{"pg_stat_statements": {DiffLimit: intPtr(MaxDiffLimit)}}
+		require.NoError(t, validateCollectorsConfig(cfg))
+	})
+
+	t.Run("max_query_text_length at zero", func(t *testing.T) {
+		cfg := CollectorsConfig{"pg_stat_statements": {MaxQueryTextLength: intPtr(0)}}
+		require.NoError(t, validateCollectorsConfig(cfg))
+	})
+
+	t.Run("max_query_text_length at max", func(t *testing.T) {
+		cfg := CollectorsConfig{"pg_stat_statements": {MaxQueryTextLength: intPtr(MaxQueryTextLength)}}
+		require.NoError(t, validateCollectorsConfig(cfg))
+	})
+
+	t.Run("interval_seconds at zero", func(t *testing.T) {
+		cfg := CollectorsConfig{"pg_class": {IntervalSeconds: intPtr(0)}}
+		require.NoError(t, validateCollectorsConfig(cfg))
+	})
+}
+
+func TestValidateCollectorsConfig_MultipleErrors(t *testing.T) {
+	cfg := CollectorsConfig{
+		"not_real":            {},
+		"pg_stat_statements":  {DiffLimit: intPtr(-1)},
+		"pg_stat_user_tables": {CategoryLimit: intPtr(-1)},
+	}
+	err := validateCollectorsConfig(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown collector")
+	assert.Contains(t, err.Error(), "diff_limit")
+	assert.Contains(t, err.Error(), "category_limit")
+}
+
 func TestCollectorsConfigFromViper(t *testing.T) {
 	t.Run("round-trip YAML config", func(t *testing.T) {
 		viper.Reset()
@@ -190,6 +230,82 @@ collectors:
 		assert.Equal(t, 250, *pc.BackfillBatchSize)
 	})
 
+	t.Run("round-trip all fields via YAML", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		viper.SetConfigType("yaml")
+		err := viper.ReadConfig(strings.NewReader(`
+collectors:
+  pg_stat_statements:
+    enabled: true
+    interval_seconds: 60
+    diff_limit: 300
+    include_queries: true
+    max_query_text_length: 2048
+  pg_stats:
+    include_table_data: true
+    backfill_batch_size: 150
+  pg_stat_user_tables:
+    category_limit: 100
+`))
+		require.NoError(t, err)
+
+		cfg, err := CollectorsConfigFromViper()
+		require.NoError(t, err)
+
+		pss := cfg["pg_stat_statements"]
+		assert.True(t, pss.IsEnabled())
+		assert.Equal(t, 60, *pss.IntervalSeconds)
+		assert.Equal(t, 300, *pss.DiffLimit)
+		assert.True(t, *pss.IncludeQueries)
+		assert.Equal(t, 2048, *pss.MaxQueryTextLength)
+
+		ps := cfg["pg_stats"]
+		assert.True(t, *ps.IncludeTableData)
+		assert.Equal(t, 150, *ps.BackfillBatchSize)
+
+		psut := cfg["pg_stat_user_tables"]
+		assert.Equal(t, 100, *psut.CategoryLimit)
+	})
+
+	t.Run("minimal config with only enabled", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		viper.SetConfigType("yaml")
+		err := viper.ReadConfig(strings.NewReader(`
+collectors:
+  pg_class:
+    enabled: true
+`))
+		require.NoError(t, err)
+
+		cfg, err := CollectorsConfigFromViper()
+		require.NoError(t, err)
+
+		pc := cfg["pg_class"]
+		assert.True(t, pc.IsEnabled())
+		assert.Nil(t, pc.IntervalSeconds)
+		assert.Nil(t, pc.BackfillBatchSize)
+	})
+
+	t.Run("non-map collector value rejected", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		viper.SetConfigType("yaml")
+		err := viper.ReadConfig(strings.NewReader(`
+collectors:
+  pg_class: true
+`))
+		require.NoError(t, err)
+
+		_, err = CollectorsConfigFromViper()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expected map")
+	})
+
 	t.Run("env var overlay", func(t *testing.T) {
 		viper.Reset()
 		defer viper.Reset()
@@ -203,6 +319,37 @@ collectors:
 		pc := cfg["pg_class"]
 		assert.False(t, pc.IsEnabled())
 		assert.Equal(t, 999, *pc.BackfillBatchSize)
+	})
+
+	t.Run("env var overlay for all field types", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		t.Setenv("DBT_COLLECTOR_PG_STAT_STATEMENTS_ENABLED", "true")
+		t.Setenv("DBT_COLLECTOR_PG_STAT_STATEMENTS_INTERVAL_SECONDS", "45")
+		t.Setenv("DBT_COLLECTOR_PG_STAT_STATEMENTS_DIFF_LIMIT", "250")
+		t.Setenv("DBT_COLLECTOR_PG_STAT_STATEMENTS_INCLUDE_QUERIES", "false")
+		t.Setenv("DBT_COLLECTOR_PG_STAT_STATEMENTS_MAX_QUERY_TEXT_LENGTH", "4096")
+		t.Setenv("DBT_COLLECTOR_PG_STATS_INCLUDE_TABLE_DATA", "true")
+		t.Setenv("DBT_COLLECTOR_PG_STATS_BACKFILL_BATCH_SIZE", "300")
+		t.Setenv("DBT_COLLECTOR_PG_STAT_USER_TABLES_CATEGORY_LIMIT", "50")
+
+		cfg, err := CollectorsConfigFromViper()
+		require.NoError(t, err)
+
+		pss := cfg["pg_stat_statements"]
+		assert.True(t, pss.IsEnabled())
+		assert.Equal(t, 45, *pss.IntervalSeconds)
+		assert.Equal(t, 250, *pss.DiffLimit)
+		assert.False(t, *pss.IncludeQueries)
+		assert.Equal(t, 4096, *pss.MaxQueryTextLength)
+
+		ps := cfg["pg_stats"]
+		assert.True(t, *ps.IncludeTableData)
+		assert.Equal(t, 300, *ps.BackfillBatchSize)
+
+		psut := cfg["pg_stat_user_tables"]
+		assert.Equal(t, 50, *psut.CategoryLimit)
 	})
 
 	t.Run("env var overrides YAML", func(t *testing.T) {
@@ -226,6 +373,50 @@ collectors:
 		pc := cfg["pg_class"]
 		assert.False(t, pc.IsEnabled())
 		assert.Equal(t, 100, *pc.BackfillBatchSize)
+	})
+
+	t.Run("invalid env var bool rejected", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		t.Setenv("DBT_COLLECTOR_PG_CLASS_ENABLED", "notabool")
+
+		_, err := CollectorsConfigFromViper()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ENABLED")
+	})
+
+	t.Run("invalid env var int rejected", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		t.Setenv("DBT_COLLECTOR_PG_CLASS_INTERVAL_SECONDS", "notanumber")
+
+		_, err := CollectorsConfigFromViper()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "INTERVAL_SECONDS")
+	})
+
+	t.Run("invalid env var extra field int rejected", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		t.Setenv("DBT_COLLECTOR_PG_STAT_STATEMENTS_DIFF_LIMIT", "xyz")
+
+		_, err := CollectorsConfigFromViper()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "DIFF_LIMIT")
+	})
+
+	t.Run("invalid env var extra field bool rejected", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		t.Setenv("DBT_COLLECTOR_PG_STAT_STATEMENTS_INCLUDE_QUERIES", "notabool")
+
+		_, err := CollectorsConfigFromViper()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "INCLUDE_QUERIES")
 	})
 
 	t.Run("unknown collector rejected", func(t *testing.T) {
