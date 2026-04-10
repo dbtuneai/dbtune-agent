@@ -1,10 +1,15 @@
 package pg
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -306,6 +311,23 @@ collectors:
 		assert.Contains(t, err.Error(), "expected map")
 	})
 
+	t.Run("unknown YAML field rejected", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		viper.SetConfigType("yaml")
+		err := viper.ReadConfig(strings.NewReader(`
+collectors:
+  pg_class:
+    not_a_real_field: 123
+`))
+		require.NoError(t, err)
+
+		_, err = CollectorsConfigFromViper()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown field")
+	})
+
 	t.Run("env var overlay", func(t *testing.T) {
 		viper.Reset()
 		defer viper.Reset()
@@ -444,4 +466,120 @@ collectors:
 		require.NoError(t, err)
 		assert.Empty(t, cfg)
 	})
+}
+
+func TestKnownCollectors_ContainsAllCatalogCollectors(t *testing.T) {
+	catalogNames := knownCatalogCollectorNames()
+
+	for name := range catalogNames {
+		spec, ok := knownCollectors[name]
+		assert.True(t, ok, "missing catalog collector %q", name)
+		assert.True(t, spec.kinds.has(catalogCollectorKind), "collector %q should include catalog kind", name)
+	}
+}
+
+func TestKnownCollectors_MetricCollectorKeysMatchAdapters(t *testing.T) {
+	actualMetricNames := collectMetricCollectorKeysFromSource(t)
+
+	configuredMetricNames := make(map[string]struct{})
+	for name, spec := range knownCollectors {
+		if !spec.kinds.has(metricCollectorKind) {
+			continue
+		}
+		configuredMetricNames[name] = struct{}{}
+	}
+
+	assert.Equal(t, actualMetricNames, configuredMetricNames)
+}
+
+func knownCatalogCollectorNames() map[string]struct{} {
+	return map[string]struct{}{
+		queries.AutovacuumCountName:           {},
+		queries.ConnectionStatsName:           {},
+		queries.DatabaseSizeName:              {},
+		queries.PgAttributeName:               {},
+		queries.PgClassName:                   {},
+		queries.PgDatabaseName:                {},
+		queries.PgIndexName:                   {},
+		queries.PgLocksName:                   {},
+		queries.PgPreparedXactsName:           {},
+		queries.PgReplicationSlotsName:        {},
+		queries.PgStatActivityName:            {},
+		queries.PgStatArchiverName:            {},
+		queries.PgStatBgwriterName:            {},
+		queries.PgStatCheckpointerName:        {},
+		queries.PgStatDatabaseName:            {},
+		queries.PgStatDatabaseConflictsName:   {},
+		queries.PgStatIOName:                  {},
+		queries.PgStatProgressAnalyzeName:     {},
+		queries.PgStatProgressCreateIndexName: {},
+		queries.PgStatProgressVacuumName:      {},
+		queries.PgStatRecoveryPrefetchName:    {},
+		queries.PgStatReplicationName:         {},
+		queries.PgStatReplicationSlotsName:    {},
+		queries.PgStatSlruName:                {},
+		queries.PgStatStatementsName:          {},
+		queries.PgStatSubscriptionName:        {},
+		queries.PgStatSubscriptionStatsName:   {},
+		queries.PgStatUserFunctionsName:       {},
+		queries.PgStatUserIndexesName:         {},
+		queries.PgStatUserTablesName:          {},
+		queries.PgStatWalName:                 {},
+		queries.PgStatWalReceiverName:         {},
+		queries.PgStatioUserIndexesName:       {},
+		queries.PgStatioUserTablesName:        {},
+		queries.PgStatsName:                   {},
+		queries.TransactionCommitsName:        {},
+		queries.UptimeMinutesName:             {},
+		queries.WaitEventsName:                {},
+	}
+}
+
+func collectMetricCollectorKeysFromSource(t *testing.T) map[string]struct{} {
+	t.Helper()
+
+	files := []string{
+		"../aiven/adapter.go",
+		"../azureflex/adapter.go",
+		"../cloudsql/adapter.go",
+		"../cnpg/adapter.go",
+		"../docker/adapter.go",
+		"../patroni/adapter.go",
+		"../pgprem/adapter.go",
+		"../rds/adapters.go",
+	}
+
+	keys := make(map[string]struct{})
+	for _, relPath := range files {
+		path := filepath.Clean(relPath)
+		fileSet := token.NewFileSet()
+		file, err := parser.ParseFile(fileSet, path, nil, 0)
+		require.NoError(t, err, "parse %s", path)
+
+		ast.Inspect(file, func(node ast.Node) bool {
+			lit, ok := node.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+
+			for _, elt := range lit.Elts {
+				keyValue, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				ident, ok := keyValue.Key.(*ast.Ident)
+				if !ok || ident.Name != "Key" {
+					continue
+				}
+				value, ok := keyValue.Value.(*ast.BasicLit)
+				if !ok || value.Kind != token.STRING {
+					continue
+				}
+				keys[strings.Trim(value.Value, `"`)] = struct{}{}
+			}
+			return true
+		})
+	}
+
+	return keys
 }

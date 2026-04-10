@@ -2,8 +2,12 @@ package pg
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/spf13/viper"
 )
 
 // CollectorOverride holds per-collector configuration that can be set via
@@ -68,124 +72,441 @@ const (
 	MaxQueryTextLength = 8192
 )
 
-// knownCollectorFields maps each known collector name to its valid extra fields
-// (beyond the universal "enabled" and "interval_seconds").
-//
-// Catalog collector names are cross-referenced by TestKnownCollectorFields_ContainsAllCatalogCollectors.
-// Metric collector names come from adapter Collectors() functions in:
-//   - pkg/docker/adapter.go, pkg/aiven/adapter.go, pkg/patroni/adapter.go,
-//     pkg/cnpg/adapter.go, pkg/cloudsql/adapter.go, pkg/pgprem/adapter.go,
-//     pkg/azureflex/adapter.go
-var knownCollectorFields = map[string][]string{
+type collectorFieldSpec struct {
+	key       string
+	envSuffix string
+	apply     func(*CollectorOverride, any) error
+	isSet     func(CollectorOverride) bool
+	validate  func(string, CollectorOverride) error
+}
+
+type collectorKinds uint8
+
+const (
+	metricCollectorKind collectorKinds = 1 << iota
+	catalogCollectorKind
+)
+
+type collectorSpec struct {
+	kinds  collectorKinds
+	fields []collectorFieldSpec
+}
+
+func (s collectorSpec) field(key string) (collectorFieldSpec, bool) {
+	for _, field := range s.fields {
+		if field.key == key {
+			return field, true
+		}
+	}
+	return collectorFieldSpec{}, false
+}
+
+func boolField(
+	key string,
+	get func(CollectorOverride) *bool,
+	set func(*CollectorOverride, *bool),
+) collectorFieldSpec {
+	return collectorFieldSpec{
+		key:       key,
+		envSuffix: strings.ToUpper(key),
+		apply: func(override *CollectorOverride, raw any) error {
+			value, err := parseBoolValue(raw)
+			if err != nil {
+				return err
+			}
+			set(override, &value)
+			return nil
+		},
+		isSet: func(override CollectorOverride) bool {
+			return get(override) != nil
+		},
+		validate: func(_ string, _ CollectorOverride) error {
+			return nil
+		},
+	}
+}
+
+func intField(
+	key string,
+	get func(CollectorOverride) *int,
+	set func(*CollectorOverride, *int),
+	validateValue func(string, int) error,
+) collectorFieldSpec {
+	return collectorFieldSpec{
+		key:       key,
+		envSuffix: strings.ToUpper(key),
+		apply: func(override *CollectorOverride, raw any) error {
+			value, err := parseIntValue(raw)
+			if err != nil {
+				return err
+			}
+			set(override, &value)
+			return nil
+		},
+		isSet: func(override CollectorOverride) bool {
+			return get(override) != nil
+		},
+		validate: func(name string, override CollectorOverride) error {
+			value := get(override)
+			if value == nil {
+				return nil
+			}
+			return validateValue(name, *value)
+		},
+	}
+}
+
+func universalCollectorFields() []collectorFieldSpec {
+	return []collectorFieldSpec{
+		boolField(
+			"enabled",
+			func(override CollectorOverride) *bool { return override.Enabled },
+			func(override *CollectorOverride, value *bool) { override.Enabled = value },
+		),
+		intField(
+			"interval_seconds",
+			func(override CollectorOverride) *int { return override.IntervalSeconds },
+			func(override *CollectorOverride, value *int) { override.IntervalSeconds = value },
+			func(name string, value int) error {
+				if value < 0 {
+					return fmt.Errorf("collector %q: interval_seconds must be >= 0", name)
+				}
+				return nil
+			},
+		),
+	}
+}
+
+func collectorFieldSpecs(extraFields ...collectorFieldSpec) []collectorFieldSpec {
+	fields := universalCollectorFields()
+	fields = append(fields, extraFields...)
+	return fields
+}
+
+func metricCollectorSpec(extraFields ...collectorFieldSpec) collectorSpec {
+	return collectorSpec{
+		kinds:  metricCollectorKind,
+		fields: collectorFieldSpecs(extraFields...),
+	}
+}
+
+func catalogCollectorSpec(extraFields ...collectorFieldSpec) collectorSpec {
+	return collectorSpec{
+		kinds:  catalogCollectorKind,
+		fields: collectorFieldSpecs(extraFields...),
+	}
+}
+
+func sharedCollectorSpec(extraFields ...collectorFieldSpec) collectorSpec {
+	return collectorSpec{
+		kinds:  metricCollectorKind | catalogCollectorKind,
+		fields: collectorFieldSpecs(extraFields...),
+	}
+}
+
+var knownCollectors = map[string]collectorSpec{
 	// Metric collectors
-	"database_average_query_runtime":   {"include_queries", "max_query_text_length"},
-	"database_transactions_per_second": nil,
-	"database_connections":             nil,
-	"system_db_size":                   nil,
-	"database_autovacuum_count":        nil,
-	"server_uptime":                    nil,
-	"pg_database":                      nil,
-	"pg_user_tables":                   nil,
-	"pg_bgwriter":                      nil,
-	"pg_wal":                           nil,
-	"database_wait_events":             nil,
-	"hardware":                         nil,
-	"pg_checkpointer":                  nil,
+	"database_average_query_runtime": metricCollectorSpec(
+		boolField(
+			"include_queries",
+			func(override CollectorOverride) *bool { return override.IncludeQueries },
+			func(override *CollectorOverride, value *bool) { override.IncludeQueries = value },
+		),
+		intField(
+			"max_query_text_length",
+			func(override CollectorOverride) *int { return override.MaxQueryTextLength },
+			func(override *CollectorOverride, value *int) { override.MaxQueryTextLength = value },
+			func(name string, value int) error {
+				if value < 0 || value > MaxQueryTextLength {
+					return fmt.Errorf("collector %q: max_query_text_length must be between 0 and %d", name, MaxQueryTextLength)
+				}
+				return nil
+			},
+		),
+	),
+	"database_transactions_per_second": metricCollectorSpec(),
+	"database_connections":             sharedCollectorSpec(),
+	"system_db_size":                   sharedCollectorSpec(),
+	"database_autovacuum_count":        metricCollectorSpec(),
+	"server_uptime":                    sharedCollectorSpec(),
+	"pg_database":                      sharedCollectorSpec(),
+	"pg_user_tables":                   metricCollectorSpec(),
+	"pg_bgwriter":                      metricCollectorSpec(),
+	"pg_wal":                           metricCollectorSpec(),
+	"database_wait_events":             metricCollectorSpec(),
+	"hardware":                         metricCollectorSpec(),
+	"pg_checkpointer":                  metricCollectorSpec(),
+	"cpu_utilization":                  metricCollectorSpec(),
+	"memory_used":                      metricCollectorSpec(),
 
 	// Catalog collectors
-	"autovacuum_count":              nil,
-	"database_transactions":         nil,
-	"pg_attribute":                  nil,
-	"pg_class":                      {"backfill_batch_size"},
-	"pg_index":                      nil,
-	"pg_locks":                      nil,
-	"pg_prepared_xacts":             nil,
-	"pg_replication_slots":          nil,
-	"pg_stat_activity":              nil,
-	"pg_stat_archiver":              nil,
-	"pg_stat_bgwriter":              nil,
-	"pg_stat_checkpointer":          nil,
-	"pg_stat_database":              nil,
-	"pg_stat_database_conflicts":    nil,
-	"pg_stat_io":                    nil,
-	"pg_stat_progress_analyze":      nil,
-	"pg_stat_progress_create_index": nil,
-	"pg_stat_progress_vacuum":       nil,
-	"pg_stat_replication":           nil,
-	"pg_stat_replication_slots":     nil,
-	"pg_stat_recovery_prefetch":     nil,
-	"pg_stat_slru":                  nil,
-	"pg_stat_statements":            {"diff_limit", "include_queries", "max_query_text_length"},
-	"pg_stat_subscription":          nil,
-	"pg_stat_subscription_stats":    nil,
-	"pg_stat_user_functions":        nil,
-	"pg_stat_user_indexes":          {"category_limit"},
-	"pg_stat_user_tables":           {"category_limit"},
-	"pg_stat_wal":                   nil,
-	"pg_stat_wal_receiver":          nil,
-	"pg_statio_user_indexes":        {"backfill_batch_size"},
-	"pg_statio_user_tables":         nil,
-	"pg_stats":                      {"backfill_batch_size", "include_table_data"},
-	"wait_events":                   nil,
+	"autovacuum_count":      catalogCollectorSpec(),
+	"database_transactions": catalogCollectorSpec(),
+	"pg_attribute":          catalogCollectorSpec(),
+	"pg_class": catalogCollectorSpec(
+		intField(
+			"backfill_batch_size",
+			func(override CollectorOverride) *int { return override.BackfillBatchSize },
+			func(override *CollectorOverride, value *int) { override.BackfillBatchSize = value },
+			func(name string, value int) error {
+				if value < 0 {
+					return fmt.Errorf("collector %q: backfill_batch_size must be >= 0", name)
+				}
+				return nil
+			},
+		),
+	),
+	"pg_index":                      catalogCollectorSpec(),
+	"pg_locks":                      catalogCollectorSpec(),
+	"pg_prepared_xacts":             catalogCollectorSpec(),
+	"pg_replication_slots":          catalogCollectorSpec(),
+	"pg_stat_activity":              catalogCollectorSpec(),
+	"pg_stat_archiver":              catalogCollectorSpec(),
+	"pg_stat_bgwriter":              catalogCollectorSpec(),
+	"pg_stat_checkpointer":          catalogCollectorSpec(),
+	"pg_stat_database":              catalogCollectorSpec(),
+	"pg_stat_database_conflicts":    catalogCollectorSpec(),
+	"pg_stat_io":                    catalogCollectorSpec(),
+	"pg_stat_progress_analyze":      catalogCollectorSpec(),
+	"pg_stat_progress_create_index": catalogCollectorSpec(),
+	"pg_stat_progress_vacuum":       catalogCollectorSpec(),
+	"pg_stat_replication":           catalogCollectorSpec(),
+	"pg_stat_replication_slots":     catalogCollectorSpec(),
+	"pg_stat_recovery_prefetch":     catalogCollectorSpec(),
+	"pg_stat_slru":                  catalogCollectorSpec(),
+	"pg_stat_statements": catalogCollectorSpec(
+		intField(
+			"diff_limit",
+			func(override CollectorOverride) *int { return override.DiffLimit },
+			func(override *CollectorOverride, value *int) { override.DiffLimit = value },
+			func(name string, value int) error {
+				if value < 0 || value > MaxDiffLimit {
+					return fmt.Errorf("collector %q: diff_limit must be between 0 and %d", name, MaxDiffLimit)
+				}
+				return nil
+			},
+		),
+		boolField(
+			"include_queries",
+			func(override CollectorOverride) *bool { return override.IncludeQueries },
+			func(override *CollectorOverride, value *bool) { override.IncludeQueries = value },
+		),
+		intField(
+			"max_query_text_length",
+			func(override CollectorOverride) *int { return override.MaxQueryTextLength },
+			func(override *CollectorOverride, value *int) { override.MaxQueryTextLength = value },
+			func(name string, value int) error {
+				if value < 0 || value > MaxQueryTextLength {
+					return fmt.Errorf("collector %q: max_query_text_length must be between 0 and %d", name, MaxQueryTextLength)
+				}
+				return nil
+			},
+		),
+	),
+	"pg_stat_subscription":       catalogCollectorSpec(),
+	"pg_stat_subscription_stats": catalogCollectorSpec(),
+	"pg_stat_user_functions":     catalogCollectorSpec(),
+	"pg_stat_user_indexes": catalogCollectorSpec(
+		intField(
+			"category_limit",
+			func(override CollectorOverride) *int { return override.CategoryLimit },
+			func(override *CollectorOverride, value *int) { override.CategoryLimit = value },
+			func(name string, value int) error {
+				if value < 0 {
+					return fmt.Errorf("collector %q: category_limit must be >= 0", name)
+				}
+				return nil
+			},
+		),
+	),
+	"pg_stat_user_tables": catalogCollectorSpec(
+		intField(
+			"category_limit",
+			func(override CollectorOverride) *int { return override.CategoryLimit },
+			func(override *CollectorOverride, value *int) { override.CategoryLimit = value },
+			func(name string, value int) error {
+				if value < 0 {
+					return fmt.Errorf("collector %q: category_limit must be >= 0", name)
+				}
+				return nil
+			},
+		),
+	),
+	"pg_stat_wal":          catalogCollectorSpec(),
+	"pg_stat_wal_receiver": catalogCollectorSpec(),
+	"pg_statio_user_indexes": catalogCollectorSpec(
+		intField(
+			"backfill_batch_size",
+			func(override CollectorOverride) *int { return override.BackfillBatchSize },
+			func(override *CollectorOverride, value *int) { override.BackfillBatchSize = value },
+			func(name string, value int) error {
+				if value < 0 {
+					return fmt.Errorf("collector %q: backfill_batch_size must be >= 0", name)
+				}
+				return nil
+			},
+		),
+	),
+	"pg_statio_user_tables": catalogCollectorSpec(),
+	"pg_stats": catalogCollectorSpec(
+		intField(
+			"backfill_batch_size",
+			func(override CollectorOverride) *int { return override.BackfillBatchSize },
+			func(override *CollectorOverride, value *int) { override.BackfillBatchSize = value },
+			func(name string, value int) error {
+				if value < 0 {
+					return fmt.Errorf("collector %q: backfill_batch_size must be >= 0", name)
+				}
+				return nil
+			},
+		),
+		boolField(
+			"include_table_data",
+			func(override CollectorOverride) *bool { return override.IncludeTableData },
+			func(override *CollectorOverride, value *bool) { override.IncludeTableData = value },
+		),
+	),
+	"wait_events": catalogCollectorSpec(),
+}
+
+func parseBoolValue(raw any) (bool, error) {
+	switch value := raw.(type) {
+	case bool:
+		return value, nil
+	case string:
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return false, err
+		}
+		return parsed, nil
+	default:
+		return false, fmt.Errorf("expected boolean, got %T", raw)
+	}
+}
+
+func parseIntValue(raw any) (int, error) {
+	switch value := raw.(type) {
+	case int:
+		return value, nil
+	case int64:
+		return int(value), nil
+	case float64:
+		if value != float64(int(value)) {
+			return 0, fmt.Errorf("expected integer, got %v", value)
+		}
+		return int(value), nil
+	case string:
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return 0, err
+		}
+		return parsed, nil
+	default:
+		return 0, fmt.Errorf("expected integer, got %T", raw)
+	}
+}
+
+func applyCollectorMap(cfg CollectorsConfig, name string, raw any) error {
+	spec, ok := knownCollectors[name]
+	if !ok {
+		return fmt.Errorf("unknown collector %q", name)
+	}
+
+	fieldMap, ok := raw.(map[string]any)
+	if !ok {
+		return fmt.Errorf("collector %q: expected map, got %T", name, raw)
+	}
+
+	override := cfg[name]
+	for key, value := range fieldMap {
+		field, ok := spec.field(key)
+		if !ok {
+			return fmt.Errorf("collector %q: unknown field %q", name, key)
+		}
+		if err := field.apply(&override, value); err != nil {
+			return fmt.Errorf("collector %q field %q: %w", name, key, err)
+		}
+	}
+	cfg[name] = override
+	return nil
+}
+
+// CollectorsConfigFromViper reads the collectors YAML section, overlays
+// environment variables with pattern DBT_COLLECTOR_{NAME}_{FIELD},
+// validates, and returns the config.
+func CollectorsConfigFromViper() (CollectorsConfig, error) {
+	cfg := make(CollectorsConfig)
+
+	rawMap := viper.GetStringMap("collectors")
+	for name, raw := range rawMap {
+		if err := applyCollectorMap(cfg, name, raw); err != nil {
+			return nil, err
+		}
+	}
+
+	collectorEnvs := make(map[string]string)
+	for _, env := range os.Environ() {
+		if key, value, ok := strings.Cut(env, "="); ok && strings.HasPrefix(key, "DBT_COLLECTOR_") {
+			collectorEnvs[key] = value
+		}
+	}
+
+	for name, spec := range knownCollectors {
+		envPrefix := "DBT_COLLECTOR_" + strings.ToUpper(name) + "_"
+		override := cfg[name]
+		changed := false
+
+		for _, field := range spec.fields {
+			envKey := envPrefix + field.envSuffix
+			value, ok := collectorEnvs[envKey]
+			if !ok {
+				continue
+			}
+			if err := field.apply(&override, value); err != nil {
+				return nil, fmt.Errorf("env %s: %w", envKey, err)
+			}
+			changed = true
+		}
+
+		if changed {
+			cfg[name] = override
+		}
+	}
+
+	if err := validateCollectorsConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
 }
 
 func validateCollectorsConfig(cfg CollectorsConfig) error {
 	var errs []string
 
 	for name, override := range cfg {
-		extraFields, known := knownCollectorFields[name]
+		spec, known := knownCollectors[name]
 		if !known {
 			errs = append(errs, fmt.Sprintf("unknown collector %q", name))
 			continue
 		}
 
-		allowed := make(map[string]bool, len(extraFields))
-		for _, f := range extraFields {
-			allowed[f] = true
+		allowedFields := make(map[string]struct{}, len(spec.fields))
+		for _, field := range spec.fields {
+			allowedFields[field.key] = struct{}{}
 		}
-
-		if override.IntervalSeconds != nil && *override.IntervalSeconds < 0 {
-			errs = append(errs, fmt.Sprintf("collector %q: interval_seconds must be >= 0", name))
-		}
-
-		if override.DiffLimit != nil {
-			if !allowed["diff_limit"] {
-				errs = append(errs, fmt.Sprintf("collector %q: diff_limit is not a valid field", name))
-			} else if *override.DiffLimit < 0 || *override.DiffLimit > MaxDiffLimit {
-				errs = append(errs, fmt.Sprintf("collector %q: diff_limit must be between 0 and %d", name, MaxDiffLimit))
+		for _, field := range allCollectorFields() {
+			if _, allowed := allowedFields[field.key]; allowed {
+				continue
+			}
+			if field.isSet(override) {
+				errs = append(errs, fmt.Sprintf("collector %q: %s is not a valid field", name, field.key))
 			}
 		}
 
-		if override.MaxQueryTextLength != nil {
-			if !allowed["max_query_text_length"] {
-				errs = append(errs, fmt.Sprintf("collector %q: max_query_text_length is not a valid field", name))
-			} else if *override.MaxQueryTextLength < 0 || *override.MaxQueryTextLength > MaxQueryTextLength {
-				errs = append(errs, fmt.Sprintf("collector %q: max_query_text_length must be between 0 and %d", name, MaxQueryTextLength))
+		for _, field := range spec.fields {
+			if err := field.validate(name, override); err != nil {
+				errs = append(errs, err.Error())
 			}
-		}
-
-		if override.BackfillBatchSize != nil {
-			if !allowed["backfill_batch_size"] {
-				errs = append(errs, fmt.Sprintf("collector %q: backfill_batch_size is not a valid field", name))
-			} else if *override.BackfillBatchSize < 0 {
-				errs = append(errs, fmt.Sprintf("collector %q: backfill_batch_size must be >= 0", name))
-			}
-		}
-
-		if override.CategoryLimit != nil {
-			if !allowed["category_limit"] {
-				errs = append(errs, fmt.Sprintf("collector %q: category_limit is not a valid field", name))
-			} else if *override.CategoryLimit < 0 {
-				errs = append(errs, fmt.Sprintf("collector %q: category_limit must be >= 0", name))
-			}
-		}
-
-		if override.IncludeQueries != nil && !allowed["include_queries"] {
-			errs = append(errs, fmt.Sprintf("collector %q: include_queries is not a valid field", name))
-		}
-
-		if override.IncludeTableData != nil && !allowed["include_table_data"] {
-			errs = append(errs, fmt.Sprintf("collector %q: include_table_data is not a valid field", name))
 		}
 	}
 
@@ -194,4 +515,28 @@ func validateCollectorsConfig(cfg CollectorsConfig) error {
 	}
 
 	return nil
+}
+
+func allCollectorFields() []collectorFieldSpec {
+	fields := universalCollectorFields()
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		seen[field.key] = struct{}{}
+	}
+
+	for _, spec := range knownCollectors {
+		for _, field := range spec.fields {
+			if _, ok := seen[field.key]; ok {
+				continue
+			}
+			fields = append(fields, field)
+			seen[field.key] = struct{}{}
+		}
+	}
+
+	return fields
+}
+
+func (k collectorKinds) has(kind collectorKinds) bool {
+	return k&kind != 0
 }
