@@ -30,13 +30,6 @@ WHERE NOT starts_with(query, '%s')
 // PgStatStatementsDiffLimit is the max number of delta entries to include.
 const PgStatStatementsDiffLimit = 500
 
-const (
-	// MaxDiffLimit is the maximum allowed value for diff_limit.
-	MaxDiffLimit = 500
-	// MaxQueryTextLength is the maximum allowed value for max_query_text_length.
-	MaxQueryTextLength = 8192
-)
-
 // PgStatStatementsConfig holds configuration for the pg_stat_statements collector.
 type PgStatStatementsConfig struct {
 	DiffLimit          int  `config:"diff_limit" default:"500" min:"0" max:"500"`
