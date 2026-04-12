@@ -81,7 +81,7 @@ func TestAllTypedCollectorDefaults(t *testing.T) {
 
 	assert.Equal(t, 200, cfg.PgStatUserIndexes.Extra.CategoryLimit)
 
-	assert.Equal(t, 2000, cfg.PgStatioUserIndexes.Extra.BatchSize)
+	assert.Equal(t, 2000, cfg.PgStatioUserIndexes.Extra.BackfillBatchSize)
 
 	assert.False(t, cfg.DatabaseAvgQueryRuntime.Extra.IncludeQueries)
 	assert.Equal(t, 8192, cfg.DatabaseAvgQueryRuntime.Extra.MaxQueryTextLength)
@@ -205,7 +205,7 @@ collectors:
   pg_statio_user_indexes:
     backfill_batch_size: 500`,
 			check: func(t *testing.T, cfg CollectorsConfig) {
-				assert.Equal(t, 500, cfg.PgStatioUserIndexes.Extra.BatchSize)
+				assert.Equal(t, 500, cfg.PgStatioUserIndexes.Extra.BackfillBatchSize)
 			},
 		},
 		{
@@ -312,7 +312,7 @@ collectors:
 			name:    "pg_statio_user_indexes env var",
 			envVars: map[string]string{"DBT_COLLECTOR_PG_STATIO_USER_INDEXES_BACKFILL_BATCH_SIZE": "750"},
 			check: func(t *testing.T, cfg CollectorsConfig) {
-				assert.Equal(t, 750, cfg.PgStatioUserIndexes.Extra.BatchSize)
+				assert.Equal(t, 750, cfg.PgStatioUserIndexes.Extra.BackfillBatchSize)
 			},
 		},
 		{
@@ -363,9 +363,17 @@ collectors:
 			wantErrContains: "unknown collector",
 		},
 		{
-			name:            "unknown env var collector rejected",
+			name:            "unknown env var collector rejected (strict, default)",
 			envVars:         map[string]string{"DBT_COLLECTOR_TOTALLY_FAKE_ENABLED": "true"},
 			wantErrContains: "does not match any known collector",
+		},
+		{
+			name:    "unknown env var collector skipped when strict disabled",
+			envVars: map[string]string{"DBT_COLLECTOR_STRICT_ENV": "false", "DBT_COLLECTOR_TOTALLY_FAKE_ENABLED": "true"},
+			check: func(t *testing.T, cfg CollectorsConfig) {
+				// Should succeed — the unknown var is silently skipped.
+				assert.True(t, cfg.PgClass.Base.IsEnabled())
+			},
 		},
 		{
 			name:            "invalid env var bool rejected",

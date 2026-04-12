@@ -512,7 +512,7 @@ func TestPgStatioUserTables_NoError(t *testing.T) {
 
 func TestPgStatioUserIndexes_ReturnsFixtureData(t *testing.T) {
 	inst := latestInstance()
-	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesConfig{BatchSize: PgStatioUserIndexesBatchSize})
+	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesConfig{BackfillBatchSize: PgStatioUserIndexesBatchSize})
 	requireRows(t, c)
 }
 
@@ -521,7 +521,7 @@ func TestPgStatioUserIndexes_BackfillThenDelta(t *testing.T) {
 	ctx := context.Background()
 
 	// Use batch size 1 to force multiple backfill ticks and test pagination.
-	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesConfig{BatchSize: 1})
+	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesConfig{BackfillBatchSize: 1})
 
 	// First call: backfill returns exactly 1 row (batch size 1).
 	r1, err := c.Collect(ctx)
@@ -582,7 +582,7 @@ func TestPgStatioUserIndexes_DeltaEmitsOnlyChangedRows(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Large batch size so backfill finishes in one tick.
-	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesConfig{BatchSize: 10000})
+	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesConfig{BackfillBatchSize: 10000})
 
 	// First call: backfill — all rows emitted.
 	r1, err := c.Collect(ctx)
@@ -1011,7 +1011,7 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		PgStatUserTablesCollector(pool, noopPrepareCtx, PgStatUserTablesConfig{CategoryLimit: PgStatUserTablesCategoryLimit}),
 		PgStatWalCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatWalReceiverCollector(pool, noopPrepareCtx),
-		PgStatioUserIndexesCollector(pool, noopPrepareCtx, PgStatioUserIndexesConfig{BatchSize: PgStatioUserIndexesBatchSize}),
+		PgStatioUserIndexesCollector(pool, noopPrepareCtx, PgStatioUserIndexesConfig{BackfillBatchSize: PgStatioUserIndexesBatchSize}),
 		PgStatioUserTablesCollector(pool, noopPrepareCtx),
 		PgStatsCollector(pool, noopPrepareCtx, PgStatsConfig{
 			BackfillBatchSize: PgStatsBackfillBatchSize,

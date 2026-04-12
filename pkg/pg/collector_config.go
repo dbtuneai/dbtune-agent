@@ -2,6 +2,7 @@ package pg
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -194,7 +195,11 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 	}
 
 	// Phase 2: match each DBT_COLLECTOR_* env var to its collector (longest name wins).
+	strictEnv := os.Getenv("DBT_COLLECTOR_STRICT_ENV") != "false"
 	for envKey, envValue := range collectDBTEnvVars() {
+		if envKey == "DBT_COLLECTOR_STRICT_ENV" {
+			continue
+		}
 		suffix := envKey[len("DBT_COLLECTOR_"):]
 
 		var bestName string
@@ -207,8 +212,14 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 			}
 		}
 		if bestName == "" {
-			return CollectorsConfig{}, fmt.Errorf(
-				"env var %q does not match any known collector (likely a typo)", envKey)
+			if strictEnv {
+				return CollectorsConfig{}, fmt.Errorf(
+					"env var %q does not match any known collector (set DBT_COLLECTOR_STRICT_ENV=false to skip unknown env vars)",
+					envKey,
+				)
+			}
+			slog.Warn("ignoring unrecognized collector env var", "key", envKey)
+			continue
 		}
 
 		fieldKey := strings.ToLower(suffix[bestLen:])

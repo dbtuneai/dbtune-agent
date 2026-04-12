@@ -50,11 +50,11 @@ type statioSnapshot struct {
 
 // PgStatioUserIndexesConfig holds configuration for the pg_statio_user_indexes collector.
 type PgStatioUserIndexesConfig struct {
-	BatchSize int `config:"backfill_batch_size" default:"2000" min:"0"`
+	BackfillBatchSize int `config:"backfill_batch_size" default:"2000" min:"0"`
 }
 
 func PgStatioUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatioUserIndexesConfig) CatalogCollector {
-	batchSize := cfg.BatchSize
+	batchSize := cfg.BackfillBatchSize
 	scanner := pgxutil.NewScanner[PgStatioUserIndexesRow]()
 
 	var (
