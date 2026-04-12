@@ -7,8 +7,8 @@ import (
 
 // BaseConfig holds universal fields that apply to every collector.
 type BaseConfig struct {
-	Enabled         *bool
-	IntervalSeconds *int
+	Enabled         *bool `config:"enabled"`
+	IntervalSeconds *int  `config:"interval_seconds" min:"0"`
 }
 
 // IsEnabled returns true if the collector is not explicitly disabled.
@@ -43,14 +43,4 @@ func (b BaseConfig) IntervalOr(def time.Duration) (time.Duration, error) {
 type TypedEntry[T any] struct {
 	Base  BaseConfig
 	Extra T
-}
-
-// IsEnabled returns true if the collector is not explicitly disabled.
-func (e TypedEntry[T]) IsEnabled() bool {
-	return e.Base.IsEnabled()
-}
-
-// IntervalOr returns the configured interval or def when unset or zero.
-func (e TypedEntry[T]) IntervalOr(def time.Duration) (time.Duration, error) {
-	return e.Base.IntervalOr(def)
 }

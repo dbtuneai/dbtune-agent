@@ -13,11 +13,7 @@ func ParseBoolValue(raw any) (bool, error) {
 	case bool:
 		return value, nil
 	case string:
-		parsed, err := strconv.ParseBool(value)
-		if err != nil {
-			return false, err
-		}
-		return parsed, nil
+		return strconv.ParseBool(value)
 	default:
 		return false, fmt.Errorf("expected boolean, got %T", raw)
 	}
@@ -37,11 +33,7 @@ func ParseIntValue(raw any) (int, error) {
 		}
 		return int(value), nil
 	case string:
-		parsed, err := strconv.Atoi(value)
-		if err != nil {
-			return 0, err
-		}
-		return parsed, nil
+		return strconv.Atoi(value)
 	default:
 		return 0, fmt.Errorf("expected integer, got %T", raw)
 	}
@@ -49,10 +41,11 @@ func ParseIntValue(raw any) (int, error) {
 
 // fieldSpec describes a single config struct field, extracted from struct tags.
 type fieldSpec struct {
-	index      int // struct field index
-	key        string
-	kind       reflect.Kind // bool or int
-	defaultInt int
+	index      int          // struct field index
+	key        string       // config tag value
+	valueKind  reflect.Kind // bool or int (unwrapped from pointer)
+	isPointer  bool         // field is *bool or *int
+	defaultInt int          // default for non-pointer int fields
 }
 
 // buildFieldSpecs reflects over T once and returns the field specs + a map of allowed keys.
@@ -65,10 +58,18 @@ func buildFieldSpecs(t reflect.Type) ([]fieldSpec, map[string]struct{}) {
 		if key == "" {
 			continue
 		}
-		spec := fieldSpec{index: i, key: key, kind: f.Type.Kind()}
-		if def := f.Tag.Get("default"); def != "" && spec.kind == reflect.Int {
-			n, _ := strconv.Atoi(def)
-			spec.defaultInt = n
+		kind := f.Type.Kind()
+		isPtr := kind == reflect.Ptr
+		valueKind := kind
+		if isPtr {
+			valueKind = f.Type.Elem().Kind()
+		}
+		spec := fieldSpec{index: i, key: key, valueKind: valueKind, isPointer: isPtr}
+		if !isPtr {
+			if def := f.Tag.Get("default"); def != "" && valueKind == reflect.Int {
+				n, _ := strconv.Atoi(def)
+				spec.defaultInt = n
+			}
 		}
 		specs = append(specs, spec)
 		allowed[key] = struct{}{}
@@ -76,29 +77,30 @@ func buildFieldSpecs(t reflect.Type) ([]fieldSpec, map[string]struct{}) {
 	return specs, allowed
 }
 
-// Parse parses a raw field map into a config struct T using struct tags.
-//
-// Supported struct tags:
-//   - `config:"key_name"` — the YAML/env field name (required for the field to be parsed)
-//   - `default:"123"` — default value for int fields (bool defaults to false, int defaults to 0)
-//   - `min:"0"` — minimum value for int fields (inclusive)
-//   - `max:"500"` — maximum value for int fields (inclusive)
-func Parse[T any](raw map[string]any) (T, error) {
+// parse is the shared implementation for Parse and ParsePartial.
+func parse[T any](raw map[string]any, rejectUnknown bool) (T, map[string]any, error) {
 	var zero T
 	t := reflect.TypeOf(zero)
 	specs, allowed := buildFieldSpecs(t)
 
-	// Reject unknown keys.
+	// Separate known vs unknown keys.
+	var remaining map[string]any
 	for k := range raw {
 		if _, ok := allowed[k]; !ok {
-			return zero, fmt.Errorf("unknown field %q", k)
+			if rejectUnknown {
+				return zero, nil, fmt.Errorf("unknown field %q", k)
+			}
+			if remaining == nil {
+				remaining = make(map[string]any)
+			}
+			remaining[k] = raw[k]
 		}
 	}
 
-	// Start with defaults.
+	// Start with defaults (pointer fields stay nil).
 	result := reflect.New(t).Elem()
 	for _, spec := range specs {
-		if spec.kind == reflect.Int && spec.defaultInt != 0 {
+		if !spec.isPointer && spec.valueKind == reflect.Int && spec.defaultInt != 0 {
 			result.Field(spec.index).SetInt(int64(spec.defaultInt))
 		}
 	}
@@ -111,35 +113,65 @@ func Parse[T any](raw map[string]any) (T, error) {
 		}
 		field := result.Field(spec.index)
 		structField := t.Field(spec.index)
-		switch spec.kind {
+		switch spec.valueKind {
 		case reflect.Bool:
 			b, err := ParseBoolValue(v)
 			if err != nil {
-				return zero, fmt.Errorf("%s: %w", spec.key, err)
+				return zero, nil, fmt.Errorf("%s: %w", spec.key, err)
 			}
-			field.SetBool(b)
+			if spec.isPointer {
+				field.Set(reflect.ValueOf(&b))
+			} else {
+				field.SetBool(b)
+			}
 		case reflect.Int:
 			n, err := ParseIntValue(v)
 			if err != nil {
-				return zero, fmt.Errorf("%s: %w", spec.key, err)
+				return zero, nil, fmt.Errorf("%s: %w", spec.key, err)
 			}
 			if minStr := structField.Tag.Get("min"); minStr != "" {
 				minVal, _ := strconv.Atoi(minStr)
 				if n < minVal {
-					return zero, fmt.Errorf("%s must be >= %d", spec.key, minVal)
+					return zero, nil, fmt.Errorf("%s must be >= %d", spec.key, minVal)
 				}
 			}
 			if maxStr := structField.Tag.Get("max"); maxStr != "" {
 				maxVal, _ := strconv.Atoi(maxStr)
 				if n > maxVal {
-					return zero, fmt.Errorf("%s must be <= %d", spec.key, maxVal)
+					return zero, nil, fmt.Errorf("%s must be <= %d", spec.key, maxVal)
 				}
 			}
-			field.SetInt(int64(n))
+			if spec.isPointer {
+				field.Set(reflect.ValueOf(&n))
+			} else {
+				field.SetInt(int64(n))
+			}
 		default:
-			return zero, fmt.Errorf("unsupported field type %s for %q", spec.kind, spec.key)
+			return zero, nil, fmt.Errorf("unsupported field type %s for %q", spec.valueKind, spec.key)
 		}
 	}
 
-	return result.Interface().(T), nil
+	return result.Interface().(T), remaining, nil
+}
+
+// Parse parses a raw field map into a config struct T using struct tags.
+// Unknown keys are rejected. See ParsePartial for a variant that passes
+// unknown keys through.
+//
+// Supported struct tags:
+//   - `config:"key_name"` — the YAML/env field name (required for the field to be parsed)
+//   - `default:"123"` — default value for non-pointer int fields (bool defaults to false, int defaults to 0)
+//   - `min:"0"` — minimum value for int fields (inclusive)
+//   - `max:"500"` — maximum value for int fields (inclusive)
+//
+// Pointer fields (*bool, *int) default to nil (unset).
+func Parse[T any](raw map[string]any) (T, error) {
+	result, _, err := parse[T](raw, true)
+	return result, err
+}
+
+// ParsePartial is like Parse but passes unknown keys through in the
+// returned remaining map instead of rejecting them.
+func ParsePartial[T any](raw map[string]any) (T, map[string]any, error) {
+	return parse[T](raw, false)
 }

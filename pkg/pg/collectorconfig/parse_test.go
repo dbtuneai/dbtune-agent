@@ -200,3 +200,115 @@ func TestParse(t *testing.T) {
 		assert.Contains(t, err.Error(), "unknown field")
 	})
 }
+
+type pointerConfig struct {
+	Enabled *bool `config:"enabled"`
+	Limit   *int  `config:"limit" min:"0" max:"100"`
+}
+
+type mixedConfig struct {
+	Flag   bool `config:"flag"`
+	OptVal *int `config:"opt_val" min:"0"`
+}
+
+func TestParsePointerFields(t *testing.T) {
+	t.Run("nil raw returns all nil pointers", func(t *testing.T) {
+		cfg, err := Parse[pointerConfig](nil)
+		require.NoError(t, err)
+		assert.Nil(t, cfg.Enabled)
+		assert.Nil(t, cfg.Limit)
+	})
+
+	t.Run("sets pointer bool", func(t *testing.T) {
+		cfg, err := Parse[pointerConfig](map[string]any{"enabled": true})
+		require.NoError(t, err)
+		require.NotNil(t, cfg.Enabled)
+		assert.True(t, *cfg.Enabled)
+	})
+
+	t.Run("sets pointer int", func(t *testing.T) {
+		cfg, err := Parse[pointerConfig](map[string]any{"limit": 42})
+		require.NoError(t, err)
+		require.NotNil(t, cfg.Limit)
+		assert.Equal(t, 42, *cfg.Limit)
+	})
+
+	t.Run("string values parsed for pointers", func(t *testing.T) {
+		cfg, err := Parse[pointerConfig](map[string]any{"enabled": "false", "limit": "50"})
+		require.NoError(t, err)
+		require.NotNil(t, cfg.Enabled)
+		assert.False(t, *cfg.Enabled)
+		require.NotNil(t, cfg.Limit)
+		assert.Equal(t, 50, *cfg.Limit)
+	})
+
+	t.Run("min/max enforced on pointer int", func(t *testing.T) {
+		_, err := Parse[pointerConfig](map[string]any{"limit": -1})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "limit")
+
+		_, err = Parse[pointerConfig](map[string]any{"limit": 101})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "limit")
+	})
+
+	t.Run("mixed pointer and non-pointer", func(t *testing.T) {
+		cfg, err := Parse[mixedConfig](map[string]any{"flag": true, "opt_val": 10})
+		require.NoError(t, err)
+		assert.True(t, cfg.Flag)
+		require.NotNil(t, cfg.OptVal)
+		assert.Equal(t, 10, *cfg.OptVal)
+	})
+
+	t.Run("mixed with only non-pointer set", func(t *testing.T) {
+		cfg, err := Parse[mixedConfig](map[string]any{"flag": true})
+		require.NoError(t, err)
+		assert.True(t, cfg.Flag)
+		assert.Nil(t, cfg.OptVal)
+	})
+}
+
+func TestParsePartial(t *testing.T) {
+	t.Run("no unknown keys returns nil remaining", func(t *testing.T) {
+		cfg, remaining, err := ParsePartial[testConfig](map[string]any{"limit": 200})
+		require.NoError(t, err)
+		assert.Equal(t, 200, cfg.Limit)
+		assert.Nil(t, remaining)
+	})
+
+	t.Run("unknown keys returned in remaining", func(t *testing.T) {
+		cfg, remaining, err := ParsePartial[testConfig](map[string]any{
+			"limit": 200,
+			"extra": "hello",
+			"other": 42,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 200, cfg.Limit)
+		assert.Equal(t, map[string]any{"extra": "hello", "other": 42}, remaining)
+	})
+
+	t.Run("nil raw returns defaults and nil remaining", func(t *testing.T) {
+		cfg, remaining, err := ParsePartial[testConfig](nil)
+		require.NoError(t, err)
+		assert.Equal(t, 100, cfg.Limit) // default
+		assert.Nil(t, remaining)
+	})
+
+	t.Run("validation still applies", func(t *testing.T) {
+		_, _, err := ParsePartial[testConfig](map[string]any{"limit": 501})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "limit")
+	})
+
+	t.Run("pointer fields with remaining", func(t *testing.T) {
+		cfg, remaining, err := ParsePartial[pointerConfig](map[string]any{
+			"enabled": true,
+			"unknown": "val",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, cfg.Enabled)
+		assert.True(t, *cfg.Enabled)
+		assert.Nil(t, cfg.Limit)
+		assert.Equal(t, map[string]any{"unknown": "val"}, remaining)
+	})
+}

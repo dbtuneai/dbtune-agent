@@ -3,7 +3,6 @@ package pg
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
@@ -48,12 +47,9 @@ type CollectorsConfig struct {
 // collectorDef is an entry in the single collector registry.
 type collectorDef struct {
 	Name string
-	// Apply parses extraFields, merges with base, and writes the result
-	// into the correct field of cfg. Called with zero inputs to set defaults,
-	// then again with parsed values to apply overrides.
-	Apply func(cfg *CollectorsConfig, base collectorconfig.BaseConfig, extraFields map[string]any) error
-	// GetBase returns the current BaseConfig for this collector from cfg.
-	GetBase func(cfg *CollectorsConfig) collectorconfig.BaseConfig
+	// Apply parses raw fields and writes the result into the correct field of cfg.
+	// A nil raw map applies defaults.
+	Apply func(cfg *CollectorsConfig, raw map[string]any) error
 }
 
 // typedCollector returns a collectorDef for a collector with typed extra config.
@@ -65,16 +61,17 @@ func typedCollector[T any](
 ) collectorDef {
 	return collectorDef{
 		Name: name,
-		Apply: func(cfg *CollectorsConfig, base collectorconfig.BaseConfig, extraFields map[string]any) error {
-			extra, err := collectorconfig.Parse[T](extraFields)
+		Apply: func(cfg *CollectorsConfig, raw map[string]any) error {
+			base, remaining, err := collectorconfig.ParsePartial[collectorconfig.BaseConfig](raw)
+			if err != nil {
+				return err
+			}
+			extra, err := collectorconfig.Parse[T](remaining)
 			if err != nil {
 				return err
 			}
 			*field(cfg) = collectorconfig.TypedEntry[T]{Base: base, Extra: extra}
 			return nil
-		},
-		GetBase: func(cfg *CollectorsConfig) collectorconfig.BaseConfig {
-			return field(cfg).Base
 		},
 	}
 }
@@ -83,15 +80,16 @@ func typedCollector[T any](
 func simpleCollector(name string) collectorDef {
 	return collectorDef{
 		Name: name,
-		Apply: func(cfg *CollectorsConfig, base collectorconfig.BaseConfig, extraFields map[string]any) error {
-			for k := range extraFields {
+		Apply: func(cfg *CollectorsConfig, raw map[string]any) error {
+			base, remaining, err := collectorconfig.ParsePartial[collectorconfig.BaseConfig](raw)
+			if err != nil {
+				return err
+			}
+			for k := range remaining {
 				return fmt.Errorf("unknown field %q", k)
 			}
 			cfg.Simple[name] = base
 			return nil
-		},
-		GetBase: func(cfg *CollectorsConfig) collectorconfig.BaseConfig {
-			return cfg.Simple[name]
 		},
 	}
 }
@@ -171,168 +169,73 @@ var collectors = []collectorDef{
 	simpleCollector(MetricMemoryUsed),
 }
 
-// universalFields are the field keys that every collector accepts.
-var universalFields = map[string]bool{
-	"enabled":          true,
-	"interval_seconds": true,
-}
-
-// parseBaseConfig extracts universal fields from a raw map into a BaseConfig.
-func parseBaseConfig(raw map[string]any) (collectorconfig.BaseConfig, error) {
-	var base collectorconfig.BaseConfig
-	if v, ok := raw["enabled"]; ok {
-		b, err := collectorconfig.ParseBoolValue(v)
-		if err != nil {
-			return base, fmt.Errorf("enabled: %w", err)
-		}
-		base.Enabled = &b
-	}
-	if v, ok := raw["interval_seconds"]; ok {
-		n, err := collectorconfig.ParseIntValue(v)
-		if err != nil {
-			return base, fmt.Errorf("interval_seconds: %w", err)
-		}
-		if n < 0 {
-			return base, fmt.Errorf("interval_seconds must be >= 0")
-		}
-		base.IntervalSeconds = &n
-	}
-	return base, nil
-}
-
-// extraFieldsOnly returns a copy of fieldMap without the universal fields.
-func extraFieldsOnly(fieldMap map[string]any) map[string]any {
-	extra := make(map[string]any, len(fieldMap))
-	for k, v := range fieldMap {
-		if !universalFields[k] {
-			extra[k] = v
-		}
-	}
-	return extra
-}
-
 // CollectorsConfigFromViper reads the collectors YAML section, overlays
 // environment variables with pattern DBT_COLLECTOR_{NAME}_{FIELD},
 // validates, and returns the config.
 func CollectorsConfigFromViper() (CollectorsConfig, error) {
-	// Build name→def lookup from the single registry.
 	registry := make(map[string]*collectorDef, len(collectors))
 	for i := range collectors {
 		registry[collectors[i].Name] = &collectors[i]
 	}
 
-	cfg := CollectorsConfig{Simple: make(map[string]collectorconfig.BaseConfig)}
+	// Collect raw field maps per collector (YAML first, env overlay second).
+	rawMaps := make(map[string]map[string]any)
 
-	// Initialize all collectors with their defaults (zero BaseConfig + default Extra).
-	for _, def := range collectors {
-		if err := def.Apply(&cfg, collectorconfig.BaseConfig{}, nil); err != nil {
-			return CollectorsConfig{}, fmt.Errorf("collector %q default init: %w", def.Name, err)
-		}
-	}
-
-	// yamlExtraFields stores the raw extra (non-universal) fields from YAML
-	// for each collector, so Phase 2 can merge env overlays without reaching
-	// back into the viper raw map.
-	yamlExtraFields := make(map[string]map[string]any)
-
-	// Phase 1: parse YAML section
-	rawMap := viper.GetStringMap("collectors")
-	for name, raw := range rawMap {
-		def, ok := registry[name]
-		if !ok {
+	// Phase 1: YAML
+	for name, raw := range viper.GetStringMap("collectors") {
+		if _, ok := registry[name]; !ok {
 			return CollectorsConfig{}, fmt.Errorf("unknown collector %q", name)
 		}
-
 		fieldMap, ok := raw.(map[string]any)
 		if !ok {
 			return CollectorsConfig{}, fmt.Errorf("collector %q: expected map, got %T", name, raw)
 		}
-
-		base, err := parseBaseConfig(fieldMap)
-		if err != nil {
-			return CollectorsConfig{}, fmt.Errorf("collector %q: %w", name, err)
-		}
-
-		extra := extraFieldsOnly(fieldMap)
-		if err := def.Apply(&cfg, base, extra); err != nil {
-			return CollectorsConfig{}, fmt.Errorf("collector %q: %w", name, err)
-		}
-
-		yamlExtraFields[name] = extra
+		rawMaps[name] = fieldMap
 	}
 
-	// Phase 2: overlay environment variables
-	collectorEnvs := make(map[string]string)
-	for _, env := range os.Environ() {
-		if key, value, ok := strings.Cut(env, "="); ok && strings.HasPrefix(key, "DBT_COLLECTOR_") {
-			collectorEnvs[key] = value
-		}
-	}
+	// Phase 2: match each DBT_COLLECTOR_* env var to its collector (longest name wins).
+	for envKey, envValue := range collectDBTEnvVars() {
+		suffix := envKey[len("DBT_COLLECTOR_"):]
 
-	// Sort collector names longest-first so that "pg_stat_wal_receiver" is
-	// matched before "pg_stat_wal". Without this, a shared prefix could
-	// cause an env var to bind to the wrong collector.
-	sortedNames := make([]string, 0, len(registry))
-	for name := range registry {
-		sortedNames = append(sortedNames, name)
-	}
-	sort.Slice(sortedNames, func(i, j int) bool {
-		return len(sortedNames[i]) > len(sortedNames[j])
-	})
-
-	for _, name := range sortedNames {
-		def := registry[name]
-		envPrefix := "DBT_COLLECTOR_" + strings.ToUpper(name) + "_"
-
-		envFields := make(map[string]any)
-		for envKey, envValue := range collectorEnvs {
-			if !strings.HasPrefix(envKey, envPrefix) {
-				continue
+		var bestName string
+		var bestLen int
+		for name := range registry {
+			prefix := strings.ToUpper(name) + "_"
+			if strings.HasPrefix(suffix, prefix) && len(prefix) > bestLen {
+				bestName = name
+				bestLen = len(prefix)
 			}
-			suffix := strings.ToLower(envKey[len(envPrefix):])
-			envFields[suffix] = envValue
-			// Remove from the map so it isn't re-matched by a shorter prefix.
-			delete(collectorEnvs, envKey)
+		}
+		if bestName == "" {
+			return CollectorsConfig{}, fmt.Errorf(
+				"env var %q does not match any known collector (likely a typo)", envKey)
 		}
 
-		if len(envFields) == 0 {
-			continue
+		fieldKey := strings.ToLower(suffix[bestLen:])
+		if rawMaps[bestName] == nil {
+			rawMaps[bestName] = make(map[string]any)
 		}
-
-		// Parse base fields from env
-		base, err := parseBaseConfig(envFields)
-		if err != nil {
-			return CollectorsConfig{}, fmt.Errorf("env var for collector %q: %w", name, err)
-		}
-
-		// For the typed entry, we need the current base and merge env extra on
-		// top of any YAML extra fields.
-		existingBase := def.GetBase(&cfg)
-		if base.Enabled != nil {
-			existingBase.Enabled = base.Enabled
-		}
-		if base.IntervalSeconds != nil {
-			existingBase.IntervalSeconds = base.IntervalSeconds
-		}
-
-		// Merge YAML extra fields with env extra fields
-		merged := make(map[string]any)
-		for k, v := range yamlExtraFields[name] {
-			merged[k] = v
-		}
-		for k, v := range extraFieldsOnly(envFields) {
-			merged[k] = v
-		}
-
-		if err := def.Apply(&cfg, existingBase, merged); err != nil {
-			return CollectorsConfig{}, fmt.Errorf("collector %q: %w", name, err)
-		}
+		rawMaps[bestName][fieldKey] = envValue
 	}
 
-	// Any remaining DBT_COLLECTOR_* env vars didn't match a known collector.
-	for envKey := range collectorEnvs {
-		return CollectorsConfig{}, fmt.Errorf("env var %q does not match any known collector (likely a typo)", envKey)
+	// Phase 3: parse every collector (nil raw -> defaults only).
+	cfg := CollectorsConfig{Simple: make(map[string]collectorconfig.BaseConfig)}
+	for _, def := range collectors {
+		if err := def.Apply(&cfg, rawMaps[def.Name]); err != nil {
+			return CollectorsConfig{}, fmt.Errorf("collector %q: %w", def.Name, err)
+		}
 	}
 
 	return cfg, nil
+}
+
+// collectDBTEnvVars returns all DBT_COLLECTOR_* environment variables.
+func collectDBTEnvVars() map[string]string {
+	result := make(map[string]string)
+	for _, env := range os.Environ() {
+		if key, value, ok := strings.Cut(env, "="); ok && strings.HasPrefix(key, "DBT_COLLECTOR_") {
+			result[key] = value
+		}
+	}
+	return result
 }
