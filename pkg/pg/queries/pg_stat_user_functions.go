@@ -3,7 +3,6 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-USER-FUNCTIONS
 
 import (
-	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,12 +29,6 @@ WHERE calls > 0
 ORDER BY calls DESC
 LIMIT 500
 `
-
-// PgStatUserFunctionsRegistration describes the pgstatuserfunctions collector's configuration schema.
-var PgStatUserFunctionsRegistration = collectorconfig.CollectorRegistration{
-	Name: PgStatUserFunctionsName,
-	Kind: collectorconfig.CatalogCollectorKind,
-}
 
 func PgStatUserFunctionsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgStatUserFunctionsRow](pool, prepareCtx, PgStatUserFunctionsName, PgStatUserFunctionsInterval, pgStatUserFunctionsQuery)

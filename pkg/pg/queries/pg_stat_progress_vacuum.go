@@ -3,7 +3,6 @@ package queries
 // https://www.postgresql.org/docs/current/progress-reporting.html#VACUUM-PROGRESS-REPORTING
 
 import (
-	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,12 +29,6 @@ const (
 )
 
 const pgStatProgressVacuumQuery = `SELECT * FROM pg_stat_progress_vacuum WHERE datname = current_database()`
-
-// PgStatProgressVacuumRegistration describes the pgstatprogressvacuum collector's configuration schema.
-var PgStatProgressVacuumRegistration = collectorconfig.CollectorRegistration{
-	Name: PgStatProgressVacuumName,
-	Kind: collectorconfig.CatalogCollectorKind,
-}
 
 func PgStatProgressVacuumCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgStatProgressVacuumRow](pool, prepareCtx, PgStatProgressVacuumName, PgStatProgressVacuumInterval, pgStatProgressVacuumQuery, WithSkipUnchanged())

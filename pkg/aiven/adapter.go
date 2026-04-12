@@ -428,7 +428,7 @@ func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
 			Collector: pg.WaitEvents(pgDriver),
 		},
 		{
-			Key: "hardware",
+			Key: pg.MetricHardware,
 			Collector: AivenHardwareInfo(
 				&adapter.Client,
 				adapter.Config.ProjectName,

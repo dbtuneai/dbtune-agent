@@ -243,7 +243,7 @@ func (adapter *RDSAdapter) Collectors(aurora bool) []agent.MetricCollector {
 			Collector: pg.WaitEvents(pool),
 		},
 		{
-			Key: "hardware",
+			Key: pg.MetricHardware,
 			Collector: RDSHardwareInfo(
 				adapter.Config.RDSDatabaseIdentifier,
 				&adapter.State,

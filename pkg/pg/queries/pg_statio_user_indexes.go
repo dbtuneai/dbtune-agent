@@ -10,7 +10,6 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
-	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -51,35 +50,7 @@ type statioSnapshot struct {
 
 // PgStatioUserIndexesConfig holds configuration for the pg_statio_user_indexes collector.
 type PgStatioUserIndexesConfig struct {
-	BatchSize int
-}
-
-// DefaultPgStatioUserIndexesConfig returns the default configuration.
-var DefaultPgStatioUserIndexesConfig = PgStatioUserIndexesConfig{
-	BatchSize: PgStatioUserIndexesBatchSize,
-}
-
-func parsePgStatioUserIndexesConfig(raw map[string]any) (any, error) {
-	cfg := DefaultPgStatioUserIndexesConfig
-	if v, ok := raw["backfill_batch_size"]; ok {
-		n, err := collectorconfig.ParseIntValue(v)
-		if err != nil {
-			return nil, fmt.Errorf("backfill_batch_size: %w", err)
-		}
-		if n < 0 {
-			return nil, fmt.Errorf("backfill_batch_size must be >= 0")
-		}
-		cfg.BatchSize = n
-	}
-	return cfg, nil
-}
-
-// PgStatioUserIndexesRegistration describes the pg_statio_user_indexes collector's configuration schema.
-var PgStatioUserIndexesRegistration = collectorconfig.CollectorRegistration{
-	Name:          PgStatioUserIndexesName,
-	Kind:          collectorconfig.CatalogCollectorKind,
-	AllowedFields: []string{"backfill_batch_size"},
-	ParseConfig:   parsePgStatioUserIndexesConfig,
+	BatchSize int `config:"backfill_batch_size" default:"2000" min:"0"`
 }
 
 func PgStatioUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatioUserIndexesConfig) CatalogCollector {

@@ -3,7 +3,6 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-DATABASE-CONFLICTS
 
 import (
-	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,12 +26,6 @@ const (
 )
 
 const pgStatDatabaseConflictsQuery = `SELECT * FROM pg_stat_database_conflicts WHERE datname = current_database()`
-
-// PgStatDatabaseConflictsRegistration describes the pgstatdatabaseconflicts collector's configuration schema.
-var PgStatDatabaseConflictsRegistration = collectorconfig.CollectorRegistration{
-	Name: PgStatDatabaseConflictsName,
-	Kind: collectorconfig.CatalogCollectorKind,
-}
 
 func PgStatDatabaseConflictsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgStatDatabaseConflictsRow](pool, prepareCtx, PgStatDatabaseConflictsName, PgStatDatabaseConflictsInterval, pgStatDatabaseConflictsQuery, WithSkipUnchanged())

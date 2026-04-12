@@ -3,7 +3,6 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-REPLICATION-SLOTS
 
 import (
-	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,12 +29,6 @@ const (
 
 // PG 14+ only.
 const pgStatReplicationSlotsQuery = `SELECT * FROM pg_stat_replication_slots`
-
-// PgStatReplicationSlotsRegistration describes the pgstatreplicationslots collector's configuration schema.
-var PgStatReplicationSlotsRegistration = collectorconfig.CollectorRegistration{
-	Name: PgStatReplicationSlotsName,
-	Kind: collectorconfig.CatalogCollectorKind,
-}
 
 func PgStatReplicationSlotsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
 	return NewCollector[PgStatReplicationSlotsRow](pool, prepareCtx, PgStatReplicationSlotsName, PgStatReplicationSlotsInterval, pgStatReplicationSlotsQuery, WithMinPGVersion(pgMajorVersion, 14))

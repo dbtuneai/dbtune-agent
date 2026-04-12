@@ -7,7 +7,6 @@ package queries
 // https://www.postgresql.org/docs/current/functions-info.html#FUNCTIONS-INFO-SESSION
 
 import (
-	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,12 +22,6 @@ const (
 )
 
 const uptimeMinutesQuery = `SELECT EXTRACT(EPOCH FROM (current_timestamp - pg_postmaster_start_time())) / 60 AS uptime_minutes`
-
-// UptimeMinutesRegistration describes the uptimeminutes collector's configuration schema.
-var UptimeMinutesRegistration = collectorconfig.CollectorRegistration{
-	Name: UptimeMinutesName,
-	Kind: collectorconfig.CatalogCollectorKind,
-}
 
 func UptimeMinutesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[UptimeMinutesRow](pool, prepareCtx, UptimeMinutesName, UptimeMinutesInterval, uptimeMinutesQuery)

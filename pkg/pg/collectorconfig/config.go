@@ -5,19 +5,6 @@ import (
 	"time"
 )
 
-// CollectorKind distinguishes metric vs catalog collectors.
-type CollectorKind uint8
-
-const (
-	MetricCollectorKind CollectorKind = 1 << iota
-	CatalogCollectorKind
-)
-
-// Has reports whether k includes the given kind flag.
-func (k CollectorKind) Has(kind CollectorKind) bool {
-	return k&kind != 0
-}
-
 // BaseConfig holds universal fields that apply to every collector.
 type BaseConfig struct {
 	Enabled         *bool
@@ -52,21 +39,18 @@ func (b BaseConfig) IntervalOr(def time.Duration) (time.Duration, error) {
 	return configured, nil
 }
 
-// CollectorEntry holds the parsed config for one collector.
-type CollectorEntry struct {
+// TypedEntry pairs a BaseConfig with a typed per-collector config.
+type TypedEntry[T any] struct {
 	Base  BaseConfig
-	Extra any // per-collector typed config (e.g. PgClassConfig). nil for simple collectors.
+	Extra T
 }
 
 // IsEnabled returns true if the collector is not explicitly disabled.
-func (e CollectorEntry) IsEnabled() bool {
+func (e TypedEntry[T]) IsEnabled() bool {
 	return e.Base.IsEnabled()
 }
 
 // IntervalOr returns the configured interval or def when unset or zero.
-func (e CollectorEntry) IntervalOr(def time.Duration) (time.Duration, error) {
+func (e TypedEntry[T]) IntervalOr(def time.Duration) (time.Duration, error) {
 	return e.Base.IntervalOr(def)
 }
-
-// CollectorsConfig maps collector names to their parsed config.
-type CollectorsConfig map[string]CollectorEntry

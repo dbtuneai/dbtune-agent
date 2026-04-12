@@ -6,7 +6,6 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ACTIVITY-VIEW
 
 import (
-	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -33,12 +32,6 @@ SELECT
     COUNT(*) FILTER (WHERE state = 'idle in transaction (aborted)') AS idle_in_transaction_aborted_connections,
     COUNT(*) FILTER (WHERE state IN ('active', 'idle', 'idle in transaction', 'idle in transaction (aborted)')) AS total_connections
 FROM pg_stat_activity`
-
-// ConnectionStatsRegistration describes the connectionstats collector's configuration schema.
-var ConnectionStatsRegistration = collectorconfig.CollectorRegistration{
-	Name: ConnectionStatsName,
-	Kind: collectorconfig.CatalogCollectorKind,
-}
 
 func ConnectionStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[ConnectionStatsRow](pool, prepareCtx, ConnectionStatsName, ConnectionStatsInterval, connectionStatsQuery)

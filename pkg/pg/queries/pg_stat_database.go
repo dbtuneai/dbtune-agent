@@ -3,7 +3,6 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-DATABASE
 
 import (
-	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -52,12 +51,6 @@ const (
 )
 
 const pgStatDatabaseQuery = `SELECT * FROM pg_stat_database WHERE datname = current_database()`
-
-// PgStatDatabaseRegistration describes the pgstatdatabase collector's configuration schema.
-var PgStatDatabaseRegistration = collectorconfig.CollectorRegistration{
-	Name: PgStatDatabaseName,
-	Kind: collectorconfig.CatalogCollectorKind,
-}
 
 func PgStatDatabaseCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgStatDatabaseRow](pool, prepareCtx, PgStatDatabaseName, PgStatDatabaseInterval, pgStatDatabaseQuery)

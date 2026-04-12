@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -46,35 +45,7 @@ UNION
 
 // PgStatUserIndexesConfig holds configuration for the pg_stat_user_indexes collector.
 type PgStatUserIndexesConfig struct {
-	CategoryLimit int
-}
-
-// DefaultPgStatUserIndexesConfig returns the default configuration.
-var DefaultPgStatUserIndexesConfig = PgStatUserIndexesConfig{
-	CategoryLimit: PgStatUserIndexesCategoryLimit,
-}
-
-func parsePgStatUserIndexesConfig(raw map[string]any) (any, error) {
-	cfg := DefaultPgStatUserIndexesConfig
-	if v, ok := raw["category_limit"]; ok {
-		n, err := collectorconfig.ParseIntValue(v)
-		if err != nil {
-			return nil, fmt.Errorf("category_limit: %w", err)
-		}
-		if n < 0 {
-			return nil, fmt.Errorf("category_limit must be >= 0")
-		}
-		cfg.CategoryLimit = n
-	}
-	return cfg, nil
-}
-
-// PgStatUserIndexesRegistration describes the pg_stat_user_indexes collector's configuration schema.
-var PgStatUserIndexesRegistration = collectorconfig.CollectorRegistration{
-	Name:          PgStatUserIndexesName,
-	Kind:          collectorconfig.CatalogCollectorKind,
-	AllowedFields: []string{"category_limit"},
-	ParseConfig:   parsePgStatUserIndexesConfig,
+	CategoryLimit int `config:"category_limit" default:"200" min:"0"`
 }
 
 func PgStatUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatUserIndexesConfig) CatalogCollector {

@@ -3,7 +3,6 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-WAL
 
 import (
-	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,12 +28,6 @@ const (
 
 // PG 14+ only.
 const pgStatWalQuery = `SELECT * FROM pg_stat_wal`
-
-// PgStatWalRegistration describes the pgstatwal collector's configuration schema.
-var PgStatWalRegistration = collectorconfig.CollectorRegistration{
-	Name: PgStatWalName,
-	Kind: collectorconfig.CatalogCollectorKind,
-}
 
 func PgStatWalCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
 	return NewCollector[PgStatWalRow](pool, prepareCtx, PgStatWalName, PgStatWalInterval, pgStatWalQuery, WithMinPGVersion(pgMajorVersion, 14))

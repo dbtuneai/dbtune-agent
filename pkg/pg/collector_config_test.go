@@ -1,10 +1,6 @@
 package pg
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -87,17 +83,13 @@ collectors:
 		cfg, err := CollectorsConfigFromViper()
 		require.NoError(t, err)
 
-		pss := cfg["pg_stat_statements"]
-		assert.True(t, pss.IsEnabled())
-		assert.Equal(t, 30, *pss.Base.IntervalSeconds)
-		pssCfg := pss.Extra.(queries.PgStatStatementsConfig)
-		assert.Equal(t, 200, pssCfg.DiffLimit)
-		assert.False(t, pssCfg.IncludeQueries)
+		assert.True(t, cfg.PgStatStatements.IsEnabled())
+		assert.Equal(t, 30, *cfg.PgStatStatements.Base.IntervalSeconds)
+		assert.Equal(t, 200, cfg.PgStatStatements.Extra.DiffLimit)
+		assert.False(t, cfg.PgStatStatements.Extra.IncludeQueries)
 
-		pc := cfg["pg_class"]
-		assert.False(t, pc.IsEnabled())
-		pcCfg := pc.Extra.(queries.PgClassConfig)
-		assert.Equal(t, 250, pcCfg.BackfillBatchSize)
+		assert.False(t, cfg.PgClass.IsEnabled())
+		assert.Equal(t, 250, cfg.PgClass.Extra.BackfillBatchSize)
 	})
 
 	t.Run("round-trip all fields via YAML", func(t *testing.T) {
@@ -124,22 +116,16 @@ collectors:
 		cfg, err := CollectorsConfigFromViper()
 		require.NoError(t, err)
 
-		pss := cfg["pg_stat_statements"]
-		assert.True(t, pss.IsEnabled())
-		assert.Equal(t, 60, *pss.Base.IntervalSeconds)
-		pssCfg := pss.Extra.(queries.PgStatStatementsConfig)
-		assert.Equal(t, 300, pssCfg.DiffLimit)
-		assert.True(t, pssCfg.IncludeQueries)
-		assert.Equal(t, 2048, pssCfg.MaxQueryTextLength)
+		assert.True(t, cfg.PgStatStatements.IsEnabled())
+		assert.Equal(t, 60, *cfg.PgStatStatements.Base.IntervalSeconds)
+		assert.Equal(t, 300, cfg.PgStatStatements.Extra.DiffLimit)
+		assert.True(t, cfg.PgStatStatements.Extra.IncludeQueries)
+		assert.Equal(t, 2048, cfg.PgStatStatements.Extra.MaxQueryTextLength)
 
-		ps := cfg["pg_stats"]
-		psCfg := ps.Extra.(queries.PgStatsConfig)
-		assert.True(t, psCfg.IncludeTableData)
-		assert.Equal(t, 150, psCfg.BackfillBatchSize)
+		assert.True(t, cfg.PgStats.Extra.IncludeTableData)
+		assert.Equal(t, 150, cfg.PgStats.Extra.BackfillBatchSize)
 
-		psut := cfg["pg_stat_user_tables"]
-		psutCfg := psut.Extra.(queries.PgStatUserTablesConfig)
-		assert.Equal(t, 100, psutCfg.CategoryLimit)
+		assert.Equal(t, 100, cfg.PgStatUserTables.Extra.CategoryLimit)
 	})
 
 	t.Run("minimal config with only enabled", func(t *testing.T) {
@@ -157,10 +143,10 @@ collectors:
 		cfg, err := CollectorsConfigFromViper()
 		require.NoError(t, err)
 
-		pc := cfg["pg_class"]
-		assert.True(t, pc.IsEnabled())
-		assert.Nil(t, pc.Base.IntervalSeconds)
-		assert.Nil(t, pc.Extra) // no extra fields set
+		assert.True(t, cfg.PgClass.IsEnabled())
+		assert.Nil(t, cfg.PgClass.Base.IntervalSeconds)
+		// Extra should have defaults since no extra fields were set
+		assert.Equal(t, 500, cfg.PgClass.Extra.BackfillBatchSize)
 	})
 
 	t.Run("non-map collector value rejected", func(t *testing.T) {
@@ -206,10 +192,8 @@ collectors:
 		cfg, err := CollectorsConfigFromViper()
 		require.NoError(t, err)
 
-		pc := cfg["pg_class"]
-		assert.False(t, pc.IsEnabled())
-		pcCfg := pc.Extra.(queries.PgClassConfig)
-		assert.Equal(t, 999, pcCfg.BackfillBatchSize)
+		assert.False(t, cfg.PgClass.IsEnabled())
+		assert.Equal(t, 999, cfg.PgClass.Extra.BackfillBatchSize)
 	})
 
 	t.Run("env var overlay for all field types", func(t *testing.T) {
@@ -228,22 +212,16 @@ collectors:
 		cfg, err := CollectorsConfigFromViper()
 		require.NoError(t, err)
 
-		pss := cfg["pg_stat_statements"]
-		assert.True(t, pss.IsEnabled())
-		assert.Equal(t, 45, *pss.Base.IntervalSeconds)
-		pssCfg := pss.Extra.(queries.PgStatStatementsConfig)
-		assert.Equal(t, 250, pssCfg.DiffLimit)
-		assert.False(t, pssCfg.IncludeQueries)
-		assert.Equal(t, 4096, pssCfg.MaxQueryTextLength)
+		assert.True(t, cfg.PgStatStatements.IsEnabled())
+		assert.Equal(t, 45, *cfg.PgStatStatements.Base.IntervalSeconds)
+		assert.Equal(t, 250, cfg.PgStatStatements.Extra.DiffLimit)
+		assert.False(t, cfg.PgStatStatements.Extra.IncludeQueries)
+		assert.Equal(t, 4096, cfg.PgStatStatements.Extra.MaxQueryTextLength)
 
-		ps := cfg["pg_stats"]
-		psCfg := ps.Extra.(queries.PgStatsConfig)
-		assert.True(t, psCfg.IncludeTableData)
-		assert.Equal(t, 300, psCfg.BackfillBatchSize)
+		assert.True(t, cfg.PgStats.Extra.IncludeTableData)
+		assert.Equal(t, 300, cfg.PgStats.Extra.BackfillBatchSize)
 
-		psut := cfg["pg_stat_user_tables"]
-		psutCfg := psut.Extra.(queries.PgStatUserTablesConfig)
-		assert.Equal(t, 50, psutCfg.CategoryLimit)
+		assert.Equal(t, 50, cfg.PgStatUserTables.Extra.CategoryLimit)
 	})
 
 	t.Run("env var overrides YAML", func(t *testing.T) {
@@ -264,11 +242,9 @@ collectors:
 		cfg, err := CollectorsConfigFromViper()
 		require.NoError(t, err)
 
-		pc := cfg["pg_class"]
-		assert.False(t, pc.IsEnabled())
+		assert.False(t, cfg.PgClass.IsEnabled())
 		// YAML batch size should be preserved (env didn't override it)
-		pcCfg := pc.Extra.(queries.PgClassConfig)
-		assert.Equal(t, 100, pcCfg.BackfillBatchSize)
+		assert.Equal(t, 100, cfg.PgClass.Extra.BackfillBatchSize)
 	})
 
 	t.Run("invalid env var bool rejected", func(t *testing.T) {
@@ -332,13 +308,17 @@ collectors:
 		assert.Contains(t, err.Error(), "unknown collector")
 	})
 
-	t.Run("empty config returns empty map", func(t *testing.T) {
+	t.Run("empty config has defaults", func(t *testing.T) {
 		viper.Reset()
 		defer viper.Reset()
 
 		cfg, err := CollectorsConfigFromViper()
 		require.NoError(t, err)
-		assert.Empty(t, cfg)
+
+		// Typed collectors should have their defaults from struct tags
+		assert.Equal(t, queries.PgStatStatementsConfig{DiffLimit: 500, MaxQueryTextLength: 8192}, cfg.PgStatStatements.Extra)
+		assert.Equal(t, queries.PgClassConfig{BackfillBatchSize: 500}, cfg.PgClass.Extra)
+		assert.True(t, cfg.PgClass.IsEnabled()) // nil Enabled = enabled
 	})
 
 	t.Run("unknown env var collector rejected", func(t *testing.T) {
@@ -368,10 +348,8 @@ collectors:
 		cfg, err := CollectorsConfigFromViper()
 		require.NoError(t, err)
 
-		entry := cfg["database_average_query_runtime"]
-		daqr := entry.Extra.(DatabaseAvgQueryRuntimeConfig)
-		assert.True(t, daqr.IncludeQueries)
-		assert.Equal(t, 2048, daqr.MaxQueryTextLength)
+		assert.True(t, cfg.DatabaseAvgQueryRuntime.Extra.IncludeQueries)
+		assert.Equal(t, 2048, cfg.DatabaseAvgQueryRuntime.Extra.MaxQueryTextLength)
 	})
 
 	t.Run("env var overrides extra field while preserving other YAML extra fields", func(t *testing.T) {
@@ -395,11 +373,9 @@ collectors:
 		cfg, err := CollectorsConfigFromViper()
 		require.NoError(t, err)
 
-		pss := cfg["pg_stat_statements"]
-		pssCfg := pss.Extra.(queries.PgStatStatementsConfig)
-		assert.Equal(t, 400, pssCfg.DiffLimit)
-		assert.True(t, pssCfg.IncludeQueries)
-		assert.Equal(t, 1024, pssCfg.MaxQueryTextLength)
+		assert.Equal(t, 400, cfg.PgStatStatements.Extra.DiffLimit)
+		assert.True(t, cfg.PgStatStatements.Extra.IncludeQueries)
+		assert.Equal(t, 1024, cfg.PgStatStatements.Extra.MaxQueryTextLength)
 	})
 
 	t.Run("env var prefix ambiguity resolved by longest match", func(t *testing.T) {
@@ -413,12 +389,33 @@ collectors:
 		cfg, err := CollectorsConfigFromViper()
 		require.NoError(t, err)
 
-		receiver := cfg["pg_stat_wal_receiver"]
-		assert.False(t, receiver.IsEnabled())
+		walReceiver := cfg.Simple[queries.PgStatWalReceiverName]
+		assert.False(t, walReceiver.IsEnabled())
 
-		// pg_stat_wal should not have been touched.
-		_, walPresent := cfg["pg_stat_wal"]
-		assert.False(t, walPresent)
+		// pg_stat_wal should still have default (enabled).
+		pgStatWal := cfg.Simple[queries.PgStatWalName]
+		assert.True(t, pgStatWal.IsEnabled())
+	})
+
+	t.Run("simple collector with only base config", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		viper.SetConfigType("yaml")
+		err := viper.ReadConfig(strings.NewReader(`
+collectors:
+  autovacuum_count:
+    enabled: false
+    interval_seconds: 30
+`))
+		require.NoError(t, err)
+
+		cfg, err := CollectorsConfigFromViper()
+		require.NoError(t, err)
+
+		ac := cfg.Simple[queries.AutovacuumCountName]
+		assert.False(t, ac.IsEnabled())
+		assert.Equal(t, 30, *ac.IntervalSeconds)
 	})
 }
 
@@ -664,75 +661,176 @@ collectors:
 		_, err = CollectorsConfigFromViper()
 		require.NoError(t, err)
 	})
+
+	t.Run("extra field on simple collector rejected", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		viper.SetConfigType("yaml")
+		err := viper.ReadConfig(strings.NewReader(`
+collectors:
+  autovacuum_count:
+    diff_limit: 100
+`))
+		require.NoError(t, err)
+
+		_, err = CollectorsConfigFromViper()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown field")
+	})
 }
 
-func TestCatalogRegistrations_AllMarkedAsCatalogKind(t *testing.T) {
-	for _, reg := range queries.CatalogRegistrations() {
-		assert.True(t, reg.Kind.Has(collectorconfig.CatalogCollectorKind),
-			"collector %q should include catalog kind", reg.Name)
-	}
+func TestAllTypedCollectorDefaults(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	cfg, err := CollectorsConfigFromViper()
+	require.NoError(t, err)
+
+	// PgStatStatements
+	assert.Equal(t, 500, cfg.PgStatStatements.Extra.DiffLimit)
+	assert.False(t, cfg.PgStatStatements.Extra.IncludeQueries)
+	assert.Equal(t, 8192, cfg.PgStatStatements.Extra.MaxQueryTextLength)
+
+	// PgClass
+	assert.Equal(t, 500, cfg.PgClass.Extra.BackfillBatchSize)
+
+	// PgStats
+	assert.Equal(t, 200, cfg.PgStats.Extra.BackfillBatchSize)
+	assert.False(t, cfg.PgStats.Extra.IncludeTableData)
+
+	// PgStatUserTables
+	assert.Equal(t, 200, cfg.PgStatUserTables.Extra.CategoryLimit)
+
+	// PgStatUserIndexes
+	assert.Equal(t, 200, cfg.PgStatUserIndexes.Extra.CategoryLimit)
+
+	// PgStatioUserIndexes
+	assert.Equal(t, 2000, cfg.PgStatioUserIndexes.Extra.BatchSize)
+
+	// DatabaseAvgQueryRuntime
+	assert.False(t, cfg.DatabaseAvgQueryRuntime.Extra.IncludeQueries)
+	assert.Equal(t, 8192, cfg.DatabaseAvgQueryRuntime.Extra.MaxQueryTextLength)
 }
 
-func TestKnownCollectors_MetricCollectorKeysMatchAdapters(t *testing.T) {
-	actualMetricNames := collectMetricCollectorKeysFromSource(t)
-	registry := allRegistrations()
+func TestPgStatioUserIndexesRoundTrip(t *testing.T) {
+	t.Run("YAML", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
 
-	configuredMetricNames := make(map[string]struct{})
-	for name, reg := range registry {
-		if !reg.Kind.Has(collectorconfig.MetricCollectorKind) {
-			continue
-		}
-		configuredMetricNames[name] = struct{}{}
-	}
+		viper.SetConfigType("yaml")
+		err := viper.ReadConfig(strings.NewReader(`
+collectors:
+  pg_statio_user_indexes:
+    backfill_batch_size: 500
+`))
+		require.NoError(t, err)
 
-	assert.Equal(t, actualMetricNames, configuredMetricNames)
+		cfg, err := CollectorsConfigFromViper()
+		require.NoError(t, err)
+		assert.Equal(t, 500, cfg.PgStatioUserIndexes.Extra.BatchSize)
+	})
+
+	t.Run("env var", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		t.Setenv("DBT_COLLECTOR_PG_STATIO_USER_INDEXES_BACKFILL_BATCH_SIZE", "750")
+
+		cfg, err := CollectorsConfigFromViper()
+		require.NoError(t, err)
+		assert.Equal(t, 750, cfg.PgStatioUserIndexes.Extra.BatchSize)
+	})
 }
 
-func collectMetricCollectorKeysFromSource(t *testing.T) map[string]struct{} {
-	t.Helper()
+func TestPgStatUserIndexesRoundTrip(t *testing.T) {
+	t.Run("YAML", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
 
-	files := []string{
-		"../aiven/adapter.go",
-		"../azureflex/adapter.go",
-		"../cloudsql/adapter.go",
-		"../cnpg/adapter.go",
-		"../docker/adapter.go",
-		"../patroni/adapter.go",
-		"../pgprem/adapter.go",
-		"../rds/adapters.go",
-	}
+		viper.SetConfigType("yaml")
+		err := viper.ReadConfig(strings.NewReader(`
+collectors:
+  pg_stat_user_indexes:
+    category_limit: 50
+`))
+		require.NoError(t, err)
 
-	keys := make(map[string]struct{})
-	for _, relPath := range files {
-		path := filepath.Clean(relPath)
-		fileSet := token.NewFileSet()
-		file, err := parser.ParseFile(fileSet, path, nil, 0)
-		require.NoError(t, err, "parse %s", path)
+		cfg, err := CollectorsConfigFromViper()
+		require.NoError(t, err)
+		assert.Equal(t, 50, cfg.PgStatUserIndexes.Extra.CategoryLimit)
+	})
 
-		ast.Inspect(file, func(node ast.Node) bool {
-			lit, ok := node.(*ast.CompositeLit)
-			if !ok {
-				return true
-			}
+	t.Run("env var", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
 
-			for _, elt := range lit.Elts {
-				keyValue, ok := elt.(*ast.KeyValueExpr)
-				if !ok {
-					continue
-				}
-				ident, ok := keyValue.Key.(*ast.Ident)
-				if !ok || ident.Name != "Key" {
-					continue
-				}
-				value, ok := keyValue.Value.(*ast.BasicLit)
-				if !ok || value.Kind != token.STRING {
-					continue
-				}
-				keys[strings.Trim(value.Value, `"`)] = struct{}{}
-			}
-			return true
-		})
-	}
+		t.Setenv("DBT_COLLECTOR_PG_STAT_USER_INDEXES_CATEGORY_LIMIT", "75")
 
-	return keys
+		cfg, err := CollectorsConfigFromViper()
+		require.NoError(t, err)
+		assert.Equal(t, 75, cfg.PgStatUserIndexes.Extra.CategoryLimit)
+	})
+}
+
+func TestEnvVarValidationConstraints(t *testing.T) {
+	t.Run("env var exceeding max rejected", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		t.Setenv("DBT_COLLECTOR_PG_STAT_STATEMENTS_DIFF_LIMIT", "501")
+
+		_, err := CollectorsConfigFromViper()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "diff_limit")
+	})
+
+	t.Run("env var below min rejected", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		t.Setenv("DBT_COLLECTOR_PG_CLASS_BACKFILL_BATCH_SIZE", "-1")
+
+		_, err := CollectorsConfigFromViper()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "backfill_batch_size")
+	})
+
+	t.Run("env var max_query_text_length exceeding max rejected", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		t.Setenv("DBT_COLLECTOR_PG_STAT_STATEMENTS_MAX_QUERY_TEXT_LENGTH", "8193")
+
+		_, err := CollectorsConfigFromViper()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "max_query_text_length")
+	})
+}
+
+func TestDatabaseAvgQueryRuntimeEnvVar(t *testing.T) {
+	t.Run("env var overlay", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		t.Setenv("DBT_COLLECTOR_DATABASE_AVERAGE_QUERY_RUNTIME_INCLUDE_QUERIES", "true")
+		t.Setenv("DBT_COLLECTOR_DATABASE_AVERAGE_QUERY_RUNTIME_MAX_QUERY_TEXT_LENGTH", "4096")
+
+		cfg, err := CollectorsConfigFromViper()
+		require.NoError(t, err)
+
+		assert.True(t, cfg.DatabaseAvgQueryRuntime.Extra.IncludeQueries)
+		assert.Equal(t, 4096, cfg.DatabaseAvgQueryRuntime.Extra.MaxQueryTextLength)
+	})
+
+	t.Run("env var exceeding max rejected", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		t.Setenv("DBT_COLLECTOR_DATABASE_AVERAGE_QUERY_RUNTIME_MAX_QUERY_TEXT_LENGTH", "8193")
+
+		_, err := CollectorsConfigFromViper()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "max_query_text_length")
+	})
 }

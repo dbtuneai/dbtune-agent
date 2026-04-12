@@ -3,7 +3,6 @@ package queries
 // https://www.postgresql.org/docs/current/view-pg-locks.html
 
 import (
-	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -46,12 +45,6 @@ FROM pg_locks l
 WHERE l.pid IN (SELECT blocked_pid FROM blocked UNION SELECT blocking_pid FROM blocked)
   AND l.database IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))
 `
-
-// PgLocksRegistration describes the pglocks collector's configuration schema.
-var PgLocksRegistration = collectorconfig.CollectorRegistration{
-	Name: PgLocksName,
-	Kind: collectorconfig.CatalogCollectorKind,
-}
 
 func PgLocksCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgLocksRow](pool, prepareCtx, PgLocksName, PgLocksInterval, pgLocksQuery)

@@ -12,7 +12,6 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
-	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -40,56 +39,9 @@ const (
 
 // PgStatStatementsConfig holds configuration for the pg_stat_statements collector.
 type PgStatStatementsConfig struct {
-	DiffLimit          int
-	IncludeQueries     bool
-	MaxQueryTextLength int
-}
-
-// DefaultPgStatStatementsConfig returns the default configuration.
-var DefaultPgStatStatementsConfig = PgStatStatementsConfig{
-	DiffLimit:          PgStatStatementsDiffLimit,
-	IncludeQueries:     false,
-	MaxQueryTextLength: MaxQueryTextLength,
-}
-
-func parsePgStatStatementsConfig(raw map[string]any) (any, error) {
-	cfg := DefaultPgStatStatementsConfig
-	if v, ok := raw["diff_limit"]; ok {
-		n, err := collectorconfig.ParseIntValue(v)
-		if err != nil {
-			return nil, fmt.Errorf("diff_limit: %w", err)
-		}
-		if n < 0 || n > MaxDiffLimit {
-			return nil, fmt.Errorf("diff_limit must be between 0 and %d", MaxDiffLimit)
-		}
-		cfg.DiffLimit = n
-	}
-	if v, ok := raw["include_queries"]; ok {
-		b, err := collectorconfig.ParseBoolValue(v)
-		if err != nil {
-			return nil, fmt.Errorf("include_queries: %w", err)
-		}
-		cfg.IncludeQueries = b
-	}
-	if v, ok := raw["max_query_text_length"]; ok {
-		n, err := collectorconfig.ParseIntValue(v)
-		if err != nil {
-			return nil, fmt.Errorf("max_query_text_length: %w", err)
-		}
-		if n < 0 || n > MaxQueryTextLength {
-			return nil, fmt.Errorf("max_query_text_length must be between 0 and %d", MaxQueryTextLength)
-		}
-		cfg.MaxQueryTextLength = n
-	}
-	return cfg, nil
-}
-
-// PgStatStatementsRegistration describes the pg_stat_statements collector's configuration schema.
-var PgStatStatementsRegistration = collectorconfig.CollectorRegistration{
-	Name:          PgStatStatementsName,
-	Kind:          collectorconfig.CatalogCollectorKind,
-	AllowedFields: []string{"diff_limit", "include_queries", "max_query_text_length"},
-	ParseConfig:   parsePgStatStatementsConfig,
+	DiffLimit          int  `config:"diff_limit" default:"500" min:"0" max:"500"`
+	IncludeQueries     bool `config:"include_queries"`
+	MaxQueryTextLength int  `config:"max_query_text_length" default:"8192" min:"0" max:"8192"`
 }
 
 // PgStatStatementsRow represents a single row from pg_stat_statements.

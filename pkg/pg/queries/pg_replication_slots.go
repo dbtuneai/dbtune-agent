@@ -3,7 +3,6 @@ package queries
 // https://www.postgresql.org/docs/current/view-pg-replication-slots.html
 
 import (
-	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -38,12 +37,6 @@ const (
 )
 
 const pgReplicationSlotsQuery = `SELECT * FROM pg_replication_slots`
-
-// PgReplicationSlotsRegistration describes the pgreplicationslots collector's configuration schema.
-var PgReplicationSlotsRegistration = collectorconfig.CollectorRegistration{
-	Name: PgReplicationSlotsName,
-	Kind: collectorconfig.CatalogCollectorKind,
-}
 
 func PgReplicationSlotsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgReplicationSlotsRow](pool, prepareCtx, PgReplicationSlotsName, PgReplicationSlotsInterval, pgReplicationSlotsQuery, WithSkipUnchanged())

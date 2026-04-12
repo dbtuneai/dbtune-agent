@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/internal/utils"
@@ -28,12 +27,6 @@ FROM pg_stat_database`
 type TransactionCommitsPayload struct {
 	XactCommit int64   `json:"xact_commit"`
 	TPS        float64 `json:"tps,omitempty"`
-}
-
-// TransactionCommitsRegistration describes the transactioncommits collector's configuration schema.
-var TransactionCommitsRegistration = collectorconfig.CollectorRegistration{
-	Name: TransactionCommitsName,
-	Kind: collectorconfig.CatalogCollectorKind,
 }
 
 func TransactionCommitsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
