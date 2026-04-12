@@ -1,6 +1,9 @@
 package collectorconfig
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // CollectorKind distinguishes metric vs catalog collectors.
 type CollectorKind uint8
@@ -29,17 +32,24 @@ func (b BaseConfig) IsEnabled() bool {
 	return *b.Enabled
 }
 
-// IntervalOr returns the configured interval clamped to at least def.
-// Users can slow down collection but not speed it up beyond the default.
-func (b BaseConfig) IntervalOr(def time.Duration) time.Duration {
+// IntervalOr returns the configured interval or def when unset or zero.
+// A non-zero value less than def is an error — users can slow collection
+// down but not speed it up beyond the default.
+func (b BaseConfig) IntervalOr(def time.Duration) (time.Duration, error) {
 	if b.IntervalSeconds == nil {
-		return def
+		return def, nil
+	}
+	if *b.IntervalSeconds == 0 {
+		return def, nil
 	}
 	configured := time.Duration(*b.IntervalSeconds) * time.Second
 	if configured < def {
-		return def
+		return 0, fmt.Errorf(
+			"interval_seconds %d is below the minimum of %d",
+			*b.IntervalSeconds, int(def.Seconds()),
+		)
 	}
-	return configured
+	return configured, nil
 }
 
 // CollectorEntry holds the parsed config for one collector.
@@ -53,8 +63,8 @@ func (e CollectorEntry) IsEnabled() bool {
 	return e.Base.IsEnabled()
 }
 
-// IntervalOr returns the configured interval clamped to at least def.
-func (e CollectorEntry) IntervalOr(def time.Duration) time.Duration {
+// IntervalOr returns the configured interval or def when unset or zero.
+func (e CollectorEntry) IntervalOr(def time.Duration) (time.Duration, error) {
 	return e.Base.IntervalOr(def)
 }
 

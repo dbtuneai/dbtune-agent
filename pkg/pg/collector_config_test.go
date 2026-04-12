@@ -43,16 +43,24 @@ func TestBaseConfig_IntervalOr(t *testing.T) {
 		seconds  *int
 		def      time.Duration
 		expected time.Duration
+		wantErr  bool
 	}{
-		{"nil returns default", nil, 5 * time.Second, 5 * time.Second},
-		{"above default returns configured", intPtr(30), 5 * time.Second, 30 * time.Second},
-		{"below default is clamped", intPtr(1), 5 * time.Second, 5 * time.Second},
-		{"equal to default returns default", intPtr(5), 5 * time.Second, 5 * time.Second},
+		{"nil returns default", nil, 5 * time.Second, 5 * time.Second, false},
+		{"above default returns configured", intPtr(30), 5 * time.Second, 30 * time.Second, false},
+		{"below default is error", intPtr(1), 5 * time.Second, 0, true},
+		{"equal to default returns default", intPtr(5), 5 * time.Second, 5 * time.Second, false},
+		{"zero returns default", intPtr(0), 5 * time.Second, 5 * time.Second, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := collectorconfig.BaseConfig{IntervalSeconds: tt.seconds}
-			assert.Equal(t, tt.expected, b.IntervalOr(tt.def))
+			got, err := b.IntervalOr(tt.def)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.expected, got)
+			}
 		})
 	}
 }
@@ -331,6 +339,86 @@ collectors:
 		cfg, err := CollectorsConfigFromViper()
 		require.NoError(t, err)
 		assert.Empty(t, cfg)
+	})
+
+	t.Run("unknown env var collector rejected", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		t.Setenv("DBT_COLLECTOR_TOTALLY_FAKE_ENABLED", "true")
+
+		_, err := CollectorsConfigFromViper()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not match any known collector")
+	})
+
+	t.Run("database_average_query_runtime config round-trip", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		viper.SetConfigType("yaml")
+		err := viper.ReadConfig(strings.NewReader(`
+collectors:
+  database_average_query_runtime:
+    include_queries: true
+    max_query_text_length: 2048
+`))
+		require.NoError(t, err)
+
+		cfg, err := CollectorsConfigFromViper()
+		require.NoError(t, err)
+
+		entry := cfg["database_average_query_runtime"]
+		daqr := entry.Extra.(DatabaseAvgQueryRuntimeConfig)
+		assert.True(t, daqr.IncludeQueries)
+		assert.Equal(t, 2048, daqr.MaxQueryTextLength)
+	})
+
+	t.Run("env var overrides extra field while preserving other YAML extra fields", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		viper.SetConfigType("yaml")
+		err := viper.ReadConfig(strings.NewReader(`
+collectors:
+  pg_stat_statements:
+    diff_limit: 200
+    include_queries: true
+    max_query_text_length: 1024
+`))
+		require.NoError(t, err)
+
+		// Override only diff_limit via env; include_queries and max_query_text_length
+		// should be preserved from YAML.
+		t.Setenv("DBT_COLLECTOR_PG_STAT_STATEMENTS_DIFF_LIMIT", "400")
+
+		cfg, err := CollectorsConfigFromViper()
+		require.NoError(t, err)
+
+		pss := cfg["pg_stat_statements"]
+		pssCfg := pss.Extra.(queries.PgStatStatementsConfig)
+		assert.Equal(t, 400, pssCfg.DiffLimit)
+		assert.True(t, pssCfg.IncludeQueries)
+		assert.Equal(t, 1024, pssCfg.MaxQueryTextLength)
+	})
+
+	t.Run("env var prefix ambiguity resolved by longest match", func(t *testing.T) {
+		viper.Reset()
+		defer viper.Reset()
+
+		// DBT_COLLECTOR_PG_STAT_WAL_RECEIVER_ENABLED starts with the prefix
+		// for pg_stat_wal, but should bind to pg_stat_wal_receiver.
+		t.Setenv("DBT_COLLECTOR_PG_STAT_WAL_RECEIVER_ENABLED", "false")
+
+		cfg, err := CollectorsConfigFromViper()
+		require.NoError(t, err)
+
+		receiver := cfg["pg_stat_wal_receiver"]
+		assert.False(t, receiver.IsEnabled())
+
+		// pg_stat_wal should not have been touched.
+		_, walPresent := cfg["pg_stat_wal"]
+		assert.False(t, walPresent)
 	})
 }
 

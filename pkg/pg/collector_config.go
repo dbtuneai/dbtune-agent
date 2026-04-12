@@ -3,6 +3,7 @@ package pg
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
@@ -16,50 +17,10 @@ type CollectorsConfig = collectorconfig.CollectorsConfig
 // CollectorEntry is an alias for collectorconfig.CollectorEntry.
 type CollectorEntry = collectorconfig.CollectorEntry
 
-// DatabaseAvgQueryRuntimeConfig holds configuration for the
-// database_average_query_runtime metric collector.
-type DatabaseAvgQueryRuntimeConfig struct {
-	IncludeQueries     bool
-	MaxQueryTextLength int
-}
-
-// DefaultDatabaseAvgQueryRuntimeConfig returns the default configuration.
-var DefaultDatabaseAvgQueryRuntimeConfig = DatabaseAvgQueryRuntimeConfig{
-	IncludeQueries:     false,
-	MaxQueryTextLength: queries.MaxQueryTextLength,
-}
-
-func parseDatabaseAvgQueryRuntimeConfig(raw map[string]any) (any, error) {
-	cfg := DefaultDatabaseAvgQueryRuntimeConfig
-	if v, ok := raw["include_queries"]; ok {
-		b, err := collectorconfig.ParseBoolValue(v)
-		if err != nil {
-			return nil, fmt.Errorf("include_queries: %w", err)
-		}
-		cfg.IncludeQueries = b
-	}
-	if v, ok := raw["max_query_text_length"]; ok {
-		n, err := collectorconfig.ParseIntValue(v)
-		if err != nil {
-			return nil, fmt.Errorf("max_query_text_length: %w", err)
-		}
-		if n < 0 || n > queries.MaxQueryTextLength {
-			return nil, fmt.Errorf("max_query_text_length must be between 0 and %d", queries.MaxQueryTextLength)
-		}
-		cfg.MaxQueryTextLength = n
-	}
-	return cfg, nil
-}
-
 // metricRegistrations defines the configuration schema for metric collectors.
 // These live here because the metric collector implementations are in pkg/pg/.
 var metricRegistrations = []collectorconfig.CollectorRegistration{
-	{
-		Name:          "database_average_query_runtime",
-		Kind:          collectorconfig.MetricCollectorKind,
-		AllowedFields: []string{"include_queries", "max_query_text_length"},
-		ParseConfig:   parseDatabaseAvgQueryRuntimeConfig,
-	},
+	DatabaseAvgQueryRuntimeRegistration,
 	{Name: "database_transactions_per_second", Kind: collectorconfig.MetricCollectorKind},
 	{Name: "database_connections", Kind: collectorconfig.MetricCollectorKind | collectorconfig.CatalogCollectorKind},
 	{Name: "system_db_size", Kind: collectorconfig.MetricCollectorKind | collectorconfig.CatalogCollectorKind},
@@ -126,6 +87,11 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 	registry := allRegistrations()
 	cfg := make(CollectorsConfig)
 
+	// yamlExtraFields stores the raw extra (non-universal) fields from YAML
+	// for each collector, so Phase 2 can merge env overlays without reaching
+	// back into the viper raw map.
+	yamlExtraFields := make(map[string]map[string]any)
+
 	// Phase 1: parse YAML section
 	rawMap := viper.GetStringMap("collectors")
 	for name, raw := range rawMap {
@@ -148,6 +114,9 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 			return nil, err
 		}
 		cfg[name] = entry
+
+		// Stash raw extra fields for potential env-var merging in Phase 2.
+		yamlExtraFields[name] = extraFieldsOnly(fieldMap)
 	}
 
 	// Phase 2: overlay environment variables
@@ -158,7 +127,19 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 		}
 	}
 
-	for name, reg := range registry {
+	// Sort collector names longest-first so that "pg_stat_wal_receiver" is
+	// matched before "pg_stat_wal". Without this, a shared prefix could
+	// cause an env var to bind to the wrong collector.
+	sortedNames := make([]string, 0, len(registry))
+	for name := range registry {
+		sortedNames = append(sortedNames, name)
+	}
+	sort.Slice(sortedNames, func(i, j int) bool {
+		return len(sortedNames[i]) > len(sortedNames[j])
+	})
+
+	for _, name := range sortedNames {
+		reg := registry[name]
 		envPrefix := "DBT_COLLECTOR_" + strings.ToUpper(name) + "_"
 
 		// Collect env var values for this collector
@@ -169,6 +150,8 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 			}
 			suffix := strings.ToLower(envKey[len(envPrefix):])
 			envFields[suffix] = envValue
+			// Remove from the map so it isn't re-matched by a shorter prefix.
+			delete(collectorEnvs, envKey)
 		}
 
 		if len(envFields) == 0 {
@@ -195,36 +178,30 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 		}
 
 		// Parse extra fields from env
-		extraFields := extraFieldsOnly(envFields)
-		if len(extraFields) > 0 && reg.ParseConfig != nil {
-			// Merge with any existing extra config by re-parsing everything
-			// Start from YAML extra fields, then overlay env fields
+		extra := extraFieldsOnly(envFields)
+		if len(extra) > 0 && reg.ParseConfig != nil {
+			// Start from stashed YAML extra fields, then overlay env fields.
 			merged := make(map[string]any)
-
-			// Get the existing raw YAML extra fields if present
-			if yamlRaw, ok := rawMap[name]; ok {
-				if yamlFields, ok := yamlRaw.(map[string]any); ok {
-					for k, v := range yamlFields {
-						if _, isUniversal := universalFields[k]; !isUniversal {
-							merged[k] = v
-						}
-					}
-				}
+			for k, v := range yamlExtraFields[name] {
+				merged[k] = v
 			}
-
-			// Overlay env fields
-			for k, v := range extraFields {
+			for k, v := range extra {
 				merged[k] = v
 			}
 
-			extra, err := reg.ParseConfig(merged)
+			parsed, err := reg.ParseConfig(merged)
 			if err != nil {
 				return nil, fmt.Errorf("collector %q: %w", name, err)
 			}
-			existing.Extra = extra
+			existing.Extra = parsed
 		}
 
 		cfg[name] = existing
+	}
+
+	// Any remaining DBT_COLLECTOR_* env vars didn't match a known collector.
+	for envKey := range collectorEnvs {
+		return nil, fmt.Errorf("env var %q does not match any known collector (likely a typo)", envKey)
 	}
 
 	return cfg, nil
