@@ -5,6 +5,7 @@ package queries
 // https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADMIN-DBSIZE
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,6 +21,12 @@ const (
 )
 
 const databaseSizeQuery = `SELECT sum(pg_database_size(datname))::bigint AS total_size_bytes FROM pg_database`
+
+// DatabaseSizeRegistration describes the databasesize collector's configuration schema.
+var DatabaseSizeRegistration = collectorconfig.CollectorRegistration{
+	Name: DatabaseSizeName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func DatabaseSizeCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[DatabaseSizeRow](pool, prepareCtx, DatabaseSizeName, DatabaseSizeInterval, databaseSizeQuery)

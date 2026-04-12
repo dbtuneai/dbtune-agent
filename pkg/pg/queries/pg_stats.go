@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -202,9 +203,51 @@ func collectPgStatsRows(pool *pgxpool.Pool, ctx context.Context, query string, a
 	return result, nil
 }
 
-func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSize int, includeTableData bool) CatalogCollector {
-	batchQuery := buildPgStatsQueryBatch(includeTableData)
-	deltaQuery := buildPgStatsQueryDelta(includeTableData)
+// PgStatsConfig holds configuration for the pg_stats collector.
+type PgStatsConfig struct {
+	BackfillBatchSize int
+	IncludeTableData  bool
+}
+
+// DefaultPgStatsConfig returns the default configuration.
+var DefaultPgStatsConfig = PgStatsConfig{
+	BackfillBatchSize: PgStatsBackfillBatchSize,
+	IncludeTableData:  false,
+}
+
+func parsePgStatsConfig(raw map[string]any) (any, error) {
+	cfg := DefaultPgStatsConfig
+	if v, ok := raw["backfill_batch_size"]; ok {
+		n, err := collectorconfig.ParseIntValue(v)
+		if err != nil {
+			return nil, fmt.Errorf("backfill_batch_size: %w", err)
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("backfill_batch_size must be >= 0")
+		}
+		cfg.BackfillBatchSize = n
+	}
+	if v, ok := raw["include_table_data"]; ok {
+		b, err := collectorconfig.ParseBoolValue(v)
+		if err != nil {
+			return nil, fmt.Errorf("include_table_data: %w", err)
+		}
+		cfg.IncludeTableData = b
+	}
+	return cfg, nil
+}
+
+// PgStatsRegistration describes the pg_stats collector's configuration schema.
+var PgStatsRegistration = collectorconfig.CollectorRegistration{
+	Name:          PgStatsName,
+	Kind:          collectorconfig.CatalogCollectorKind,
+	AllowedFields: []string{"backfill_batch_size", "include_table_data"},
+	ParseConfig:   parsePgStatsConfig,
+}
+
+func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatsConfig) CatalogCollector {
+	batchQuery := buildPgStatsQueryBatch(cfg.IncludeTableData)
+	deltaQuery := buildPgStatsQueryDelta(cfg.IncludeTableData)
 
 	var (
 		backfillOffset = 0
@@ -224,7 +267,7 @@ func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSi
 			var statsRows []PgStatsRow
 
 			if !backfillDone {
-				statsRows, err = collectPgStatsRows(pool, ctx, batchQuery, backfillBatchSize, backfillOffset)
+				statsRows, err = collectPgStatsRows(pool, ctx, batchQuery, cfg.BackfillBatchSize, backfillOffset)
 				if err != nil {
 					return nil, err
 				}
@@ -232,7 +275,7 @@ func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSi
 					backfillDone = true
 					lastPoll = time.Now().UTC()
 				} else {
-					backfillOffset += backfillBatchSize
+					backfillOffset += cfg.BackfillBatchSize
 				}
 			} else {
 				now := time.Now().UTC()

@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/progress-reporting.html#CREATE-INDEX-PROGRESS-REPORTING
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -34,6 +35,12 @@ const (
 )
 
 const pgStatProgressCreateIndexQuery = `SELECT * FROM pg_stat_progress_create_index WHERE datname = current_database()`
+
+// PgStatProgressCreateIndexRegistration describes the pgstatprogresscreateindex collector's configuration schema.
+var PgStatProgressCreateIndexRegistration = collectorconfig.CollectorRegistration{
+	Name: PgStatProgressCreateIndexName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func PgStatProgressCreateIndexCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgStatProgressCreateIndexRow](pool, prepareCtx, PgStatProgressCreateIndexName, PgStatProgressCreateIndexInterval, pgStatProgressCreateIndexQuery, WithSkipUnchanged())

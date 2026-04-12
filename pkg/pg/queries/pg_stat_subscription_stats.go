@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-SUBSCRIPTION-STATS
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,6 +25,12 @@ const (
 
 // PG 15+ only.
 const pgStatSubscriptionStatsQuery = `SELECT * FROM pg_stat_subscription_stats`
+
+// PgStatSubscriptionStatsRegistration describes the pgstatsubscriptionstats collector's configuration schema.
+var PgStatSubscriptionStatsRegistration = collectorconfig.CollectorRegistration{
+	Name: PgStatSubscriptionStatsName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func PgStatSubscriptionStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
 	return NewCollector[PgStatSubscriptionStatsRow](pool, prepareCtx, PgStatSubscriptionStatsName, PgStatSubscriptionStatsInterval, pgStatSubscriptionStatsQuery, WithMinPGVersion(pgMajorVersion, 15), WithSkipUnchanged())

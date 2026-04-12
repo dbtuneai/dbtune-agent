@@ -12,6 +12,7 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -29,6 +30,67 @@ WHERE NOT starts_with(query, '%s')
 
 // PgStatStatementsDiffLimit is the max number of delta entries to include.
 const PgStatStatementsDiffLimit = 500
+
+const (
+	// MaxDiffLimit is the maximum allowed value for diff_limit.
+	MaxDiffLimit = 500
+	// MaxQueryTextLength is the maximum allowed value for max_query_text_length.
+	MaxQueryTextLength = 8192
+)
+
+// PgStatStatementsConfig holds configuration for the pg_stat_statements collector.
+type PgStatStatementsConfig struct {
+	DiffLimit          int
+	IncludeQueries     bool
+	MaxQueryTextLength int
+}
+
+// DefaultPgStatStatementsConfig returns the default configuration.
+var DefaultPgStatStatementsConfig = PgStatStatementsConfig{
+	DiffLimit:          PgStatStatementsDiffLimit,
+	IncludeQueries:     false,
+	MaxQueryTextLength: MaxQueryTextLength,
+}
+
+func parsePgStatStatementsConfig(raw map[string]any) (any, error) {
+	cfg := DefaultPgStatStatementsConfig
+	if v, ok := raw["diff_limit"]; ok {
+		n, err := collectorconfig.ParseIntValue(v)
+		if err != nil {
+			return nil, fmt.Errorf("diff_limit: %w", err)
+		}
+		if n < 0 || n > MaxDiffLimit {
+			return nil, fmt.Errorf("diff_limit must be between 0 and %d", MaxDiffLimit)
+		}
+		cfg.DiffLimit = n
+	}
+	if v, ok := raw["include_queries"]; ok {
+		b, err := collectorconfig.ParseBoolValue(v)
+		if err != nil {
+			return nil, fmt.Errorf("include_queries: %w", err)
+		}
+		cfg.IncludeQueries = b
+	}
+	if v, ok := raw["max_query_text_length"]; ok {
+		n, err := collectorconfig.ParseIntValue(v)
+		if err != nil {
+			return nil, fmt.Errorf("max_query_text_length: %w", err)
+		}
+		if n < 0 || n > MaxQueryTextLength {
+			return nil, fmt.Errorf("max_query_text_length must be between 0 and %d", MaxQueryTextLength)
+		}
+		cfg.MaxQueryTextLength = n
+	}
+	return cfg, nil
+}
+
+// PgStatStatementsRegistration describes the pg_stat_statements collector's configuration schema.
+var PgStatStatementsRegistration = collectorconfig.CollectorRegistration{
+	Name:          PgStatStatementsName,
+	Kind:          collectorconfig.CatalogCollectorKind,
+	AllowedFields: []string{"diff_limit", "include_queries", "max_query_text_length"},
+	ParseConfig:   parsePgStatStatementsConfig,
+}
 
 // PgStatStatementsRow represents a single row from pg_stat_statements.
 type PgStatStatementsRow struct {
@@ -325,14 +387,12 @@ func queryPGMajorVersion(pool *pgxpool.Pool, ctx context.Context) (int, error) {
 func PgStatStatementsCollector(
 	pool *pgxpool.Pool,
 	prepareCtx PrepareCtx,
-	includeQueries bool,
-	maxQueryTextLength int,
-	diffLimit int,
+	cfg PgStatStatementsConfig,
 	initialPGVersion int,
 ) CatalogCollector {
 	var prevSnapshot map[string]PgStatStatementsRow
 	currentVersion := initialPGVersion
-	query := buildPgStatStatementsQuery(includeQueries, maxQueryTextLength, currentVersion)
+	query := buildPgStatStatementsQuery(cfg.IncludeQueries, cfg.MaxQueryTextLength, currentVersion)
 	scanner := pgxutil.NewScanner[PgStatStatementsRow]()
 
 	return CatalogCollector{
@@ -350,7 +410,7 @@ func PgStatStatementsCollector(
 			}
 			if detectedVersion != currentVersion {
 				currentVersion = detectedVersion
-				query = buildPgStatStatementsQuery(includeQueries, maxQueryTextLength, currentVersion)
+				query = buildPgStatStatementsQuery(cfg.IncludeQueries, cfg.MaxQueryTextLength, currentVersion)
 				prevSnapshot = nil
 			}
 
@@ -369,7 +429,7 @@ func PgStatStatementsCollector(
 			}
 
 			if prevSnapshot != nil {
-				deltas, deltaCount := calculateStatementDeltas(prevSnapshot, currSnapshot, diffLimit)
+				deltas, deltaCount := calculateStatementDeltas(prevSnapshot, currSnapshot, cfg.DiffLimit)
 				avgRuntime := calculateAvgRuntime(prevSnapshot, currSnapshot)
 				payload.Deltas = deltas
 				payload.DeltaCount = deltaCount

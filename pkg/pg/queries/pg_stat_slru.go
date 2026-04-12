@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-SLRU
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,6 +28,12 @@ const (
 )
 
 const pgStatSlruQuery = `SELECT * FROM pg_stat_slru`
+
+// PgStatSlruRegistration describes the pgstatslru collector's configuration schema.
+var PgStatSlruRegistration = collectorconfig.CollectorRegistration{
+	Name: PgStatSlruName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func PgStatSlruCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgStatSlruRow](pool, prepareCtx, PgStatSlruName, PgStatSlruInterval, pgStatSlruQuery)

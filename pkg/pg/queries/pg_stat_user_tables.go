@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -65,7 +66,40 @@ UNION
 `, categoryLimit, categoryLimit, categoryLimit)
 }
 
-func PgStatUserTablesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, categoryLimit int) CatalogCollector {
-	query := BuildPgStatUserTablesQuery(categoryLimit)
+// PgStatUserTablesConfig holds configuration for the pg_stat_user_tables collector.
+type PgStatUserTablesConfig struct {
+	CategoryLimit int
+}
+
+// DefaultPgStatUserTablesConfig returns the default configuration.
+var DefaultPgStatUserTablesConfig = PgStatUserTablesConfig{
+	CategoryLimit: PgStatUserTablesCategoryLimit,
+}
+
+func parsePgStatUserTablesConfig(raw map[string]any) (any, error) {
+	cfg := DefaultPgStatUserTablesConfig
+	if v, ok := raw["category_limit"]; ok {
+		n, err := collectorconfig.ParseIntValue(v)
+		if err != nil {
+			return nil, fmt.Errorf("category_limit: %w", err)
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("category_limit must be >= 0")
+		}
+		cfg.CategoryLimit = n
+	}
+	return cfg, nil
+}
+
+// PgStatUserTablesRegistration describes the pg_stat_user_tables collector's configuration schema.
+var PgStatUserTablesRegistration = collectorconfig.CollectorRegistration{
+	Name:          PgStatUserTablesName,
+	Kind:          collectorconfig.CatalogCollectorKind,
+	AllowedFields: []string{"category_limit"},
+	ParseConfig:   parsePgStatUserTablesConfig,
+}
+
+func PgStatUserTablesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatUserTablesConfig) CatalogCollector {
+	query := BuildPgStatUserTablesQuery(cfg.CategoryLimit)
 	return NewCollector[PgStatUserTableRow](pool, prepareCtx, PgStatUserTablesName, PgStatUserTablesInterval, query)
 }

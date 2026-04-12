@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/catalog-pg-index.html
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -69,6 +70,12 @@ JOIN pg_namespace n ON n.oid = t.relnamespace
 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
 ORDER BY n.nspname, t.relname, c.relname
 `
+
+// PgIndexRegistration describes the pgindex collector's configuration schema.
+var PgIndexRegistration = collectorconfig.CollectorRegistration{
+	Name: PgIndexName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func PgIndexCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgIndexRow](pool, prepareCtx, PgIndexName, PgIndexInterval, pgIndexQuery, WithSkipUnchanged())

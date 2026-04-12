@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/progress-reporting.html#ANALYZE-PROGRESS-REPORTING
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,6 +31,12 @@ const (
 )
 
 const pgStatProgressAnalyzeQuery = `SELECT * FROM pg_stat_progress_analyze WHERE datname = current_database()`
+
+// PgStatProgressAnalyzeRegistration describes the pgstatprogressanalyze collector's configuration schema.
+var PgStatProgressAnalyzeRegistration = collectorconfig.CollectorRegistration{
+	Name: PgStatProgressAnalyzeName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func PgStatProgressAnalyzeCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgStatProgressAnalyzeRow](pool, prepareCtx, PgStatProgressAnalyzeName, PgStatProgressAnalyzeInterval, pgStatProgressAnalyzeQuery, WithSkipUnchanged())

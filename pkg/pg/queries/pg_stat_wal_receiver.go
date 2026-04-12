@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-WAL-RECEIVER
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -32,6 +33,12 @@ const (
 )
 
 const pgStatWalReceiverQuery = `SELECT * FROM pg_stat_wal_receiver`
+
+// PgStatWalReceiverRegistration describes the pgstatwalreceiver collector's configuration schema.
+var PgStatWalReceiverRegistration = collectorconfig.CollectorRegistration{
+	Name: PgStatWalReceiverName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func PgStatWalReceiverCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgStatWalReceiverRow](pool, prepareCtx, PgStatWalReceiverName, PgStatWalReceiverInterval, pgStatWalReceiverQuery)

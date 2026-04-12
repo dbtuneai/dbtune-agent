@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/catalog-pg-attribute.html
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -40,6 +41,12 @@ WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
   AND NOT a.attisdropped
 ORDER BY a.attrelid, a.attnum
 `
+
+// PgAttributeRegistration describes the pgattribute collector's configuration schema.
+var PgAttributeRegistration = collectorconfig.CollectorRegistration{
+	Name: PgAttributeName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func PgAttributeCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgAttributeRow](pool, prepareCtx, PgAttributeName, PgAttributeInterval, pgAttributeQuery, WithSkipUnchanged())

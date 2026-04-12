@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-REPLICATION
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -38,6 +39,12 @@ const (
 )
 
 const pgStatReplicationQuery = `SELECT * FROM pg_stat_replication`
+
+// PgStatReplicationRegistration describes the pgstatreplication collector's configuration schema.
+var PgStatReplicationRegistration = collectorconfig.CollectorRegistration{
+	Name: PgStatReplicationName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func PgStatReplicationCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgStatReplicationRow](pool, prepareCtx, PgStatReplicationName, PgStatReplicationInterval, pgStatReplicationQuery)

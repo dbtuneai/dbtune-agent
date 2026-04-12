@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ACTIVITY
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -63,6 +64,12 @@ const pgStatActivityQueryPG14 = `SELECT
 	backend_type
 FROM pg_stat_activity
 WHERE datname = current_database()`
+
+// PgStatActivityRegistration describes the pgstatactivity collector's configuration schema.
+var PgStatActivityRegistration = collectorconfig.CollectorRegistration{
+	Name: PgStatActivityName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func PgStatActivityCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
 	query := pgStatActivityQueryPG14

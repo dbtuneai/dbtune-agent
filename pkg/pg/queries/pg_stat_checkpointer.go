@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-CHECKPOINTER
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,6 +30,12 @@ const (
 
 // PG 17+ only.
 const pgStatCheckpointerQuery = `SELECT * FROM pg_stat_checkpointer`
+
+// PgStatCheckpointerRegistration describes the pgstatcheckpointer collector's configuration schema.
+var PgStatCheckpointerRegistration = collectorconfig.CollectorRegistration{
+	Name: PgStatCheckpointerName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func PgStatCheckpointerCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
 	return NewCollector[PgStatCheckpointerRow](pool, prepareCtx, PgStatCheckpointerName, PgStatCheckpointerInterval, pgStatCheckpointerQuery, WithMinPGVersion(pgMajorVersion, 17))

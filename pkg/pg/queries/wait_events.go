@@ -1,6 +1,7 @@
 package queries
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -55,6 +56,12 @@ SELECT
 	'TOTAL' as wait_event_type,
 	sum(current_count) as current_count
 FROM wait_counts`
+
+// WaitEventsRegistration describes the waitevents collector's configuration schema.
+var WaitEventsRegistration = collectorconfig.CollectorRegistration{
+	Name: WaitEventsName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func WaitEventsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[WaitEventRow](pool, prepareCtx, WaitEventsName, WaitEventsInterval, waitEventsQuery)

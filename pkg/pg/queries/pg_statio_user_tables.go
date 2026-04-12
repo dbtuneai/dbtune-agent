@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STATIO-ALL-TABLES
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,6 +36,12 @@ WHERE COALESCE(heap_blks_read,0) + COALESCE(heap_blks_hit,0) +
 ORDER BY COALESCE(heap_blks_read,0) + COALESCE(idx_blks_read,0) DESC
 LIMIT 500
 `
+
+// PgStatioUserTablesRegistration describes the pgstatiousertables collector's configuration schema.
+var PgStatioUserTablesRegistration = collectorconfig.CollectorRegistration{
+	Name: PgStatioUserTablesName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func PgStatioUserTablesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgStatioUserTablesRow](pool, prepareCtx, PgStatioUserTablesName, PgStatioUserTablesInterval, pgStatioUserTablesQuery)

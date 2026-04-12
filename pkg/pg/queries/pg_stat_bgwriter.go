@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-BGWRITER
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,6 +30,12 @@ const (
 )
 
 const pgStatBgwriterQuery = `SELECT * FROM pg_stat_bgwriter`
+
+// PgStatBgwriterRegistration describes the pgstatbgwriter collector's configuration schema.
+var PgStatBgwriterRegistration = collectorconfig.CollectorRegistration{
+	Name: PgStatBgwriterName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func PgStatBgwriterCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgStatBgwriterRow](pool, prepareCtx, PgStatBgwriterName, PgStatBgwriterInterval, pgStatBgwriterQuery)

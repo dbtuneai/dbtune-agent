@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/catalog-pg-database.html
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,6 +31,12 @@ type PgDatabaseRow struct {
 	IsTemplate Boolean `json:"datistemplate"`
 	FrozenXID  Xid     `json:"datfrozenxid"`
 	MinXID     Xid     `json:"datminmxid"`
+}
+
+// PgDatabaseRegistration describes the pgdatabase collector's configuration schema.
+var PgDatabaseRegistration = collectorconfig.CollectorRegistration{
+	Name: PgDatabaseName,
+	Kind: collectorconfig.CatalogCollectorKind,
 }
 
 func PgDatabaseCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {

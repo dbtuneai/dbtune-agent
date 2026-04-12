@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-RECOVERY-PREFETCH
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,6 +30,12 @@ const (
 
 // PG 15+ only.
 const pgStatRecoveryPrefetchQuery = `SELECT * FROM pg_stat_recovery_prefetch`
+
+// PgStatRecoveryPrefetchRegistration describes the pgstatrecoveryprefetch collector's configuration schema.
+var PgStatRecoveryPrefetchRegistration = collectorconfig.CollectorRegistration{
+	Name: PgStatRecoveryPrefetchName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func PgStatRecoveryPrefetchCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
 	return NewCollector[PgStatRecoveryPrefetchRow](pool, prepareCtx, PgStatRecoveryPrefetchName, PgStatRecoveryPrefetchInterval, pgStatRecoveryPrefetchQuery, WithMinPGVersion(pgMajorVersion, 15))

@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-IO
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -37,6 +38,12 @@ const (
 
 // PG 16+ only.
 const pgStatIOQuery = `SELECT * FROM pg_stat_io`
+
+// PgStatIORegistration describes the pgstatio collector's configuration schema.
+var PgStatIORegistration = collectorconfig.CollectorRegistration{
+	Name: PgStatIOName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func PgStatIOCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
 	return NewCollector[PgStatIORow](pool, prepareCtx, PgStatIOName, PgStatIOInterval, pgStatIOQuery, WithMinPGVersion(pgMajorVersion, 16))

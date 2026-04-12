@@ -10,6 +10,7 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -72,7 +73,41 @@ type PgClassRow struct {
 	RelMinXID    Xid     `json:"relminxid"`
 }
 
-func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSize int) CatalogCollector {
+// PgClassConfig holds configuration for the pg_class collector.
+type PgClassConfig struct {
+	BackfillBatchSize int
+}
+
+// DefaultPgClassConfig returns the default configuration.
+var DefaultPgClassConfig = PgClassConfig{
+	BackfillBatchSize: PgClassBackfillBatchSize,
+}
+
+func parsePgClassConfig(raw map[string]any) (any, error) {
+	cfg := DefaultPgClassConfig
+	if v, ok := raw["backfill_batch_size"]; ok {
+		n, err := collectorconfig.ParseIntValue(v)
+		if err != nil {
+			return nil, fmt.Errorf("backfill_batch_size: %w", err)
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("backfill_batch_size must be >= 0")
+		}
+		cfg.BackfillBatchSize = n
+	}
+	return cfg, nil
+}
+
+// PgClassRegistration describes the pg_class collector's configuration schema.
+var PgClassRegistration = collectorconfig.CollectorRegistration{
+	Name:          PgClassName,
+	Kind:          collectorconfig.CatalogCollectorKind,
+	AllowedFields: []string{"backfill_batch_size"},
+	ParseConfig:   parsePgClassConfig,
+}
+
+func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgClassConfig) CatalogCollector {
+	backfillBatchSize := cfg.BackfillBatchSize
 	var (
 		backfillOffset = 0
 		backfillDone   = false

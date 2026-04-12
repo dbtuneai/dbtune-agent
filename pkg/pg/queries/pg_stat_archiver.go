@@ -3,6 +3,7 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ARCHIVER
 
 import (
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,6 +26,12 @@ const (
 )
 
 const pgStatArchiverQuery = `SELECT * FROM pg_stat_archiver`
+
+// PgStatArchiverRegistration describes the pgstatarchiver collector's configuration schema.
+var PgStatArchiverRegistration = collectorconfig.CollectorRegistration{
+	Name: PgStatArchiverName,
+	Kind: collectorconfig.CatalogCollectorKind,
+}
 
 func PgStatArchiverCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgStatArchiverRow](pool, prepareCtx, PgStatArchiverName, PgStatArchiverInterval, pgStatArchiverQuery, WithSkipUnchanged())
