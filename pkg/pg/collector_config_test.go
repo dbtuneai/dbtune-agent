@@ -301,7 +301,7 @@ collectors:
 			},
 		},
 		{
-			name:    "env var prefix ambiguity resolved by longest match",
+			name:    "env var prefix ambiguity resolved by override",
 			envVars: map[string]string{"DBT_COLLECTOR_PG_STAT_WAL_RECEIVER_ENABLED": "false"},
 			check: func(t *testing.T, cfg CollectorsConfig) {
 				assert.False(t, cfg.Simple[queries.PgStatWalReceiverName].IsEnabled())
@@ -489,4 +489,32 @@ collectors:
 			yaml: "collectors:\n  pg_class:\n    interval_seconds: 0",
 		},
 	})
+}
+
+func TestNoUnhandledEnvPrefixConflicts(t *testing.T) {
+	names := make([]string, len(collectors))
+	for i, c := range collectors {
+		names[i] = c.Name
+	}
+
+	for i, a := range names {
+		for _, b := range names[i+1:] {
+			// Order the pair lexicographically to match the map key format.
+			pair := [2]string{a, b}
+			if pair[0] > pair[1] {
+				pair[0], pair[1] = pair[1], pair[0]
+			}
+			if !strings.HasPrefix(pair[1], pair[0]+"_") {
+				continue
+			}
+			winner, ok := envConflictResolutions[pair]
+			if !ok {
+				t.Errorf("prefix conflict: %q and %q — add entry to envConflictResolutions", pair[0], pair[1])
+				continue
+			}
+			if winner != pair[0] && winner != pair[1] {
+				t.Errorf("envConflictResolutions[{%q, %q}] = %q, but winner must be one of the two", pair[0], pair[1], winner)
+			}
+		}
+	}
 }

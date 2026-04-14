@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
@@ -170,6 +171,18 @@ var collectors = []collectorDef{
 	simpleCollector(MetricMemoryUsed),
 }
 
+// envConflictResolutions declares how to resolve env var prefix collisions
+// between collector names. When two collector names both match an env var
+// suffix, the pair is looked up here to determine which collector wins.
+// A test ensures every prefix collision in the registry has an entry here.
+var envConflictResolutions = map[[2]string]string{
+	{"database_transactions", "database_transactions_per_second"}: "database_transactions_per_second",
+	{"pg_stat_database", "pg_stat_database_conflicts"}:            "pg_stat_database_conflicts",
+	{"pg_stat_replication", "pg_stat_replication_slots"}:          "pg_stat_replication_slots",
+	{"pg_stat_subscription", "pg_stat_subscription_stats"}:        "pg_stat_subscription_stats",
+	{"pg_stat_wal", "pg_stat_wal_receiver"}:                       "pg_stat_wal_receiver",
+}
+
 // CollectorsConfigFromViper reads the collectors YAML section, overlays
 // environment variables with pattern DBT_COLLECTOR_{NAME}_{FIELD},
 // validates, and returns the config.
@@ -194,23 +207,23 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 		rawMaps[name] = fieldMap
 	}
 
-	// Phase 2: match each DBT_COLLECTOR_* env var to its collector (longest name wins).
+	// Phase 2: match each DBT_COLLECTOR_* env var to its collector.
 	strictEnv := os.Getenv("DBT_COLLECTOR_STRICT_ENV") != "false"
 	for suffix, envValue := range collectDBTCollectorEnvSuffixes() {
 		if suffix == "strict_env" {
 			continue
 		}
 
-		var bestName string
-		var bestLen int
+		var matches []string
 		for name := range registry {
-			prefix := name + "_"
-			if strings.HasPrefix(suffix, prefix) && len(prefix) > bestLen {
-				bestName = name
-				bestLen = len(prefix)
+			if strings.HasPrefix(suffix, name+"_") {
+				matches = append(matches, name)
 			}
 		}
-		if bestName == "" {
+
+		var matchedName string
+		switch len(matches) {
+		case 0:
 			if strictEnv {
 				return CollectorsConfig{}, fmt.Errorf(
 					"env var DBT_COLLECTOR_%s does not match any known collector (set DBT_COLLECTOR_STRICT_ENV=false to skip unknown env vars)",
@@ -219,13 +232,28 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 			}
 			slog.Warn("ignoring unrecognized collector env var", "key", "DBT_COLLECTOR_"+strings.ToUpper(suffix))
 			continue
+		case 1:
+			matchedName = matches[0]
+		default:
+			// Multiple collectors match — resolve via conflict table.
+			slices.Sort(matches)
+			key := [2]string{matches[0], matches[1]}
+			winner, ok := envConflictResolutions[key]
+			if !ok {
+				return CollectorsConfig{}, fmt.Errorf(
+					"env var DBT_COLLECTOR_%s is ambiguous, matches collectors: %s",
+					strings.ToUpper(suffix),
+					strings.Join(matches, ", "),
+				)
+			}
+			matchedName = winner
 		}
 
-		fieldKey := suffix[bestLen:]
-		if rawMaps[bestName] == nil {
-			rawMaps[bestName] = make(map[string]any)
+		fieldKey := suffix[len(matchedName)+1:]
+		if rawMaps[matchedName] == nil {
+			rawMaps[matchedName] = make(map[string]any)
 		}
-		rawMaps[bestName][fieldKey] = envValue
+		rawMaps[matchedName][fieldKey] = envValue
 	}
 
 	// Phase 3: parse every collector (nil raw -> defaults only).
