@@ -217,7 +217,7 @@ func (d *DockerContainerAdapter) GetSystemInfo() ([]metrics.FlatValue, error) {
 		// If no limits set, use the number of CPUs available to the container
 		cpuCount = float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
 	}
-	cpuMetric, err := metrics.NodeCPUCount.AsFlatValue(int64(cpuCount))
+	cpuMetric, err := metrics.NodeCPUCount.AsFlatValue(max(int64(cpuCount), 1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CPU count metric: %w", err)
 	}
