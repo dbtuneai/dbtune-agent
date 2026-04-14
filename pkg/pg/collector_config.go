@@ -196,16 +196,15 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 
 	// Phase 2: match each DBT_COLLECTOR_* env var to its collector (longest name wins).
 	strictEnv := os.Getenv("DBT_COLLECTOR_STRICT_ENV") != "false"
-	for envKey, envValue := range collectDBTEnvVars() {
-		if envKey == "DBT_COLLECTOR_STRICT_ENV" {
+	for suffix, envValue := range collectDBTCollectorEnvSuffixes() {
+		if suffix == "strict_env" {
 			continue
 		}
-		suffix := envKey[len("DBT_COLLECTOR_"):]
 
 		var bestName string
 		var bestLen int
 		for name := range registry {
-			prefix := strings.ToUpper(name) + "_"
+			prefix := name + "_"
 			if strings.HasPrefix(suffix, prefix) && len(prefix) > bestLen {
 				bestName = name
 				bestLen = len(prefix)
@@ -214,15 +213,15 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 		if bestName == "" {
 			if strictEnv {
 				return CollectorsConfig{}, fmt.Errorf(
-					"env var %q does not match any known collector (set DBT_COLLECTOR_STRICT_ENV=false to skip unknown env vars)",
-					envKey,
+					"env var DBT_COLLECTOR_%s does not match any known collector (set DBT_COLLECTOR_STRICT_ENV=false to skip unknown env vars)",
+					strings.ToUpper(suffix),
 				)
 			}
-			slog.Warn("ignoring unrecognized collector env var", "key", envKey)
+			slog.Warn("ignoring unrecognized collector env var", "key", "DBT_COLLECTOR_"+strings.ToUpper(suffix))
 			continue
 		}
 
-		fieldKey := strings.ToLower(suffix[bestLen:])
+		fieldKey := suffix[bestLen:]
 		if rawMaps[bestName] == nil {
 			rawMaps[bestName] = make(map[string]any)
 		}
@@ -240,12 +239,14 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 	return cfg, nil
 }
 
-// collectDBTEnvVars returns all DBT_COLLECTOR_* environment variables.
-func collectDBTEnvVars() map[string]string {
+// collectDBTCollectorEnvSuffixes returns DBT_COLLECTOR_* env vars keyed by
+// their lowercased suffix (i.e. with the "DBT_COLLECTOR_" prefix stripped).
+func collectDBTCollectorEnvSuffixes() map[string]string {
+	const prefix = "DBT_COLLECTOR_"
 	result := make(map[string]string)
 	for _, env := range os.Environ() {
-		if key, value, ok := strings.Cut(env, "="); ok && strings.HasPrefix(key, "DBT_COLLECTOR_") {
-			result[key] = value
+		if key, value, ok := strings.Cut(env, "="); ok && strings.HasPrefix(key, prefix) {
+			result[strings.ToLower(key[len(prefix):])] = value
 		}
 	}
 	return result

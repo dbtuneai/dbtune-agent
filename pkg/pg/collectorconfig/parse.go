@@ -2,6 +2,7 @@ package collectorconfig
 
 import (
 	"fmt"
+	"iter"
 	"reflect"
 	"strconv"
 )
@@ -46,11 +47,77 @@ type fieldSpec struct {
 	valueKind  reflect.Kind // bool or int (unwrapped from pointer)
 	isPointer  bool         // field is *bool or *int
 	defaultInt int          // default for non-pointer int fields
+	minInt     *int         // min constraint for int fields (nil = none)
+	maxInt     *int         // max constraint for int fields (nil = none)
 }
 
-// buildFieldSpecs reflects over T once and returns the field specs + a map of allowed keys.
-func buildFieldSpecs(t reflect.Type) ([]fieldSpec, map[string]struct{}) {
-	var specs []fieldSpec
+// HasDefault reports whether this spec has a non-zero default to apply.
+func (s *fieldSpec) HasDefault() bool {
+	return !s.isPointer && s.valueKind == reflect.Int && s.defaultInt != 0
+}
+
+// SetDefault applies the default value to the given reflect field.
+func (s *fieldSpec) SetDefault(field reflect.Value) {
+	field.SetInt(int64(s.defaultInt))
+}
+
+// SetValue parses raw, validates constraints, and sets the field.
+func (s *fieldSpec) SetValue(field reflect.Value, raw any) error {
+	switch s.valueKind {
+	case reflect.Bool:
+		b, err := ParseBoolValue(raw)
+		if err != nil {
+			return fmt.Errorf("%s: %w", s.key, err)
+		}
+		if s.isPointer {
+			field.Set(reflect.ValueOf(&b))
+		} else {
+			field.SetBool(b)
+		}
+	case reflect.Int:
+		n, err := ParseIntValue(raw)
+		if err != nil {
+			return fmt.Errorf("%s: %w", s.key, err)
+		}
+		if s.minInt != nil && n < *s.minInt {
+			return fmt.Errorf("%s must be >= %d", s.key, *s.minInt)
+		}
+		if s.maxInt != nil && n > *s.maxInt {
+			return fmt.Errorf("%s must be <= %d", s.key, *s.maxInt)
+		}
+		if s.isPointer {
+			field.Set(reflect.ValueOf(&n))
+		} else {
+			field.SetInt(int64(n))
+		}
+	default:
+		return fmt.Errorf("unsupported field type %s for %q", s.valueKind, s.key)
+	}
+	return nil
+}
+
+// fieldSpecs holds all specs for a config struct, plus an allowed-key set.
+type fieldSpecs struct {
+	all     []fieldSpec
+	allowed map[string]struct{}
+}
+
+// WithDefaults iterates over specs that have a non-zero default.
+func (s *fieldSpecs) WithDefaults() iter.Seq[*fieldSpec] {
+	return func(yield func(*fieldSpec) bool) {
+		for i := range s.all {
+			if s.all[i].HasDefault() {
+				if !yield(&s.all[i]) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// buildFieldSpecs reflects over T once and returns specs with all metadata.
+func buildFieldSpecs(t reflect.Type) fieldSpecs {
+	var all []fieldSpec
 	allowed := make(map[string]struct{})
 	for i := range t.NumField() {
 		f := t.Field(i)
@@ -71,22 +138,32 @@ func buildFieldSpecs(t reflect.Type) ([]fieldSpec, map[string]struct{}) {
 				spec.defaultInt = n
 			}
 		}
-		specs = append(specs, spec)
+		if valueKind == reflect.Int {
+			if minStr := f.Tag.Get("min"); minStr != "" {
+				n, _ := strconv.Atoi(minStr)
+				spec.minInt = &n
+			}
+			if maxStr := f.Tag.Get("max"); maxStr != "" {
+				n, _ := strconv.Atoi(maxStr)
+				spec.maxInt = &n
+			}
+		}
+		all = append(all, spec)
 		allowed[key] = struct{}{}
 	}
-	return specs, allowed
+	return fieldSpecs{all: all, allowed: allowed}
 }
 
 // parse is the shared implementation for Parse and ParsePartial.
 func parse[T any](raw map[string]any, rejectUnknown bool) (T, map[string]any, error) {
 	var zero T
 	t := reflect.TypeOf(zero)
-	specs, allowed := buildFieldSpecs(t)
+	specs := buildFieldSpecs(t)
 
 	// Separate known vs unknown keys.
 	var remaining map[string]any
 	for k := range raw {
-		if _, ok := allowed[k]; !ok {
+		if _, ok := specs.allowed[k]; !ok {
 			if rejectUnknown {
 				return zero, nil, fmt.Errorf("unknown field %q", k)
 			}
@@ -99,55 +176,19 @@ func parse[T any](raw map[string]any, rejectUnknown bool) (T, map[string]any, er
 
 	// Start with defaults (pointer fields stay nil).
 	result := reflect.New(t).Elem()
-	for _, spec := range specs {
-		if !spec.isPointer && spec.valueKind == reflect.Int && spec.defaultInt != 0 {
-			result.Field(spec.index).SetInt(int64(spec.defaultInt))
-		}
+	for spec := range specs.WithDefaults() {
+		spec.SetDefault(result.Field(spec.index))
 	}
 
 	// Apply raw values.
-	for _, spec := range specs {
+	for i := range specs.all {
+		spec := &specs.all[i]
 		v, ok := raw[spec.key]
 		if !ok {
 			continue
 		}
-		field := result.Field(spec.index)
-		structField := t.Field(spec.index)
-		switch spec.valueKind {
-		case reflect.Bool:
-			b, err := ParseBoolValue(v)
-			if err != nil {
-				return zero, nil, fmt.Errorf("%s: %w", spec.key, err)
-			}
-			if spec.isPointer {
-				field.Set(reflect.ValueOf(&b))
-			} else {
-				field.SetBool(b)
-			}
-		case reflect.Int:
-			n, err := ParseIntValue(v)
-			if err != nil {
-				return zero, nil, fmt.Errorf("%s: %w", spec.key, err)
-			}
-			if minStr := structField.Tag.Get("min"); minStr != "" {
-				minVal, _ := strconv.Atoi(minStr)
-				if n < minVal {
-					return zero, nil, fmt.Errorf("%s must be >= %d", spec.key, minVal)
-				}
-			}
-			if maxStr := structField.Tag.Get("max"); maxStr != "" {
-				maxVal, _ := strconv.Atoi(maxStr)
-				if n > maxVal {
-					return zero, nil, fmt.Errorf("%s must be <= %d", spec.key, maxVal)
-				}
-			}
-			if spec.isPointer {
-				field.Set(reflect.ValueOf(&n))
-			} else {
-				field.SetInt(int64(n))
-			}
-		default:
-			return zero, nil, fmt.Errorf("unsupported field type %s for %q", spec.valueKind, spec.key)
+		if err := spec.SetValue(result.Field(spec.index), v); err != nil {
+			return zero, nil, err
 		}
 	}
 
