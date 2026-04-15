@@ -48,7 +48,13 @@ type statioSnapshot struct {
 	idxBlksHit  int64
 }
 
-func PgStatioUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, batchSize int) CatalogCollector {
+// PgStatioUserIndexesConfig holds configuration for the pg_statio_user_indexes collector.
+type PgStatioUserIndexesConfig struct {
+	BackfillBatchSize int `config:"backfill_batch_size" default:"2000" min:"0"`
+}
+
+func PgStatioUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatioUserIndexesConfig) CatalogCollector {
+	batchSize := cfg.BackfillBatchSize
 	scanner := pgxutil.NewScanner[PgStatioUserIndexesRow]()
 
 	var (

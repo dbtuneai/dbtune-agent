@@ -72,7 +72,13 @@ type PgClassRow struct {
 	RelMinXID    Xid     `json:"relminxid"`
 }
 
-func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, backfillBatchSize int) CatalogCollector {
+// PgClassConfig holds configuration for the pg_class collector.
+type PgClassConfig struct {
+	BackfillBatchSize int `config:"backfill_batch_size" default:"500" min:"0"`
+}
+
+func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgClassConfig) CatalogCollector {
+	backfillBatchSize := cfg.BackfillBatchSize
 	var (
 		backfillOffset = 0
 		backfillDone   = false

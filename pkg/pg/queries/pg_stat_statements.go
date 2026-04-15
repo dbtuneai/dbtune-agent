@@ -30,6 +30,13 @@ WHERE NOT starts_with(query, '%s')
 // PgStatStatementsDiffLimit is the max number of delta entries to include.
 const PgStatStatementsDiffLimit = 500
 
+// PgStatStatementsConfig holds configuration for the pg_stat_statements collector.
+type PgStatStatementsConfig struct {
+	DiffLimit          int  `config:"diff_limit" default:"500" min:"0" max:"500"`
+	IncludeQueries     bool `config:"include_queries"`
+	MaxQueryTextLength int  `config:"max_query_text_length" default:"8192" min:"0" max:"8192"`
+}
+
 // PgStatStatementsRow represents a single row from pg_stat_statements.
 type PgStatStatementsRow struct {
 	// Identifiers
@@ -325,14 +332,12 @@ func queryPGMajorVersion(pool *pgxpool.Pool, ctx context.Context) (int, error) {
 func PgStatStatementsCollector(
 	pool *pgxpool.Pool,
 	prepareCtx PrepareCtx,
-	includeQueries bool,
-	maxQueryTextLength int,
-	diffLimit int,
+	cfg PgStatStatementsConfig,
 	initialPGVersion int,
 ) CatalogCollector {
 	var prevSnapshot map[string]PgStatStatementsRow
 	currentVersion := initialPGVersion
-	query := buildPgStatStatementsQuery(includeQueries, maxQueryTextLength, currentVersion)
+	query := buildPgStatStatementsQuery(cfg.IncludeQueries, cfg.MaxQueryTextLength, currentVersion)
 	scanner := pgxutil.NewScanner[PgStatStatementsRow]()
 
 	return CatalogCollector{
@@ -350,7 +355,7 @@ func PgStatStatementsCollector(
 			}
 			if detectedVersion != currentVersion {
 				currentVersion = detectedVersion
-				query = buildPgStatStatementsQuery(includeQueries, maxQueryTextLength, currentVersion)
+				query = buildPgStatStatementsQuery(cfg.IncludeQueries, cfg.MaxQueryTextLength, currentVersion)
 				prevSnapshot = nil
 			}
 
@@ -369,7 +374,7 @@ func PgStatStatementsCollector(
 			}
 
 			if prevSnapshot != nil {
-				deltas, deltaCount := calculateStatementDeltas(prevSnapshot, currSnapshot, diffLimit)
+				deltas, deltaCount := calculateStatementDeltas(prevSnapshot, currSnapshot, cfg.DiffLimit)
 				avgRuntime := calculateAvgRuntime(prevSnapshot, currSnapshot)
 				payload.Deltas = deltas
 				payload.DeltaCount = deltaCount

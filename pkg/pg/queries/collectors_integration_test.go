@@ -487,13 +487,13 @@ func TestTransactionCommits_ComputesTPS(t *testing.T) {
 
 func TestPgStatUserTables_ReturnsFixtureTable(t *testing.T) {
 	inst := latestInstance()
-	c := PgStatUserTablesCollector(inst.pool, noopPrepareCtx, PgStatUserTablesCategoryLimit)
+	c := PgStatUserTablesCollector(inst.pool, noopPrepareCtx, PgStatUserTablesConfig{CategoryLimit: PgStatUserTablesCategoryLimit})
 	requireRows(t, c)
 }
 
 func TestPgStatUserIndexes_ReturnsFixtureIndexes(t *testing.T) {
 	inst := latestInstance()
-	c := PgStatUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatUserIndexesCategoryLimit)
+	c := PgStatUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatUserIndexesConfig{CategoryLimit: PgStatUserIndexesCategoryLimit})
 	requireRows(t, c)
 }
 
@@ -512,7 +512,7 @@ func TestPgStatioUserTables_NoError(t *testing.T) {
 
 func TestPgStatioUserIndexes_ReturnsFixtureData(t *testing.T) {
 	inst := latestInstance()
-	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesBatchSize)
+	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesConfig{BackfillBatchSize: PgStatioUserIndexesBatchSize})
 	requireRows(t, c)
 }
 
@@ -521,7 +521,7 @@ func TestPgStatioUserIndexes_BackfillThenDelta(t *testing.T) {
 	ctx := context.Background()
 
 	// Use batch size 1 to force multiple backfill ticks and test pagination.
-	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, 1)
+	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesConfig{BackfillBatchSize: 1})
 
 	// First call: backfill returns exactly 1 row (batch size 1).
 	r1, err := c.Collect(ctx)
@@ -582,7 +582,7 @@ func TestPgStatioUserIndexes_DeltaEmitsOnlyChangedRows(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Large batch size so backfill finishes in one tick.
-	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, 10000)
+	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesConfig{BackfillBatchSize: 10000})
 
 	// First call: backfill — all rows emitted.
 	r1, err := c.Collect(ctx)
@@ -708,7 +708,7 @@ func TestPgClass_BackfillThenDelta(t *testing.T) {
 	ctx := context.Background()
 
 	// Use batch size 1 to force multiple backfill ticks and test pagination.
-	c := PgClassCollector(inst.pool, noopPrepareCtx, 1)
+	c := PgClassCollector(inst.pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: 1})
 
 	// First call: backfill returns exactly 1 row (batch size 1).
 	r1, err := c.Collect(ctx)
@@ -767,7 +767,7 @@ func TestPgStats_BackfillThenDelta(t *testing.T) {
 	ctx := context.Background()
 
 	// Use batch size 1 to force pagination.
-	c := PgStatsCollector(inst.pool, noopPrepareCtx, 1, true)
+	c := PgStatsCollector(inst.pool, noopPrepareCtx, PgStatsConfig{BackfillBatchSize: 1, IncludeTableData: true})
 
 	// First call: backfill returns stats for 1 table.
 	r1, err := c.Collect(ctx)
@@ -848,7 +848,7 @@ func TestPgStats_BackfillThenDelta(t *testing.T) {
 
 func TestPgStats_RedactsWhenIncludeTableDataFalse(t *testing.T) {
 	inst := latestInstance()
-	c := PgStatsCollector(inst.pool, noopPrepareCtx, PgStatsBackfillBatchSize, false)
+	c := PgStatsCollector(inst.pool, noopPrepareCtx, PgStatsConfig{BackfillBatchSize: PgStatsBackfillBatchSize})
 	ctx := context.Background()
 
 	r, err := c.Collect(ctx)
@@ -886,8 +886,11 @@ func TestPgStatStatements_AllVersions(t *testing.T) {
 			ctx := context.Background()
 
 			c := PgStatStatementsCollector(
-				inst.pool, noopPrepareCtx, true, 1000,
-				PgStatStatementsDiffLimit, inst.version,
+				inst.pool, noopPrepareCtx, PgStatStatementsConfig{
+					DiffLimit:          PgStatStatementsDiffLimit,
+					IncludeQueries:     true,
+					MaxQueryTextLength: 1000,
+				}, inst.version,
 			)
 
 			// First call: snapshot, no deltas, no avg runtime.
@@ -976,7 +979,7 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		ConnectionStatsCollector(pool, noopPrepareCtx),
 		DatabaseSizeCollector(pool, noopPrepareCtx),
 		PgAttributeCollector(pool, noopPrepareCtx),
-		PgClassCollector(pool, noopPrepareCtx, PgClassBackfillBatchSize),
+		PgClassCollector(pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: PgClassBackfillBatchSize}),
 		PgDatabaseCollector(pool, noopPrepareCtx),
 		PgIndexCollector(pool, noopPrepareCtx),
 		PgLocksCollector(pool, noopPrepareCtx),
@@ -996,17 +999,24 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		PgStatReplicationCollector(pool, noopPrepareCtx),
 		PgStatReplicationSlotsCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatSlruCollector(pool, noopPrepareCtx),
-		PgStatStatementsCollector(pool, noopPrepareCtx, true, 1000, PgStatStatementsDiffLimit, pgMajorVersion),
+		PgStatStatementsCollector(pool, noopPrepareCtx, PgStatStatementsConfig{
+			DiffLimit:          PgStatStatementsDiffLimit,
+			IncludeQueries:     true,
+			MaxQueryTextLength: 1000,
+		}, pgMajorVersion),
 		PgStatSubscriptionCollector(pool, noopPrepareCtx),
 		PgStatSubscriptionStatsCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatUserFunctionsCollector(pool, noopPrepareCtx),
-		PgStatUserIndexesCollector(pool, noopPrepareCtx, PgStatUserIndexesCategoryLimit),
-		PgStatUserTablesCollector(pool, noopPrepareCtx, PgStatUserTablesCategoryLimit),
+		PgStatUserIndexesCollector(pool, noopPrepareCtx, PgStatUserIndexesConfig{CategoryLimit: PgStatUserIndexesCategoryLimit}),
+		PgStatUserTablesCollector(pool, noopPrepareCtx, PgStatUserTablesConfig{CategoryLimit: PgStatUserTablesCategoryLimit}),
 		PgStatWalCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatWalReceiverCollector(pool, noopPrepareCtx),
-		PgStatioUserIndexesCollector(pool, noopPrepareCtx, PgStatioUserIndexesBatchSize),
+		PgStatioUserIndexesCollector(pool, noopPrepareCtx, PgStatioUserIndexesConfig{BackfillBatchSize: PgStatioUserIndexesBatchSize}),
 		PgStatioUserTablesCollector(pool, noopPrepareCtx),
-		PgStatsCollector(pool, noopPrepareCtx, PgStatsBackfillBatchSize, true),
+		PgStatsCollector(pool, noopPrepareCtx, PgStatsConfig{
+			BackfillBatchSize: PgStatsBackfillBatchSize,
+			IncludeTableData:  true,
+		}),
 		TransactionCommitsCollector(pool, noopPrepareCtx),
 		UptimeMinutesCollector(pool, noopPrepareCtx),
 		WaitEventsCollector(pool, noopPrepareCtx),

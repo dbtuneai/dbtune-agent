@@ -43,7 +43,12 @@ UNION
 `, categoryLimit, categoryLimit, categoryLimit)
 }
 
-func PgStatUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, categoryLimit int) CatalogCollector {
-	query := BuildPgStatUserIndexesQuery(categoryLimit)
+// PgStatUserIndexesConfig holds configuration for the pg_stat_user_indexes collector.
+type PgStatUserIndexesConfig struct {
+	CategoryLimit int `config:"category_limit" default:"200" min:"0"`
+}
+
+func PgStatUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatUserIndexesConfig) CatalogCollector {
+	query := BuildPgStatUserIndexesQuery(cfg.CategoryLimit)
 	return NewCollector[PgStatUserIndexesRow](pool, prepareCtx, PgStatUserIndexesName, PgStatUserIndexesInterval, query)
 }
