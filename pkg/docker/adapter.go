@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
@@ -23,6 +21,7 @@ import (
 // number of CPUs available and memory limit
 type DockerContainerAdapter struct {
 	agent.CommonAgent
+	agent.CatalogGetter
 	Config            Config
 	dockerClient      *client.Client
 	GuardrailSettings guardrails.Config
@@ -74,79 +73,26 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 		PGDriver:          dbpool,
 		PGVersion:         PGVersion,
 	}
+	catalogCollectors, err := pg.StandardCatalogCollectors(dbpool, PGVersion)
+	if err != nil {
+		return nil, err
+	}
+	dockerAdapter.SetCatalogCollectors(catalogCollectors)
 	collectors := DockerCollectors(dockerAdapter)
 	dockerAdapter.InitCollectors(collectors)
 
 	return dockerAdapter, nil
 }
 
-// DockerCollectors returns the list of collectors for Docker, replacing system metrics
-// with Docker-specific ones while keeping database-specific collectors
+// DockerCollectors returns the list of metric collectors for Docker.
+// Provider-specific hardware only; PG catalog views are exposed via CatalogCollectors.
 func DockerCollectors(adapter *DockerContainerAdapter) []agent.MetricCollector {
-	pgDriver := adapter.PGDriver
-	collectors := []agent.MetricCollector{
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pgDriver, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pgDriver),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pgDriver),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pgDriver),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pgDriver),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pgDriver),
-		},
-		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pgDriver),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pgDriver),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pgDriver),
-		},
-		{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pgDriver),
-		},
-		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pgDriver),
-		},
+	return []agent.MetricCollector{
 		{
 			Key:       "hardware",
 			Collector: DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
 		},
 	}
-	majorVersion := strings.Split(adapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_checkpointer",
-			Collector: pg.PGStatCheckpointer(pgDriver),
-		})
-	}
-	return collectors
 }
 
 func (d *DockerContainerAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {

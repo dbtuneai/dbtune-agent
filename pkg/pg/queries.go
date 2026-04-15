@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
@@ -46,6 +47,19 @@ func PGVersion(pgPool *pgxpool.Pool) (string, error) {
 	matches := versionRegex.FindStringSubmatch(pgVersion)
 
 	return matches[1], nil
+}
+
+// PGMajorVersion extracts the integer major version from a version string like "16.4".
+func PGMajorVersion(version string) (int, error) {
+	parts := strings.Split(version, ".")
+	if len(parts) == 0 || parts[0] == "" {
+		return 0, fmt.Errorf("empty version string")
+	}
+	v, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, fmt.Errorf("parse major version from %q: %w", version, err)
+	}
+	return v, nil
 }
 
 const MaxConnectionsQuery = `

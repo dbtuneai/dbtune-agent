@@ -27,6 +27,7 @@ import (
 
 type PatroniAdapter struct {
 	agent.CommonAgent
+	agent.CatalogGetter
 	PatroniConfig   Config
 	PGDriver        *pgxpool.Pool
 	GuardrailConfig guardrails.Config
@@ -77,6 +78,11 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 		State:           &State{},
 	}
 
+	collectors, err := pg.StandardCatalogCollectors(pgPool, pgVersion)
+	if err != nil {
+		return nil, err
+	}
+	adpt.SetCatalogCollectors(collectors)
 	adpt.InitCollectors(adpt.Collectors())
 
 	// Initialize operations context for PostgreSQL queries
@@ -814,67 +820,10 @@ func (adapter *PatroniAdapter) Guardrails(_ context.Context) *guardrails.Signal 
 }
 
 func (adapter *PatroniAdapter) Collectors() []agent.MetricCollector {
-	pool := adapter.PGDriver
-	collectors := []agent.MetricCollector{
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pool, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pool),
-		},
-
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pool),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pool),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pool),
-		},
-		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pool),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pool),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pool),
-		},
-		{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pool),
-		},
-		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pool),
-		},
+	return []agent.MetricCollector{
 		{
 			Key:       "hardware",
 			Collector: HardwareInfoPatroni(),
 		},
 	}
-
-	majorVersion := strings.Split(adapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_checkpointer",
-			Collector: pg.PGStatCheckpointer(pool),
-		})
-	}
-
-	return collectors
 }

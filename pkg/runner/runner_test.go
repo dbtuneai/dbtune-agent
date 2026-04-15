@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/dbtune/dbtunetest"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -95,6 +97,26 @@ func (m *MockAgentLooper) SendError(ctx context.Context, payload agent.ErrorPayl
 	return args.Error(0)
 }
 
+func (m *MockAgentLooper) CatalogCollectors() []queries.CatalogCollector {
+	args := m.Called()
+	if v := args.Get(0); v != nil {
+		return v.([]queries.CatalogCollector)
+	}
+	return nil
+}
+
+func (m *MockAgentLooper) SendCatalogPayload(ctx context.Context, name string, payload []byte) error {
+	args := m.Called(ctx, name, payload)
+	return args.Error(0)
+}
+
+// expectNoCatalogCollectors registers the default expectation that a test
+// does not exercise the catalog loop. New non-catalog tests should call this
+// to avoid repeating the same setup line.
+func (m *MockAgentLooper) expectNoCatalogCollectors() {
+	m.On("CatalogCollectors").Return(nil)
+}
+
 // Test runWithTicker function
 func TestRunWithTicker(t *testing.T) {
 	logger := logrus.New()
@@ -174,6 +196,7 @@ func TestRunner(t *testing.T) {
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.expectNoCatalogCollectors()
 
 	// Run the Runner in a goroutine with a timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -206,6 +229,7 @@ func TestRunnerWithErrors(t *testing.T) {
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, errors.New("system info error"))
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, errors.New("config error"))
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.expectNoCatalogCollectors()
 
 	// Run the Runner in a goroutine with a timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -238,6 +262,7 @@ func TestRunnerWhenGetProposedConfigReturnsAConfigThenApplyConfigShouldBeCalled(
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.expectNoCatalogCollectors()
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(mockRecommendation, nil)
@@ -272,6 +297,7 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.expectNoCatalogCollectors()
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
@@ -300,6 +326,7 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 // minimal stubs for the adapter-specific methods not implemented by CommonAgent.
 type stubAgentLooper struct {
 	agent.CommonAgent
+	agent.CatalogGetter
 }
 
 // Stub out the database interactions here (but note: not the DBtune API)
@@ -369,6 +396,95 @@ func TestRunnerCallsAllAPIActions(t *testing.T) {
 	transport.AllActionsCalled(t)
 }
 
+func TestRunnerCatalogLoop(t *testing.T) {
+	mockAgent := new(MockAgentLooper)
+	logger := logrus.New()
+
+	var sendCount, errCount int
+	var mu sync.Mutex
+	okCollector := queries.CatalogCollector{
+		Name:     "ok_collector",
+		Interval: 20 * time.Millisecond,
+		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			sendCount++
+			return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+		},
+	}
+	errCollector := queries.CatalogCollector{
+		Name:     "err_collector",
+		Interval: 20 * time.Millisecond,
+		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			errCount++
+			return nil, errors.New("boom")
+		},
+	}
+
+	mockAgent.On("Logger").Return(logger)
+	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
+	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{okCollector, errCollector})
+	mockAgent.On("SendCatalogPayload", mock.Anything, "ok_collector", mock.Anything).Return(nil)
+	mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+		return p.ErrorType == "err_collector_error"
+	})).Return(nil)
+
+	// Window long enough for the stagger of the second collector plus a few ticks.
+	ctx, cancel := context.WithTimeout(context.Background(), catalogStagger+1*time.Second)
+	defer cancel()
+
+	go Runner(ctx, mockAgent)
+	<-ctx.Done()
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Greater(t, sendCount, 1, "ok collector should have ticked more than once")
+	assert.Greater(t, errCount, 0, "err collector should have fired at least once after stagger")
+	mockAgent.AssertCalled(t, "SendCatalogPayload", mock.Anything, "ok_collector", mock.Anything)
+	mockAgent.AssertCalled(t, "SendError", mock.Anything, mock.Anything)
+}
+
+func TestRunnerCatalogLoop_NilDataSkipsSend(t *testing.T) {
+	mockAgent := new(MockAgentLooper)
+	logger := logrus.New()
+
+	nilCollector := queries.CatalogCollector{
+		Name:     "nil_collector",
+		Interval: 20 * time.Millisecond,
+		Collect:  func(_ context.Context) (*queries.CollectResult, error) { return nil, nil },
+	}
+
+	mockAgent.On("Logger").Return(logger)
+	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
+	mockAgent.On("Guardrails", mock.Anything).Return(nil)
+	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{nilCollector})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	go Runner(ctx, mockAgent)
+	<-ctx.Done()
+	time.Sleep(50 * time.Millisecond)
+
+	mockAgent.AssertNotCalled(t, "SendCatalogPayload")
+}
+
 func TestIsRecoveryError(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -403,4 +519,27 @@ func TestIsRecoveryError(t *testing.T) {
 			assert.Equal(t, tt.expected, isRecoveryError(tt.err))
 		})
 	}
+}
+
+func TestHandleCollectorError_RecoverySuppressed(t *testing.T) {
+	m := new(MockAgentLooper)
+	m.On("Logger").Return(logrus.New())
+
+	err := handleCollectorError(context.Background(), m, "catalog_view", errors.New("recovery in progress"))
+
+	assert.NoError(t, err, "recovery errors must be suppressed")
+	m.AssertNotCalled(t, "SendError", mock.Anything, mock.Anything)
+}
+
+func TestHandleCollectorError_NonRecoveryReportsAndReturns(t *testing.T) {
+	m := new(MockAgentLooper)
+	m.On("Logger").Return(logrus.New())
+	m.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+		return p.ErrorType == "catalog_view_error" && strings.Contains(p.ErrorMessage, "boom")
+	})).Return(nil)
+
+	err := handleCollectorError(context.Background(), m, "catalog_view", errors.New("boom"))
+
+	assert.Error(t, err, "non-recovery errors must propagate")
+	m.AssertCalled(t, "SendError", mock.Anything, mock.Anything)
 }

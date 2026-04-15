@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,7 @@ import (
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/dbtuneai/agent/pkg/version"
 
 	"github.com/google/uuid"
@@ -169,6 +171,13 @@ type AgentLooper interface {
 
 	// SendError sends an error report to the DBtune server
 	SendError(ctx context.Context, payload ErrorPayload) error
+
+	// CatalogCollectors returns the list of catalog view collectors for this adapter.
+	CatalogCollectors() []queries.CatalogCollector
+
+	// SendCatalogPayload sends pre-marshaled, gzip-compressed JSON to the
+	// DBtune server for the named catalog view.
+	SendCatalogPayload(ctx context.Context, name string, payload []byte) error
 
 	// GetLogger returns the logger for the agent
 	Logger() *log.Logger
@@ -701,6 +710,56 @@ func (a *CommonAgent) SendGuardrailSignal(ctx context.Context, signal guardrails
 		return fmt.Errorf("failed to send guardrail signal, code: %d", resp.StatusCode)
 	}
 
+	return nil
+}
+
+// catalogSendTimeout bounds a single SendCatalogPayload POST, including any
+// retries performed by the retryable http client.
+const catalogSendTimeout = 30 * time.Second
+
+// gzipCompress compresses data using gzip and returns the compressed buffer.
+func gzipCompress(data []byte) (*bytes.Buffer, error) {
+	buf := &bytes.Buffer{}
+	gz := gzip.NewWriter(buf)
+	if _, err := gz.Write(data); err != nil {
+		return nil, fmt.Errorf("gzip write: %w", err)
+	}
+	if err := gz.Close(); err != nil {
+		return nil, fmt.Errorf("gzip close: %w", err)
+	}
+	return buf, nil
+}
+
+// SendCatalogPayload sends pre-marshaled JSON bytes for a catalog view,
+// gzip-compressed, to the DBtune server.
+func (a *CommonAgent) SendCatalogPayload(ctx context.Context, name string, payload []byte) error {
+	buf, err := gzipCompress(payload)
+	if err != nil {
+		return err
+	}
+	a.Logger().Printf("%s payload: %d bytes -> %d bytes gzipped", name, len(payload), buf.Len())
+
+	ctx, cancel := context.WithTimeout(ctx, catalogSendTimeout)
+	defer cancel()
+
+	url := a.ServerURLs.AgentURL(name)
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, url, buf)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+
+	resp, err := a.APIClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("failed to send %s, code: %d, body: %s", name, resp.StatusCode, body)
+	}
 	return nil
 }
 
