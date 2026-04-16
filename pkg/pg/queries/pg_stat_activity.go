@@ -59,7 +59,7 @@ const pgStatActivityQueryPG14 = `SELECT
 	backend_start, xact_start, query_start, state_change,
 	wait_event_type, wait_event, state,
 	backend_xid, backend_xmin,
-	format('%s_%s_%s', query_id, usesysid, datid) as query_id,
+	CASE WHEN query_id IS NULL THEN NULL ELSE format('%s_%s_%s', query_id, usesysid, datid) END as query_id,
 	backend_type
 FROM pg_stat_activity
 WHERE datname = current_database()`
