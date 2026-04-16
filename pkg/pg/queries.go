@@ -76,18 +76,6 @@ func MaxConnections(pgPool *pgxpool.Pool) (uint32, error) {
 	return maxConnections, nil
 }
 
-const SELECT_NUMERIC_SETTINGS = `
-	SELECT name, setting, unit, vartype, context
-	FROM pg_settings
-	WHERE vartype IN ('real', 'integer');
-`
-
-const SELECT_NON_NUMERIC_SETTINGS = `
-	SELECT name, setting, unit, vartype, context
-	FROM pg_settings
-	WHERE vartype NOT IN ('real', 'integer');
-`
-
 func GetActiveConfig(
 	pool *pgxpool.Pool,
 	ctx context.Context,

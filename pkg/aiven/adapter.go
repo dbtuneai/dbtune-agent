@@ -12,7 +12,6 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
@@ -456,16 +455,14 @@ func getInitialServiceLevelParameters(client *aivenclient.Client, projectName st
 // GetActiveConfig returns the active configuration for the Aiven API
 // as well as through PostgreSQL
 func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
-	// Main differences from the PostgreSQL version:
-	// * We need to query Aiven's service for the `shared_buffers_percentage` parameter.
-	// The problem here is that until we modify `shared_buffers_percentage`, we don't get
-	// anything back from Aiven.  In that case, we use a known default of 20%.
-	// * While we set `work_mem` through the Aiven API, it seems that querying for it
-	// does not always return the most recent value, causing us to get a mismatch. Hence
-	// we parse from PostgreSQL directly and convert to the MB, the units Aiven uses.
+	// Main differences from the generic pg.GetActiveConfig:
+	// * We inject `shared_buffers_percentage` from the Aiven API.
+	//   Until we modify it, Aiven returns nothing — so we fall back to a known default of 20%.
+	// * `work_mem` is set through the Aiven API in MB, but pg_settings reports it in kB.
+	//   We convert kB→MB and override the unit/context so the value round-trips correctly.
 	logger := adapter.Logger()
 	logger.Debug("Getting active config for Aiven PostgreSQL")
-	var configRows agent.ConfigArraySchema
+
 	service, err := adapter.Client.ServiceGet(
 		ctx,
 		adapter.Config.ProjectName,
@@ -488,8 +485,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (age
 		}
 	}
 
-	// Try and get `shared_buffers_percentage` and `work_mem` from the user config
-	// If they don't exist, it's likely it's unmodified from the defaults, and will be empty.
+	// Get shared_buffers_percentage from Aiven API, defaulting to 20% if unset.
 	var sharedBuffersPercentage float64
 	if val, ok := userConfig["shared_buffers_percentage"]; ok && val != nil {
 		if f, ok := val.(float64); ok {
@@ -501,75 +497,49 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (age
 		sharedBuffersPercentage = DEFAULT_SHARED_BUFFERS_PERCENTAGE
 	}
 
-	configRows = append(configRows, agent.PGConfigRow{
+	// Get the standard pg_settings config.
+	configRows, err := pg.GetActiveConfig(adapter.PGDriver, ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Override work_mem: convert kB (from pg_settings) → MB (Aiven's unit).
+	for i, row := range configRows {
+		pgRow, ok := row.(agent.PGConfigRow)
+		if !ok || pgRow.Name != "work_mem" {
+			continue
+		}
+		var workMemKb int64
+		switch v := pgRow.Setting.(type) {
+		case int64:
+			workMemKb = v
+		case string:
+			parsed, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("error converting work_mem to int64: %w", err)
+			}
+			workMemKb = parsed
+		default:
+			return nil, fmt.Errorf("unexpected work_mem type: %T", v)
+		}
+		configRows[i] = agent.PGConfigRow{
+			Name:    "work_mem",
+			Setting: int(workMemKb / 1024),
+			Unit:    "MB",
+			Vartype: "integer",
+			Context: "service",
+		}
+		break
+	}
+
+	// Prepend the synthetic shared_buffers_percentage setting from Aiven API.
+	configRows = append(agent.ConfigArraySchema{agent.PGConfigRow{
 		Name:    "shared_buffers_percentage",
 		Setting: sharedBuffersPercentage,
 		Unit:    "percentage",
 		Vartype: "real",
 		Context: "service",
-	})
-
-	numericRows, err := utils.QueryWithPrefix(adapter.PGDriver, ctx, pg.SELECT_NUMERIC_SETTINGS)
-
-	if err != nil {
-		return nil, err
-	}
-
-	for numericRows.Next() {
-		var row agent.PGConfigRow
-		err := numericRows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
-		if err != nil {
-			adapter.Logger().Error("Error scanning numeric row", err)
-			continue
-		}
-
-		row.Setting = pg.InferNumericType(row.Setting)
-
-		if row.Name == "work_mem" {
-			var workMemKb int64
-			switch v := row.Setting.(type) {
-			case int64:
-				workMemKb = v
-			case string:
-				parsed, err := strconv.ParseInt(v, 10, 64)
-				if err != nil {
-					adapter.Logger().Error("Error converting work_mem to int64", err)
-					continue
-				}
-				workMemKb = parsed
-			default:
-				adapter.Logger().Error("Error: unexpected work_mem type")
-				continue
-			}
-			// Convert KB to MB using integer division
-			workMemMB := int(workMemKb / 1024)
-			configRows = append(configRows, agent.PGConfigRow{
-				Name:    "work_mem",
-				Setting: workMemMB,
-				Unit:    "MB",
-				Vartype: "integer",
-				Context: "service",
-			})
-		} else {
-			configRows = append(configRows, row)
-		}
-	}
-
-	// Query for non-numeric types
-	nonNumericRows, err := utils.QueryWithPrefix(adapter.PGDriver, ctx, pg.SELECT_NON_NUMERIC_SETTINGS)
-	if err != nil {
-		return nil, err
-	}
-
-	for nonNumericRows.Next() {
-		var row agent.PGConfigRow
-		err := nonNumericRows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
-		if err != nil {
-			adapter.Logger().Error("Error scanning non-numeric row", err)
-			continue
-		}
-		configRows = append(configRows, row)
-	}
+	}}, configRows...)
 
 	return configRows, nil
 }
