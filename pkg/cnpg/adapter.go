@@ -381,7 +381,7 @@ func (adapter *CNPGAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigAr
 	// This ensures we get the fresh context created by recovery completion, not the pre-cancelled one
 	dbCtx := adapter.State.GetOperationsContext()
 
-	config, err := pg.GetActiveConfig(adapter.PGDriver, dbCtx, logger)
+	config, err := pg.GetActiveConfig(adapter.PGDriver, dbCtx)
 	if err != nil {
 		// If context was cancelled (failover detected mid-query), return FailoverDetectedError
 		if dbCtx.Err() == context.Canceled {
@@ -661,7 +661,7 @@ func extractSettingValue(setting interface{}) string {
 // Returns a map of parameter name to current value in CNPG format (e.g., "2GB").
 // This is used to compare against proposed config to avoid applying unchanged parameters.
 func (adapter *CNPGAdapter) GetCurrentConfig(ctx context.Context) (map[string]string, error) {
-	configRows, err := pg.GetActiveConfig(adapter.PGDriver, ctx, adapter.Logger())
+	configRows, err := pg.GetActiveConfig(adapter.PGDriver, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active config: %w", err)
 	}

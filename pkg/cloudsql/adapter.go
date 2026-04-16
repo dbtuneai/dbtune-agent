@@ -134,7 +134,7 @@ func (adapter *CloudSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *a
 func (adapter *CloudSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	adapter.Logger().Debugf("Getting Active Config")
 
-	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx, adapter.Logger())
+	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx)
 	if err != nil {
 		return nil, err
 	}

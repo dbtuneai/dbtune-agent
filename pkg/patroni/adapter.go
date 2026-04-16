@@ -700,7 +700,7 @@ func (adapter *PatroniAdapter) GetActiveConfig(ctx context.Context) (agent.Confi
 	// currently active configuration. The Patroni DCS can have stale data or not
 	// reflect local overrides in postgresql.auto.conf, so we must query PostgreSQL directly.
 	logger.Info("Fetching active configuration from PostgreSQL")
-	config, err := pg.GetActiveConfig(adapter.PGDriver, dbCtx, logger)
+	config, err := pg.GetActiveConfig(adapter.PGDriver, dbCtx)
 	if err != nil {
 		if failoverErr := adapter.handlePossibleFailoverError(ctx, err, "in GetActiveConfig"); failoverErr != nil {
 			logger.Infof("[FAILOVER_RECOVERY] Returning failover error to prevent empty data being sent")

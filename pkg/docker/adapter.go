@@ -234,7 +234,7 @@ func (d *DockerContainerAdapter) Guardrails(ctx context.Context) *guardrails.Sig
 }
 
 func (d *DockerContainerAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(d.PGDriver, ctx, d.Logger())
+	return pg.GetActiveConfig(d.PGDriver, ctx)
 }
 
 func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {

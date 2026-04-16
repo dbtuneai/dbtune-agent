@@ -190,7 +190,7 @@ func ApplyParameter(ctx context.Context, logger *logrus.Logger, paramsClient *ar
 }
 
 func (adapter *AzureFlexAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
-	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx, adapter.Logger())
+	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx)
 	if err != nil {
 		return nil, err
 	}

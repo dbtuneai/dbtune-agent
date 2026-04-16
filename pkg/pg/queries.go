@@ -9,8 +9,8 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/sirupsen/logrus"
 )
 
 // inferNumericType attempts to parse a string setting into a numeric Go type.
@@ -91,43 +91,32 @@ const SELECT_NON_NUMERIC_SETTINGS = `
 func GetActiveConfig(
 	pool *pgxpool.Pool,
 	ctx context.Context,
-	logger *logrus.Logger,
 ) (agent.ConfigArraySchema, error) {
-	var configRows agent.ConfigArraySchema
-
-	// Query for numeric types (real and integer)
-	numericRows, err := utils.QueryWithPrefix(pool, ctx, SELECT_NUMERIC_SETTINGS)
+	settings, err := queries.QueryPgSettings(pool, ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	for numericRows.Next() {
-		var row agent.PGConfigRow
-		err := numericRows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
-		if err != nil {
-			logger.Error("Error scanning numeric row", err)
-			continue
+	configRows := make(agent.ConfigArraySchema, 0, len(settings))
+	for _, s := range settings {
+		var unit interface{}
+		if s.Unit != nil {
+			unit = string(*s.Unit)
 		}
-		row.Setting = InferNumericType(row.Setting)
-		configRows = append(configRows, row)
-	}
 
-	// Query for non-numeric types
-	nonNumericRows, err := utils.QueryWithPrefix(pool, ctx, SELECT_NON_NUMERIC_SETTINGS)
-	if err != nil {
-		return nil, err
-	}
-
-	for nonNumericRows.Next() {
-		var row agent.PGConfigRow
-		err := nonNumericRows.Scan(&row.Name, &row.Setting, &row.Unit, &row.Vartype, &row.Context)
-		if err != nil {
-			logger.Error("Error scanning non-numeric row", err)
-			continue
+		var setting interface{} = string(s.Setting)
+		if s.Vartype == "real" || s.Vartype == "integer" {
+			setting = InferNumericType(setting)
 		}
-		configRows = append(configRows, row)
-	}
 
+		configRows = append(configRows, agent.PGConfigRow{
+			Name:    string(s.Name),
+			Setting: setting,
+			Unit:    unit,
+			Vartype: string(s.Vartype),
+			Context: string(s.Context),
+		})
+	}
 	return configRows, nil
 }
 
