@@ -84,7 +84,13 @@ func GetActiveConfig(
 	if err != nil {
 		return nil, err
 	}
+	return settingsToConfigRows(settings), nil
+}
 
+// settingsToConfigRows converts raw PgSettingsRow values into the
+// ConfigArraySchema consumed by the tuning loop. Numeric vartypes
+// have InferNumericType applied; NULL units become nil.
+func settingsToConfigRows(settings []queries.PgSettingsRow) agent.ConfigArraySchema {
 	configRows := make(agent.ConfigArraySchema, 0, len(settings))
 	for _, s := range settings {
 		var unit interface{}
@@ -105,7 +111,7 @@ func GetActiveConfig(
 			Context: string(s.Context),
 		})
 	}
-	return configRows, nil
+	return configRows
 }
 
 const ReloadConfigQuery = `

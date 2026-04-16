@@ -504,8 +504,22 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (age
 	}
 
 	// Override work_mem: convert kB (from pg_settings) → MB (Aiven's unit).
-	for i, row := range configRows {
-		pgRow, ok := row.(agent.PGConfigRow)
+	configRows, err = overrideWorkMemKBtoMB(configRows)
+	if err != nil {
+		return nil, err
+	}
+
+	// Prepend the synthetic shared_buffers_percentage setting from Aiven API.
+	configRows = prependSharedBuffersPercentage(configRows, sharedBuffersPercentage)
+
+	return configRows, nil
+}
+
+// overrideWorkMemKBtoMB finds work_mem in configRows and converts its value
+// from kB (as reported by pg_settings) to MB (as used by the Aiven API).
+func overrideWorkMemKBtoMB(configRows agent.ConfigArraySchema) (agent.ConfigArraySchema, error) {
+	for i := 0; i < len(configRows); i++ {
+		pgRow, ok := configRows[i].(agent.PGConfigRow)
 		if !ok || pgRow.Name != "work_mem" {
 			continue
 		}
@@ -531,15 +545,17 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (age
 		}
 		break
 	}
+	return configRows, nil
+}
 
-	// Prepend the synthetic shared_buffers_percentage setting from Aiven API.
-	configRows = append(agent.ConfigArraySchema{agent.PGConfigRow{
+// prependSharedBuffersPercentage prepends a synthetic shared_buffers_percentage
+// setting to the config rows.
+func prependSharedBuffersPercentage(configRows agent.ConfigArraySchema, pct float64) agent.ConfigArraySchema {
+	return append(agent.ConfigArraySchema{agent.PGConfigRow{
 		Name:    "shared_buffers_percentage",
-		Setting: sharedBuffersPercentage,
+		Setting: pct,
 		Unit:    "percentage",
 		Vartype: "real",
 		Context: "service",
 	}}, configRows...)
-
-	return configRows, nil
 }
