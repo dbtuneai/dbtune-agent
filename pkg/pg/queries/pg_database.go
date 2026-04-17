@@ -25,11 +25,11 @@ FROM pg_database d
 
 // PgDatabaseRow represents a single row from pg_database.
 type PgDatabaseRow struct {
-	Oid        Oid     `json:"oid" db:"oid"`
-	DataName   Name    `json:"datname" db:"datname"`
-	IsTemplate Boolean `json:"datistemplate" db:"datistemplate"`
-	FrozenXID  Xid     `json:"datfrozenxid" db:"datfrozenxid"`
-	MinXID     Xid     `json:"datminmxid" db:"datminmxid"`
+	Oid           Oid     `json:"oid"`
+	DatName       Name    `json:"datname"`
+	DatIsTemplate Boolean `json:"datistemplate"`
+	DatFrozenXID  Xid     `json:"datfrozenxid"`
+	DatMinMXID    Xid     `json:"datminmxid"`
 }
 
 func PgDatabaseCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {

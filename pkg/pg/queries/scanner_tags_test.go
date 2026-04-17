@@ -2,6 +2,7 @@ package queries
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -55,10 +56,12 @@ var scannerBackedTypes = []interface{}{
 	WaitEventRow{},
 }
 
-// TestScannerStructs_RequireDBTags ensures every exported field on
-// scanner-backed structs has an explicit db tag. This prevents silent
-// scan failures where the lowercased Go name doesn't match the PG column.
-func TestScannerStructs_RequireDBTags(t *testing.T) {
+// TestScannerStructs_ColumnMapping ensures every exported field on
+// scanner-backed structs maps correctly to a PostgreSQL column. A field
+// is correct if either:
+//   - it has an explicit `db:"column"` tag, or
+//   - its lowercased Go name already matches the `json` tag (the column name).
+func TestScannerStructs_ColumnMapping(t *testing.T) {
 	for _, v := range scannerBackedTypes {
 		typ := reflect.TypeOf(v)
 		t.Run(typ.Name(), func(t *testing.T) {
@@ -67,10 +70,21 @@ func TestScannerStructs_RequireDBTags(t *testing.T) {
 				if !f.IsExported() {
 					continue
 				}
-				tag := f.Tag.Get("db")
-				assert.NotEmpty(t, tag,
-					"field %s.%s must have a db tag for pgxutil.Scanner column mapping",
-					typ.Name(), f.Name)
+				dbTag := f.Tag.Get("db")
+				if dbTag != "" {
+					continue // explicit db tag — scanner will use it
+				}
+				jsonTag := f.Tag.Get("json")
+				if jsonTag == "" {
+					continue
+				}
+				// Strip json options (e.g. ",omitempty")
+				if idx := strings.Index(jsonTag, ","); idx != -1 {
+					jsonTag = jsonTag[:idx]
+				}
+				assert.Equal(t, jsonTag, strings.ToLower(f.Name),
+					"field %s.%s: lowercased name %q doesn't match json tag %q — add a db tag or rename the field",
+					typ.Name(), f.Name, strings.ToLower(f.Name), jsonTag)
 			}
 		})
 	}

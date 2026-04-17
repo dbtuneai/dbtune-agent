@@ -65,13 +65,13 @@ ORDER BY n.nspname, c.relname
 
 // PgClassRow represents a single row from pg_class for user tables.
 type PgClassRow struct {
-	Oid          Oid     `json:"oid" db:"oid"`
-	SchemaName   Name    `json:"schemaname" db:"schemaname"`
-	RelName      Name    `json:"relname" db:"relname"`
-	RelTuples    Real    `json:"reltuples" db:"reltuples"`
-	RelPages     Integer `json:"relpages" db:"relpages"`
-	RelFrozenXID Xid     `json:"relfrozenxid" db:"relfrozenxid"`
-	RelMinXID    Xid     `json:"relminmxid" db:"relminmxid"`
+	Oid          Oid     `json:"oid"`
+	SchemaName   Name    `json:"schemaname"`
+	RelName      Name    `json:"relname"`
+	RelTuples    Real    `json:"reltuples"`
+	RelPages     Integer `json:"relpages"`
+	RelFrozenXID Xid     `json:"relfrozenxid"`
+	RelMinMXID   Xid     `json:"relminmxid"`
 }
 
 // PgClassConfig holds configuration for the pg_class collector.
