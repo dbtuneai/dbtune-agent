@@ -776,20 +776,26 @@ func TestPgIndex_NewFieldsPopulated(t *testing.T) {
 		}
 	}
 
-	// All indexes should have indoption, indclass, indcollation arrays.
+	// All indexes should have indoption, indclass, indcollation arrays
+	// whose lengths match the number of index columns (indnatts).
 	for name, row := range byName {
-		if len(row.IndOption) == 0 {
-			t.Errorf("index %q: expected non-empty indoption", name)
+		if row.IndNatts == nil {
+			t.Errorf("index %q: indnatts is nil", name)
+			continue
 		}
-		if len(row.IndClass) == 0 {
-			t.Errorf("index %q: expected non-empty indclass", name)
+		natts := int(int64(*row.IndNatts))
+		if len(row.IndOption) != natts {
+			t.Errorf("index %q: expected len(indoption)=%d, got %d", name, natts, len(row.IndOption))
 		}
-		if len(row.IndCollation) == 0 {
-			t.Errorf("index %q: expected non-empty indcollation", name)
+		if len(row.IndClass) != natts {
+			t.Errorf("index %q: expected len(indclass)=%d, got %d", name, natts, len(row.IndClass))
+		}
+		if len(row.IndCollation) != natts {
+			t.Errorf("index %q: expected len(indcollation)=%d, got %d", name, natts, len(row.IndCollation))
 		}
 	}
 
-	// Partial index: is_partial=true, indpred_sql non-nil.
+	// --- Partial index: CREATE INDEX ... ON test_users(score) WHERE score > 50 ---
 	partial, ok := byName["idx_test_users_partial"]
 	if !ok {
 		t.Fatal("could not find idx_test_users_partial in results")
@@ -798,10 +804,17 @@ func TestPgIndex_NewFieldsPopulated(t *testing.T) {
 		t.Error("expected is_partial=true for partial index")
 	}
 	if partial.IndPredSQL == nil {
-		t.Error("expected indpred_sql to be non-nil for partial index")
+		t.Fatal("expected indpred_sql to be non-nil for partial index")
+	}
+	if !strings.Contains(string(*partial.IndPredSQL), "score") || !strings.Contains(string(*partial.IndPredSQL), "50") {
+		t.Errorf("expected indpred_sql to reference 'score' and '50', got %q", string(*partial.IndPredSQL))
+	}
+	// Partial index on a single column.
+	if partial.IndNKeyAtts == nil || int64(*partial.IndNKeyAtts) != 1 {
+		t.Errorf("expected indnkeyatts=1 for partial index, got %v", partial.IndNKeyAtts)
 	}
 
-	// Regular index: is_partial=false, indpred_sql nil.
+	// --- Regular index: CREATE INDEX ... ON test_users(name) ---
 	regular, ok := byName["idx_test_users_name"]
 	if !ok {
 		t.Fatal("could not find idx_test_users_name in results")
@@ -810,21 +823,47 @@ func TestPgIndex_NewFieldsPopulated(t *testing.T) {
 		t.Error("expected is_partial=false for regular index")
 	}
 	if regular.IndPredSQL != nil {
-		t.Error("expected indpred_sql to be nil for regular index")
+		t.Errorf("expected indpred_sql=nil for regular index, got %q", string(*regular.IndPredSQL))
+	}
+	if regular.IndExprsSQL != nil {
+		t.Errorf("expected indexprs_sql=nil for regular index, got %q", string(*regular.IndExprsSQL))
+	}
+	// indclass entries should be non-zero (valid opclass OIDs).
+	for i, oc := range regular.IndClass {
+		if uint32(oc) == 0 {
+			t.Errorf("index idx_test_users_name: indclass[%d] is 0, expected valid opclass OID", i)
+		}
 	}
 
-	// Expression index: indexprs_sql non-nil.
+	// --- Expression index: CREATE INDEX ... ON test_users ((lower(name))) ---
 	expr, ok := byName["idx_test_users_expr"]
 	if !ok {
 		t.Fatal("could not find idx_test_users_expr in results")
 	}
 	if expr.IndExprsSQL == nil {
-		t.Error("expected indexprs_sql to be non-nil for expression index")
+		t.Fatal("expected indexprs_sql to be non-nil for expression index")
+	}
+	if !strings.Contains(string(*expr.IndExprsSQL), "lower") {
+		t.Errorf("expected indexprs_sql to contain 'lower', got %q", string(*expr.IndExprsSQL))
+	}
+	// Expression index is not partial.
+	if expr.IsPartial == nil || bool(*expr.IsPartial) {
+		t.Error("expected is_partial=false for expression index")
+	}
+	if expr.IndPredSQL != nil {
+		t.Errorf("expected indpred_sql=nil for expression index, got %q", string(*expr.IndPredSQL))
 	}
 
-	// Regular index: indexprs_sql nil.
-	if regular.IndExprsSQL != nil {
-		t.Error("expected indexprs_sql to be nil for regular index")
+	// --- Unique index: CREATE UNIQUE INDEX ... ON test_users(email) ---
+	unique, ok := byName["idx_test_users_email"]
+	if !ok {
+		t.Fatal("could not find idx_test_users_email in results")
+	}
+	if unique.IndIsUnique == nil || !bool(*unique.IndIsUnique) {
+		t.Error("expected indisunique=true for unique index")
+	}
+	if unique.IsPartial == nil || bool(*unique.IsPartial) {
+		t.Error("expected is_partial=false for unique index")
 	}
 }
 
@@ -859,41 +898,87 @@ func TestPgAttribute_NewFieldsPopulated(t *testing.T) {
 		t.Fatal("expected non-empty rows")
 	}
 
-	// Find a test_users column (e.g. "name") which is NOT NULL text.
-	var nameCol *PgAttributeRow
+	// Build a lookup by column name. pg_attribute rows span multiple tables,
+	// so we may see duplicates; just grab the first match per name.
+	byName := make(map[string]*PgAttributeRow, len(p.Rows))
 	for i := range p.Rows {
-		if p.Rows[i].AttName != nil && string(*p.Rows[i].AttName) == "name" {
-			nameCol = &p.Rows[i]
-			break
+		if p.Rows[i].AttName != nil {
+			name := string(*p.Rows[i].AttName)
+			if _, exists := byName[name]; !exists {
+				byName[name] = &p.Rows[i]
+			}
 		}
 	}
-	if nameCol == nil {
+
+	// --- "name" column: text NOT NULL ---
+	nameCol, ok := byName["name"]
+	if !ok {
 		t.Fatal("could not find 'name' column in pg_attribute results")
 	}
-
-	// attstorage should be non-nil for any column.
+	// text uses extended storage ("x").
 	if nameCol.AttStorage == nil {
-		t.Error("expected attstorage to be non-nil for 'name' column")
+		t.Fatal("expected attstorage to be non-nil for 'name' column")
 	}
-	// attnotnull should be true for the NOT NULL 'name' column.
-	if nameCol.AttNotNull == nil {
-		t.Error("expected attnotnull to be non-nil")
-	} else if !bool(*nameCol.AttNotNull) {
+	if string(*nameCol.AttStorage) != "x" {
+		t.Errorf("expected attstorage='x' (extended) for text column, got %q", string(*nameCol.AttStorage))
+	}
+	// NOT NULL constraint.
+	if nameCol.AttNotNull == nil || !bool(*nameCol.AttNotNull) {
 		t.Error("expected attnotnull=true for NOT NULL 'name' column")
 	}
-	// attalign should be non-nil.
+	// text alignment is "i" (int).
 	if nameCol.AttAlign == nil {
-		t.Error("expected attalign to be non-nil")
+		t.Fatal("expected attalign to be non-nil")
 	}
-	// attstattarget should be non-nil.
+	if string(*nameCol.AttAlign) != "i" {
+		t.Errorf("expected attalign='i' for text column, got %q", string(*nameCol.AttAlign))
+	}
+	// Default stats target is -1 (use system default).
 	if nameCol.AttStatTarget == nil {
-		t.Error("expected attstattarget to be non-nil")
+		t.Fatal("expected attstattarget to be non-nil")
 	}
-	// atttypmod for plain text is -1 (no modifier).
+	if int64(*nameCol.AttStatTarget) != -1 {
+		t.Errorf("expected attstattarget=-1 (system default), got %d", int64(*nameCol.AttStatTarget))
+	}
+	// Plain text has atttypmod=-1 (no length modifier).
 	if nameCol.AttTypMod == nil {
-		t.Error("expected atttypmod to be non-nil")
-	} else if int64(*nameCol.AttTypMod) != -1 {
+		t.Fatal("expected atttypmod to be non-nil")
+	}
+	if int64(*nameCol.AttTypMod) != -1 {
 		t.Errorf("expected atttypmod=-1 for plain text, got %d", int64(*nameCol.AttTypMod))
+	}
+
+	// --- "score" column: integer DEFAULT 0 (nullable) ---
+	scoreCol, ok := byName["score"]
+	if !ok {
+		t.Fatal("could not find 'score' column in pg_attribute results")
+	}
+	// integer uses plain storage ("p").
+	if scoreCol.AttStorage == nil {
+		t.Fatal("expected attstorage to be non-nil for 'score' column")
+	}
+	if string(*scoreCol.AttStorage) != "p" {
+		t.Errorf("expected attstorage='p' (plain) for integer column, got %q", string(*scoreCol.AttStorage))
+	}
+	// "score" is nullable (no NOT NULL).
+	if scoreCol.AttNotNull == nil || bool(*scoreCol.AttNotNull) {
+		t.Error("expected attnotnull=false for nullable 'score' column")
+	}
+	// integer alignment is "i" (int).
+	if scoreCol.AttAlign == nil {
+		t.Fatal("expected attalign to be non-nil for 'score' column")
+	}
+	if string(*scoreCol.AttAlign) != "i" {
+		t.Errorf("expected attalign='i' for integer column, got %q", string(*scoreCol.AttAlign))
+	}
+
+	// --- "id" column: serial PRIMARY KEY (NOT NULL, integer) ---
+	idCol, ok := byName["id"]
+	if !ok {
+		t.Fatal("could not find 'id' column in pg_attribute results")
+	}
+	if idCol.AttNotNull == nil || !bool(*idCol.AttNotNull) {
+		t.Error("expected attnotnull=true for PRIMARY KEY 'id' column")
 	}
 }
 
