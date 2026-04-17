@@ -288,6 +288,7 @@ func TestCollectors_AllVersions(t *testing.T) {
 // because it's only needed here.
 var skipUnchangedCollectorNames = map[string]bool{
 	PgAttributeName:               true,
+	PgConstraintName:              true,
 	PgIndexName:                   true,
 	PgPreparedXactsName:           true,
 	PgReplicationSlotsName:        true,
@@ -1247,6 +1248,86 @@ func TestPgClass_NewFieldsPopulated(t *testing.T) {
 	}
 }
 
+func TestPgConstraint_ReturnsFixtureConstraints(t *testing.T) {
+	inst := latestInstance()
+	ctx := context.Background()
+	c := PgConstraintCollector(inst.pool, noopPrepareCtx)
+
+	result, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("Collect() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Collect() returned nil")
+	}
+
+	var p Payload[PgConstraintRow]
+	if err := json.Unmarshal(result.JSON, &p); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if len(p.Rows) == 0 {
+		t.Fatal("expected non-empty constraint rows")
+	}
+
+	// Build a map of conname -> row.
+	byName := make(map[string]*PgConstraintRow, len(p.Rows))
+	for i := range p.Rows {
+		if p.Rows[i].ConName != nil {
+			byName[string(*p.Rows[i].ConName)] = &p.Rows[i]
+		}
+	}
+
+	// test_users has a PRIMARY KEY on 'id' → contype='p'.
+	var pk *PgConstraintRow
+	for _, row := range p.Rows {
+		if row.ConType != nil && string(*row.ConType) == "p" && row.ConRelID != nil {
+			pk = row
+			break
+		}
+	}
+	if pk == nil {
+		t.Fatal("could not find a primary key constraint (contype='p')")
+	}
+	if pk.ConName == nil || string(*pk.ConName) == "" {
+		t.Error("expected non-empty conname for primary key")
+	}
+	// PK has a single key column.
+	if len(pk.ConKey) != 1 {
+		t.Errorf("expected conkey length 1 for single-column PK, got %d", len(pk.ConKey))
+	}
+	// PK should reference a backing index.
+	if pk.ConIndID == nil || uint32(*pk.ConIndID) == 0 {
+		t.Error("expected non-zero conindid for primary key (backing index)")
+	}
+	// PK is not deferrable.
+	if pk.ConDeferrable == nil || bool(*pk.ConDeferrable) {
+		t.Error("expected condeferrable=false for primary key")
+	}
+	// PK is validated.
+	if pk.ConValidated == nil || !bool(*pk.ConValidated) {
+		t.Error("expected convalidated=true for primary key")
+	}
+	// PK is not a foreign key, so confrelid should be 0 and confkey empty.
+	if pk.ConfRelID != nil && uint32(*pk.ConfRelID) != 0 {
+		t.Errorf("expected confrelid=0 for PK, got %d", uint32(*pk.ConfRelID))
+	}
+	if len(pk.ConfKey) != 0 {
+		t.Errorf("expected empty confkey for PK, got %v", pk.ConfKey)
+	}
+
+	// Verify we see all expected constraint types in the results.
+	conTypes := make(map[string]bool)
+	for _, row := range p.Rows {
+		if row.ConType != nil {
+			conTypes[string(*row.ConType)] = true
+		}
+	}
+	// At minimum, we should see primary key constraints from test_users and test_cold.
+	if !conTypes["p"] {
+		t.Error("expected at least one primary key constraint (contype='p')")
+	}
+}
+
 func TestPgStats_BackfillThenDelta(t *testing.T) {
 	inst := latestInstance()
 	ctx := context.Background()
@@ -1474,6 +1555,7 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		DatabaseSizeCollector(pool, noopPrepareCtx),
 		PgAttributeCollector(pool, noopPrepareCtx),
 		PgClassCollector(pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: PgClassBackfillBatchSize}),
+		PgConstraintCollector(pool, noopPrepareCtx),
 		PgDatabaseCollector(pool, noopPrepareCtx),
 		PgIndexCollector(pool, noopPrepareCtx),
 		PgLocksCollector(pool, noopPrepareCtx),

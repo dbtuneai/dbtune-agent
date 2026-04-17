@@ -40,8 +40,8 @@ func TestBuildCatalogCollectors_DefaultIncludesAll(t *testing.T) {
 	cs, err := BuildCatalogCollectors(nil, 17, cfg, nil)
 	require.NoError(t, err)
 
-	// 33 simple entries + 6 typed entries in the reference build list.
-	assert.Equal(t, 39, len(cs), "default build should include all collectors at PG 17")
+	// 34 simple entries + 6 typed entries in the reference build list.
+	assert.Equal(t, 40, len(cs), "default build should include all collectors at PG 17")
 	assert.NotNil(t, findByName(cs, queries.PgStatStatementsName))
 	assert.NotNil(t, findByName(cs, queries.PgStatCheckpointerName))
 	assert.NotNil(t, findByName(cs, queries.PgStatWalName))

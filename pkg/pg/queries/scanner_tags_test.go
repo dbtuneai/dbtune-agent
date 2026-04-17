@@ -22,6 +22,7 @@ var scannerBackedTypes = []interface{}{
 	DatabaseSizeRow{},
 	PgAttributeRow{},
 	PgClassRow{},
+	PgConstraintRow{},
 	PgDatabaseRow{},
 	PgIndexRow{},
 	PgLocksRow{},

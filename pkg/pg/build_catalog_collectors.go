@@ -45,6 +45,7 @@ func BuildCatalogCollectors(
 		{queries.DDLCollector(pool, prepareCtx), simpleBase(queries.DDLCollectorName)},
 		{queries.DatabaseSizeCollector(pool, prepareCtx), simpleBase(queries.DatabaseSizeName)},
 		{queries.PgAttributeCollector(pool, prepareCtx), simpleBase(queries.PgAttributeName)},
+		{queries.PgConstraintCollector(pool, prepareCtx), simpleBase(queries.PgConstraintName)},
 		{queries.PgDatabaseCollector(pool, prepareCtx), simpleBase(queries.PgDatabaseName)},
 		{queries.PgIndexCollector(pool, prepareCtx), simpleBase(queries.PgIndexName)},
 		{queries.PgLocksCollector(pool, prepareCtx), simpleBase(queries.PgLocksName)},
