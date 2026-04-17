@@ -25,8 +25,9 @@ SELECT SUM(xact_commit)::bigint AS server_xact_commits
 FROM pg_stat_database`
 
 type TransactionCommitsPayload struct {
-	XactCommit int64   `json:"xact_commit"`
-	TPS        float64 `json:"tps,omitempty"`
+	CollectedAt time.Time `json:"collected_at"`
+	XactCommit  int64     `json:"xact_commit"`
+	TPS         float64   `json:"tps,omitempty"`
 }
 
 func TransactionCommitsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
@@ -43,6 +44,7 @@ func TransactionCommitsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) Cata
 			if err != nil {
 				return nil, err
 			}
+			collectedAt := time.Now().UTC()
 			var xactCommit int64
 			err = utils.QueryRowWithPrefix(pool, ctx, transactionCommitsQuery).Scan(&xactCommit)
 			if err != nil {
@@ -50,10 +52,11 @@ func TransactionCommitsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) Cata
 			}
 
 			payload := TransactionCommitsPayload{
-				XactCommit: xactCommit,
+				CollectedAt: collectedAt,
+				XactCommit:  xactCommit,
 			}
 
-			now := time.Now()
+			now := collectedAt
 			if !prev.timestamp.IsZero() && xactCommit >= prev.count {
 				duration := now.Sub(prev.timestamp).Seconds()
 				if duration > 0 {

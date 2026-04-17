@@ -26,6 +26,7 @@ const (
 
 // pgClassColumns is the SELECT list shared by batch and delta queries.
 const pgClassColumns = `
+	c.oid AS oid,
     n.nspname AS schemaname,
     c.relname,
     c.reltuples,
@@ -64,6 +65,7 @@ ORDER BY n.nspname, c.relname
 
 // PgClassRow represents a single row from pg_class for user tables.
 type PgClassRow struct {
+	Oid          Oid     `json:"oid"`
 	SchemaName   Name    `json:"schemaname"`
 	RelName      Name    `json:"relname"`
 	RelTuples    Real    `json:"reltuples"`
@@ -96,6 +98,7 @@ func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgClassConf
 				return nil, err
 			}
 
+			collectedAt := time.Now().UTC()
 			var classRows []PgClassRow
 
 			if !backfillDone {
@@ -108,13 +111,11 @@ func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgClassConf
 				}
 				if len(classRows) == 0 {
 					backfillDone = true
-					lastPoll = time.Now().UTC()
+					lastPoll = collectedAt
 				} else {
 					backfillOffset += backfillBatchSize
 				}
 			} else {
-				now := time.Now().UTC()
-
 				querier := func() (pgx.Rows, error) {
 					return utils.QueryWithPrefix(pool, ctx, pgClassQueryDelta, lastPoll)
 				}
@@ -122,14 +123,14 @@ func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgClassConf
 				if err != nil {
 					return nil, err
 				}
-				lastPoll = now
+				lastPoll = collectedAt
 			}
 
 			if len(classRows) == 0 {
 				return nil, nil
 			}
 
-			data, err := json.Marshal(&Payload[PgClassRow]{Rows: classRows})
+			data, err := json.Marshal(&Payload[PgClassRow]{CollectedAt: collectedAt, Rows: classRows})
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal %s: %w", PgClassName, err)
 			}

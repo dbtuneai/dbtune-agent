@@ -72,6 +72,7 @@ func PgStatioUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg
 				return nil, err
 			}
 
+			collectedAt := time.Now().UTC()
 			rows, err := utils.QueryWithPrefix(pool, ctx, pgStatioUserIndexesQuery, batchSize, offset)
 			if err != nil {
 				return nil, fmt.Errorf("failed to query %s: %w", PgStatioUserIndexesName, err)
@@ -129,7 +130,7 @@ func PgStatioUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg
 				return nil, nil
 			}
 
-			data, err := json.Marshal(&Payload[PgStatioUserIndexesRow]{Rows: emit})
+			data, err := json.Marshal(&Payload[PgStatioUserIndexesRow]{CollectedAt: collectedAt, Rows: emit})
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal %s: %w", PgStatioUserIndexesName, err)
 			}

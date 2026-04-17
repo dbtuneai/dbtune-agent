@@ -118,6 +118,7 @@ type PgStatStatementsDelta struct {
 
 // PgStatStatementsPayload is the JSON body POSTed to /api/v1/agent/pg_stat_statements.
 type PgStatStatementsPayload struct {
+	CollectedAt         time.Time               `json:"collected_at"`
 	Rows                []PgStatStatementsRow   `json:"rows"`
 	Deltas              []PgStatStatementsDelta `json:"deltas,omitempty"`
 	DeltaCount          int                     `json:"delta_count"`
@@ -349,6 +350,7 @@ func PgStatStatementsCollector(
 				return nil, err
 			}
 
+			collectedAt := time.Now().UTC()
 			detectedVersion, err := queryPGMajorVersion(pool, ctx)
 			if err != nil {
 				return nil, err
@@ -370,7 +372,8 @@ func PgStatStatementsCollector(
 			currSnapshot := toSnapshot(rows)
 
 			payload := &PgStatStatementsPayload{
-				Rows: rows,
+				CollectedAt: collectedAt,
+				Rows:        rows,
 			}
 
 			if prevSnapshot != nil {

@@ -227,6 +227,7 @@ func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatsConf
 				return nil, err
 			}
 
+			collectedAt := time.Now().UTC()
 			var statsRows []PgStatsRow
 
 			if !backfillDone {
@@ -236,24 +237,23 @@ func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatsConf
 				}
 				if len(statsRows) == 0 {
 					backfillDone = true
-					lastPoll = time.Now().UTC()
+					lastPoll = collectedAt
 				} else {
 					backfillOffset += cfg.BackfillBatchSize
 				}
 			} else {
-				now := time.Now().UTC()
 				statsRows, err = collectPgStatsRows(pool, ctx, deltaQuery, lastPoll)
 				if err != nil {
 					return nil, err
 				}
-				lastPoll = now
+				lastPoll = collectedAt
 			}
 
 			if len(statsRows) == 0 {
 				return nil, nil
 			}
 
-			data, err := json.Marshal(&Payload[PgStatsRow]{Rows: statsRows})
+			data, err := json.Marshal(&Payload[PgStatsRow]{CollectedAt: collectedAt, Rows: statsRows})
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal %s: %w", PgStatsName, err)
 			}
