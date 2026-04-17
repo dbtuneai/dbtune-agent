@@ -1202,9 +1202,12 @@ func TestPgClass_NewFieldsPopulated(t *testing.T) {
 	if bool(table.RelHasSubClass) {
 		t.Error("expected relhassubclass=false for test_users (not inherited)")
 	}
-	// Tables don't have an access method.
-	if table.AccessMethod != nil {
-		t.Errorf("expected access_method=nil for table, got %q", string(*table.AccessMethod))
+	// Regular tables use the 'heap' access method by default.
+	if table.AccessMethod == nil {
+		t.Fatal("expected access_method to be non-nil for table")
+	}
+	if string(*table.AccessMethod) != "heap" {
+		t.Errorf("expected access_method='heap' for test_users, got %q", string(*table.AccessMethod))
 	}
 	// test_users has text columns, so it should have a TOAST table.
 	if uint32(table.RelToastRelID) == 0 {
