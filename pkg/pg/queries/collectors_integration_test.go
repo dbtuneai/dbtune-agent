@@ -460,1150 +460,1123 @@ func requireRows(t *testing.T, c CatalogCollector) int {
 	return len(rows)
 }
 
-// latestInstance returns the instance with the highest PG version.
-func latestInstance() pgInstance {
-	return pgInstances[len(pgInstances)-1]
+// forEachPG runs fn as a subtest against every PG version in pgInstances.
+// Version subtests run in parallel, one per container.
+func forEachPG(t *testing.T, fn func(t *testing.T, inst pgInstance)) {
+	t.Helper()
+	for _, inst := range pgInstances {
+		inst := inst
+		t.Run(fmt.Sprintf("PG%d", inst.version), func(t *testing.T) {
+			t.Parallel()
+			fn(t, inst)
+		})
+	}
+}
+
+// flushStats makes recent ANALYZE/I/O activity visible in pg_stat_* views.
+// PG 15+ has shared-memory stats, so pg_stat_force_next_flush() is synchronous.
+// PG 13/14 still run the async stats collector: backends send messages at
+// commit, the collector writes them on a timer, and reader backends cache
+// snapshots per-transaction. Rather than guessing at a fixed sleep, we poll
+// until at least one idx counter is non-zero (fixture activity has landed),
+// then wait a short settling period.
+func flushStats(ctx context.Context, inst pgInstance) {
+	if inst.version >= 15 {
+		_, _ = inst.admin.Exec(ctx, "SELECT pg_stat_force_next_flush()")
+		return
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		var total int64
+		if err := inst.admin.QueryRow(ctx,
+			`SELECT COALESCE(SUM(idx_blks_read + idx_blks_hit), 0) FROM pg_statio_user_indexes`,
+		).Scan(&total); err == nil && total > 0 {
+			time.Sleep(500 * time.Millisecond)
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	time.Sleep(1 * time.Second)
 }
 
 func TestWaitEvents_ReturnsAllTypes(t *testing.T) {
-	inst := latestInstance()
-	c := WaitEventsCollector(inst.pool, noopPrepareCtx)
-	n := requireRows(t, c)
-	// 9 wait event types + 1 TOTAL row = 10
-	if n != 10 {
-		t.Fatalf("expected 10 rows (9 types + TOTAL), got %d", n)
-	}
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		c := WaitEventsCollector(inst.pool, noopPrepareCtx)
+		n := requireRows(t, c)
+		// 9 wait event types + 1 TOTAL row = 10
+		if n != 10 {
+			t.Fatalf("expected 10 rows (9 types + TOTAL), got %d", n)
+		}
+	})
 }
 
 func TestConnectionStats_ReturnsData(t *testing.T) {
-	inst := latestInstance()
-	c := ConnectionStatsCollector(inst.pool, noopPrepareCtx)
-	requireRows(t, c)
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		c := ConnectionStatsCollector(inst.pool, noopPrepareCtx)
+		requireRows(t, c)
+	})
 }
 
 func TestDatabaseSize_ReturnsData(t *testing.T) {
-	inst := latestInstance()
-	c := DatabaseSizeCollector(inst.pool, noopPrepareCtx)
-	requireRows(t, c)
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		c := DatabaseSizeCollector(inst.pool, noopPrepareCtx)
+		requireRows(t, c)
+	})
 }
 
 func TestUptimeMinutes_ReturnsData(t *testing.T) {
-	inst := latestInstance()
-	c := UptimeMinutesCollector(inst.pool, noopPrepareCtx)
-	requireRows(t, c)
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		c := UptimeMinutesCollector(inst.pool, noopPrepareCtx)
+		requireRows(t, c)
+	})
 }
 
 func TestTransactionCommits_ComputesTPS(t *testing.T) {
-	inst := latestInstance()
-	c := TransactionCommitsCollector(inst.pool, noopPrepareCtx)
-	ctx := context.Background()
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		c := TransactionCommitsCollector(inst.pool, noopPrepareCtx)
+		ctx := context.Background()
 
-	// First call: establishes baseline — TPS must be 0 (no prior sample).
-	r1, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("first Collect() error: %v", err)
-	}
-	if r1 == nil {
-		t.Fatal("first Collect() returned nil")
-	}
-	var p1 TransactionCommitsPayload
-	if err := json.Unmarshal(r1.JSON, &p1); err != nil {
-		t.Fatalf("failed to parse first result: %v", err)
-	}
-	if p1.CollectedAt.IsZero() {
-		t.Fatal("expected non-zero collected_at on first call")
-	}
-	if p1.XactCommit <= 0 {
-		t.Fatalf("expected xact_commit > 0 on first call, got %d", p1.XactCommit)
-	}
-	if p1.TPS != 0 {
-		t.Fatalf("expected TPS = 0 on first call (no baseline), got %f", p1.TPS)
-	}
+		// First call: establishes baseline — TPS must be 0 (no prior sample).
+		r1, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("first Collect() error: %v", err)
+		}
+		if r1 == nil {
+			t.Fatal("first Collect() returned nil")
+		}
+		var p1 TransactionCommitsPayload
+		if err := json.Unmarshal(r1.JSON, &p1); err != nil {
+			t.Fatalf("failed to parse first result: %v", err)
+		}
+		if p1.CollectedAt.IsZero() {
+			t.Fatal("expected non-zero collected_at on first call")
+		}
+		if p1.XactCommit <= 0 {
+			t.Fatalf("expected xact_commit > 0 on first call, got %d", p1.XactCommit)
+		}
+		if p1.TPS != 0 {
+			t.Fatalf("expected TPS = 0 on first call (no baseline), got %f", p1.TPS)
+		}
 
-	// Generate some transactions and wait for PG stats collector to update.
-	for i := 0; i < 50; i++ {
-		_, _ = inst.admin.Exec(ctx, "SELECT 1")
-	}
-	time.Sleep(1 * time.Second)
+		// Generate some transactions and wait for PG stats collector to update.
+		for i := 0; i < 50; i++ {
+			_, _ = inst.admin.Exec(ctx, "SELECT 1")
+		}
+		time.Sleep(1 * time.Second)
 
-	// Second call: xact_commit must be monotonically non-decreasing, TPS >= 0.
-	r2, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("second Collect() error: %v", err)
-	}
-	if r2 == nil {
-		t.Fatal("second Collect() returned nil")
-	}
-	var p2 TransactionCommitsPayload
-	if err := json.Unmarshal(r2.JSON, &p2); err != nil {
-		t.Fatalf("failed to parse second result: %v", err)
-	}
-	if p2.CollectedAt.IsZero() {
-		t.Fatal("expected non-zero collected_at on second call")
-	}
-	if p2.XactCommit < p1.XactCommit {
-		t.Fatalf("xact_commit decreased: %d → %d", p1.XactCommit, p2.XactCommit)
-	}
-	if p2.TPS < 0 {
-		t.Fatalf("expected TPS >= 0, got %f", p2.TPS)
-	}
+		// Second call: xact_commit must be monotonically non-decreasing, TPS >= 0.
+		r2, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("second Collect() error: %v", err)
+		}
+		if r2 == nil {
+			t.Fatal("second Collect() returned nil")
+		}
+		var p2 TransactionCommitsPayload
+		if err := json.Unmarshal(r2.JSON, &p2); err != nil {
+			t.Fatalf("failed to parse second result: %v", err)
+		}
+		if p2.CollectedAt.IsZero() {
+			t.Fatal("expected non-zero collected_at on second call")
+		}
+		if p2.XactCommit < p1.XactCommit {
+			t.Fatalf("xact_commit decreased: %d → %d", p1.XactCommit, p2.XactCommit)
+		}
+		if p2.TPS < 0 {
+			t.Fatalf("expected TPS >= 0, got %f", p2.TPS)
+		}
+	})
 }
 
 func TestPgStatUserTables_ReturnsFixtureTable(t *testing.T) {
-	inst := latestInstance()
-	c := PgStatUserTablesCollector(inst.pool, noopPrepareCtx, PgStatUserTablesConfig{CategoryLimit: PgStatUserTablesCategoryLimit})
-	requireRows(t, c)
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		c := PgStatUserTablesCollector(inst.pool, noopPrepareCtx, PgStatUserTablesConfig{CategoryLimit: PgStatUserTablesCategoryLimit})
+		requireRows(t, c)
+	})
 }
 
 func TestPgStatUserIndexes_ReturnsFixtureIndexes(t *testing.T) {
-	inst := latestInstance()
-	c := PgStatUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatUserIndexesConfig{CategoryLimit: PgStatUserIndexesCategoryLimit})
-	requireRows(t, c)
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		c := PgStatUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatUserIndexesConfig{CategoryLimit: PgStatUserIndexesCategoryLimit})
+		requireRows(t, c)
+	})
 }
 
 func TestPgStatioUserTables_NoError(t *testing.T) {
-	inst := latestInstance()
-	c := PgStatioUserTablesCollector(inst.pool, noopPrepareCtx)
-	ctx := context.Background()
-	// On fresh test containers, all data may be in shared_buffers with zero
-	// I/O counters, so the WHERE filter may exclude everything. Just verify
-	// no error — the query and scanning work correctly.
-	_, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("Collect() error: %v", err)
-	}
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		c := PgStatioUserTablesCollector(inst.pool, noopPrepareCtx)
+		ctx := context.Background()
+		// On fresh test containers, all data may be in shared_buffers with zero
+		// I/O counters, so the WHERE filter may exclude everything. Just verify
+		// no error — the query and scanning work correctly.
+		_, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("Collect() error: %v", err)
+		}
+	})
 }
 
 func TestPgStatioUserIndexes_ReturnsFixtureData(t *testing.T) {
-	inst := latestInstance()
-	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesConfig{BackfillBatchSize: PgStatioUserIndexesBatchSize})
-	requireRows(t, c)
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesConfig{BackfillBatchSize: PgStatioUserIndexesBatchSize})
+		requireRows(t, c)
+	})
 }
 
 func TestPgStatioUserIndexes_BackfillThenDelta(t *testing.T) {
-	inst := latestInstance()
-	ctx := context.Background()
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		ctx := context.Background()
 
-	// Use batch size 1 to force multiple backfill ticks and test pagination.
-	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesConfig{BackfillBatchSize: 1})
+		// Use batch size 1 to force multiple backfill ticks and test pagination.
+		c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesConfig{BackfillBatchSize: 1})
 
-	// First call: backfill returns exactly 1 row (batch size 1).
-	r1, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("first Collect() error: %v", err)
-	}
-	if r1 == nil {
-		t.Fatal("first Collect() returned nil — expected backfill data")
-	}
-	var p1 Payload[PgStatioUserIndexesRow]
-	if err := json.Unmarshal(r1.JSON, &p1); err != nil {
-		t.Fatalf("failed to parse first result: %v", err)
-	}
-	if len(p1.Rows) != 1 {
-		t.Fatalf("expected exactly 1 row with batch size 1, got %d", len(p1.Rows))
-	}
-	if p1.CollectedAt.IsZero() {
-		t.Fatal("expected non-zero collected_at on first backfill result")
-	}
-
-	// Drain the remaining backfill ticks until we get nil (backfill exhausted).
-	var totalBackfillRows int = 1
-	for i := 0; i < 200; i++ {
-		r, err := c.Collect(ctx)
+		// First call: backfill returns exactly 1 row (batch size 1).
+		r1, err := c.Collect(ctx)
 		if err != nil {
-			t.Fatalf("backfill tick %d error: %v", i+2, err)
+			t.Fatalf("first Collect() error: %v", err)
 		}
-		if r == nil {
-			break // backfill done
+		if r1 == nil {
+			t.Fatal("first Collect() returned nil — expected backfill data")
 		}
-		var p Payload[PgStatioUserIndexesRow]
-		if err := json.Unmarshal(r.JSON, &p); err != nil {
-			t.Fatalf("failed to parse backfill tick %d: %v", i+2, err)
+		var p1 Payload[PgStatioUserIndexesRow]
+		if err := json.Unmarshal(r1.JSON, &p1); err != nil {
+			t.Fatalf("failed to parse first result: %v", err)
 		}
-		totalBackfillRows += len(p.Rows)
-	}
-	// We created 3 explicit indexes + 1 PK = 4 fixture indexes minimum.
-	if totalBackfillRows < 4 {
-		t.Fatalf("expected at least 4 backfill rows, got %d", totalBackfillRows)
-	}
-
-	// Delta with no I/O changes → nil.
-	rDelta, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("delta Collect() error: %v", err)
-	}
-	if rDelta != nil {
-		t.Fatal("expected nil delta result when no I/O has occurred")
-	}
-}
-
-func TestPgStatioUserIndexes_DeltaEmitsOnlyChangedRows(t *testing.T) {
-	inst := latestInstance()
-	ctx := context.Background()
-
-	// Flush any pending stats from fixture setup so the backfill snapshot
-	// captures the true current counters.
-	if inst.version >= 15 {
-		_, _ = inst.admin.Exec(ctx, "SELECT pg_stat_force_next_flush()")
-	}
-	time.Sleep(500 * time.Millisecond)
-
-	// Large batch size so backfill finishes in one tick.
-	c := PgStatioUserIndexesCollector(inst.pool, noopPrepareCtx, PgStatioUserIndexesConfig{BackfillBatchSize: 10000})
-
-	// First call: backfill — all rows emitted.
-	r1, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("backfill Collect() error: %v", err)
-	}
-	if r1 == nil {
-		t.Fatal("backfill Collect() returned nil")
-	}
-	var p1 Payload[PgStatioUserIndexesRow]
-	if err := json.Unmarshal(r1.JSON, &p1); err != nil {
-		t.Fatalf("failed to parse backfill result: %v", err)
-	}
-	backfillCount := len(p1.Rows)
-	// test_users has 4 indexes (PK + 3), test_cold has 2 (PK + 1) = 6 minimum.
-	if backfillCount < 6 {
-		t.Fatalf("expected at least 6 backfill rows, got %d", backfillCount)
-	}
-	if p1.CollectedAt.IsZero() {
-		t.Fatal("expected non-zero collected_at on backfill result")
-	}
-
-	// Second call: empty page, transitions to delta mode.
-	r2, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("transition Collect() error: %v", err)
-	}
-	if r2 != nil {
-		t.Fatal("expected nil on transition tick")
-	}
-
-	// Generate I/O only on test_users indexes; test_cold indexes stay untouched.
-	for i := 0; i < 20; i++ {
-		_, _ = inst.admin.Exec(ctx, "SELECT count(*) FROM test_users WHERE name = $1", fmt.Sprintf("user_%d", i))
-	}
-
-	// Flush stats so the I/O counters are visible.
-	if inst.version >= 15 {
-		_, _ = inst.admin.Exec(ctx, "SELECT pg_stat_force_next_flush()")
-	}
-	time.Sleep(500 * time.Millisecond)
-
-	// Delta: should emit only the changed index(es) from test_users,
-	// not the cold test_cold indexes.
-	r3, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("delta Collect() error: %v", err)
-	}
-	if r3 == nil {
-		t.Fatal("expected delta to emit changed rows after index I/O")
-	}
-	var p3 Payload[PgStatioUserIndexesRow]
-	if err := json.Unmarshal(r3.JSON, &p3); err != nil {
-		t.Fatalf("failed to parse delta result: %v", err)
-	}
-	if p3.CollectedAt.IsZero() {
-		t.Fatal("expected non-zero collected_at on delta result")
-	}
-	if len(p3.Rows) == 0 {
-		t.Fatal("expected at least 1 changed row in delta")
-	}
-	if len(p3.Rows) >= backfillCount {
-		t.Fatalf("delta should emit fewer rows than backfill (%d), got %d", backfillCount, len(p3.Rows))
-	}
-	// Verify no test_cold indexes appear in the delta.
-	for _, row := range p3.Rows {
-		if row.RelName != nil && string(*row.RelName) == "test_cold" {
-			t.Fatalf("delta should not include untouched test_cold indexes, got %s", string(*row.IndexRelName))
+		if len(p1.Rows) != 1 {
+			t.Fatalf("expected exactly 1 row with batch size 1, got %d", len(p1.Rows))
 		}
-	}
+		if p1.CollectedAt.IsZero() {
+			t.Fatal("expected non-zero collected_at on first backfill result")
+		}
+
+		// Drain the remaining backfill ticks until we get nil (backfill exhausted).
+		var totalBackfillRows int = 1
+		for i := 0; i < 200; i++ {
+			r, err := c.Collect(ctx)
+			if err != nil {
+				t.Fatalf("backfill tick %d error: %v", i+2, err)
+			}
+			if r == nil {
+				break // backfill done
+			}
+			var p Payload[PgStatioUserIndexesRow]
+			if err := json.Unmarshal(r.JSON, &p); err != nil {
+				t.Fatalf("failed to parse backfill tick %d: %v", i+2, err)
+			}
+			totalBackfillRows += len(p.Rows)
+		}
+		// We created 3 explicit indexes + 1 PK = 4 fixture indexes minimum.
+		if totalBackfillRows < 4 {
+			t.Fatalf("expected at least 4 backfill rows, got %d", totalBackfillRows)
+		}
+
+		// Delta with no I/O changes → nil.
+		rDelta, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("delta Collect() error: %v", err)
+		}
+		if rDelta != nil {
+			t.Fatal("expected nil delta result when no I/O has occurred")
+		}
+	})
 }
 
 func TestPgStatUserFunctions_ReturnsFixtureFunction(t *testing.T) {
-	inst := latestInstance()
-	ctx := context.Background()
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		ctx := context.Background()
 
-	// Verify track_functions is enabled; skip if the container didn't apply it.
-	var trackFunctions string
-	if err := inst.pool.QueryRow(ctx, "SHOW track_functions").Scan(&trackFunctions); err != nil {
-		t.Fatalf("SHOW track_functions: %v", err)
-	}
-	if trackFunctions == "none" {
-		t.Skipf("track_functions is %q — function stats not tracked", trackFunctions)
-	}
+		// Verify track_functions is enabled; skip if the container didn't apply it.
+		var trackFunctions string
+		if err := inst.pool.QueryRow(ctx, "SHOW track_functions").Scan(&trackFunctions); err != nil {
+			t.Fatalf("SHOW track_functions: %v", err)
+		}
+		if trackFunctions == "none" {
+			t.Skipf("track_functions is %q — function stats not tracked", trackFunctions)
+		}
 
-	// Call the function via admin (has EXECUTE privilege) and flush stats.
-	conn, err := inst.admin.Acquire(ctx)
-	if err != nil {
-		t.Fatalf("acquire connection: %v", err)
-	}
-	_, _ = conn.Exec(ctx, "SELECT test_add(i, i) FROM generate_series(1, 100) AS i")
-	if inst.version >= 15 {
-		_, _ = conn.Exec(ctx, "SELECT pg_stat_force_next_flush()")
-	}
-	conn.Release()
+		// Call the function via admin (has EXECUTE privilege) and flush stats.
+		conn, err := inst.admin.Acquire(ctx)
+		if err != nil {
+			t.Fatalf("acquire connection: %v", err)
+		}
+		_, _ = conn.Exec(ctx, "SELECT test_add(i, i) FROM generate_series(1, 100) AS i")
+		if inst.version >= 15 {
+			_, _ = conn.Exec(ctx, "SELECT pg_stat_force_next_flush()")
+		}
+		conn.Release()
 
-	// Give the stats collector time to flush.
-	time.Sleep(500 * time.Millisecond)
+		// Give the stats collector time to flush.
+		time.Sleep(500 * time.Millisecond)
 
-	c := PgStatUserFunctionsCollector(inst.pool, noopPrepareCtx)
-	n := requireRows(t, c)
-	if n < 1 {
-		t.Fatalf("expected at least 1 function, got %d", n)
-	}
+		c := PgStatUserFunctionsCollector(inst.pool, noopPrepareCtx)
+		n := requireRows(t, c)
+		if n < 1 {
+			t.Fatalf("expected at least 1 function, got %d", n)
+		}
+	})
 }
 
 func TestPgIndex_ReturnsFixtureIndexes(t *testing.T) {
-	inst := latestInstance()
-	c := PgIndexCollector(inst.pool, noopPrepareCtx, inst.version)
-	n := requireRows(t, c)
-	// We created 6 indexes: PK + 3 explicit + 1 partial + 1 expression
-	if n < 6 {
-		t.Fatalf("expected at least 6 indexes, got %d", n)
-	}
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		c := PgIndexCollector(inst.pool, noopPrepareCtx, inst.version)
+		n := requireRows(t, c)
+		// We created 6 indexes: PK + 3 explicit + 1 partial + 1 expression
+		if n < 6 {
+			t.Fatalf("expected at least 6 indexes, got %d", n)
+		}
+	})
 }
 
 func TestPgIndex_NewFieldsPopulated(t *testing.T) {
-	inst := latestInstance()
-	ctx := context.Background()
-	c := PgIndexCollector(inst.pool, noopPrepareCtx, inst.version)
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		ctx := context.Background()
+		c := PgIndexCollector(inst.pool, noopPrepareCtx, inst.version)
 
-	result, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("Collect() error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("Collect() returned nil")
-	}
-
-	var p Payload[PgIndexRow]
-	if err := json.Unmarshal(result.JSON, &p); err != nil {
-		t.Fatalf("failed to parse result: %v", err)
-	}
-
-	// Build a map of index name -> row for easy lookup.
-	byName := make(map[string]*PgIndexRow, len(p.Rows))
-	for i := range p.Rows {
-		if p.Rows[i].IndexName != nil {
-			byName[string(*p.Rows[i].IndexName)] = &p.Rows[i]
+		result, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("Collect() error: %v", err)
 		}
-	}
+		if result == nil {
+			t.Fatal("Collect() returned nil")
+		}
 
-	// All indexes should have indkey, indoption, indclass, indcollation arrays
-	// whose lengths match the number of index columns (indnatts).
-	for name, row := range byName {
-		if row.IndNatts == nil {
-			t.Errorf("index %q: indnatts is nil", name)
-			continue
+		var p Payload[PgIndexRow]
+		if err := json.Unmarshal(result.JSON, &p); err != nil {
+			t.Fatalf("failed to parse result: %v", err)
 		}
-		natts := int(int64(*row.IndNatts))
-		if len(row.IndKey) != natts {
-			t.Errorf("index %q: expected len(indkey)=%d, got %d", name, natts, len(row.IndKey))
-		}
-		if len(row.IndOption) != natts {
-			t.Errorf("index %q: expected len(indoption)=%d, got %d", name, natts, len(row.IndOption))
-		}
-		if len(row.IndClass) != natts {
-			t.Errorf("index %q: expected len(indclass)=%d, got %d", name, natts, len(row.IndClass))
-		}
-		if len(row.IndCollation) != natts {
-			t.Errorf("index %q: expected len(indcollation)=%d, got %d", name, natts, len(row.IndCollation))
-		}
-	}
 
-	// --- Partial index: CREATE INDEX ... ON test_users(score) WHERE score > 50 ---
-	partial, ok := byName["idx_test_users_partial"]
-	if !ok {
-		t.Fatal("could not find idx_test_users_partial in results")
-	}
-	if partial.IsPartial == nil || !bool(*partial.IsPartial) {
-		t.Error("expected is_partial=true for partial index")
-	}
-	if partial.IndPredSQL == nil {
-		t.Fatal("expected indpred_sql to be non-nil for partial index")
-	}
-	if !strings.Contains(string(*partial.IndPredSQL), "score") || !strings.Contains(string(*partial.IndPredSQL), "50") {
-		t.Errorf("expected indpred_sql to reference 'score' and '50', got %q", string(*partial.IndPredSQL))
-	}
-	// Partial index on a single column.
-	if partial.IndNKeyAtts == nil || int64(*partial.IndNKeyAtts) != 1 {
-		t.Errorf("expected indnkeyatts=1 for partial index, got %v", partial.IndNKeyAtts)
-	}
-
-	// --- Regular index: CREATE INDEX ... ON test_users(name) ---
-	regular, ok := byName["idx_test_users_name"]
-	if !ok {
-		t.Fatal("could not find idx_test_users_name in results")
-	}
-	if regular.IsPartial == nil || bool(*regular.IsPartial) {
-		t.Error("expected is_partial=false for regular index")
-	}
-	if regular.IndPredSQL != nil {
-		t.Errorf("expected indpred_sql=nil for regular index, got %q", string(*regular.IndPredSQL))
-	}
-	if regular.IndExprsSQL != nil {
-		t.Errorf("expected indexprs_sql=nil for regular index, got %q", string(*regular.IndExprsSQL))
-	}
-	// indclass entries should be non-zero (valid opclass OIDs).
-	for i, oc := range regular.IndClass {
-		if uint32(oc) == 0 {
-			t.Errorf("index idx_test_users_name: indclass[%d] is 0, expected valid opclass OID", i)
+		// Build a map of index name -> row for easy lookup.
+		byName := make(map[string]*PgIndexRow, len(p.Rows))
+		for i := range p.Rows {
+			if p.Rows[i].IndexName != nil {
+				byName[string(*p.Rows[i].IndexName)] = &p.Rows[i]
+			}
 		}
-	}
-	// indkey on a regular column-reference index should have a non-zero entry
-	// pointing to the underlying table column (0 is reserved for expressions).
-	if len(regular.IndKey) != 1 || int64(regular.IndKey[0]) == 0 {
-		t.Errorf("expected indkey=[<nonzero>] for regular index, got %v", regular.IndKey)
-	}
 
-	// --- Expression index: CREATE INDEX ... ON test_users ((lower(name))) ---
-	expr, ok := byName["idx_test_users_expr"]
-	if !ok {
-		t.Fatal("could not find idx_test_users_expr in results")
-	}
-	if expr.IndExprsSQL == nil {
-		t.Fatal("expected indexprs_sql to be non-nil for expression index")
-	}
-	if !strings.Contains(string(*expr.IndExprsSQL), "lower") {
-		t.Errorf("expected indexprs_sql to contain 'lower', got %q", string(*expr.IndExprsSQL))
-	}
-	// Expression index is not partial.
-	if expr.IsPartial == nil || bool(*expr.IsPartial) {
-		t.Error("expected is_partial=false for expression index")
-	}
-	if expr.IndPredSQL != nil {
-		t.Errorf("expected indpred_sql=nil for expression index, got %q", string(*expr.IndPredSQL))
-	}
-	// indkey entry of 0 signals that the column is an expression (resolved via indexprs).
-	if len(expr.IndKey) != 1 || int64(expr.IndKey[0]) != 0 {
-		t.Errorf("expected indkey=[0] for expression index, got %v", expr.IndKey)
-	}
-
-	// --- Unique index: CREATE UNIQUE INDEX ... ON test_users(email) ---
-	unique, ok := byName["idx_test_users_email"]
-	if !ok {
-		t.Fatal("could not find idx_test_users_email in results")
-	}
-	if unique.IndIsUnique == nil || !bool(*unique.IndIsUnique) {
-		t.Error("expected indisunique=true for unique index")
-	}
-	if unique.IsPartial == nil || bool(*unique.IsPartial) {
-		t.Error("expected is_partial=false for unique index")
-	}
-	// indnullsnotdistinct defaults to false on PG15+ (NULLs are distinct by default).
-	if inst.version >= 15 {
-		if unique.IndNullsNotDistinct == nil {
-			t.Error("expected indnullsnotdistinct to be non-nil on PG15+")
-		} else if bool(*unique.IndNullsNotDistinct) {
-			t.Error("expected indnullsnotdistinct=false for default unique index")
+		// All indexes should have indkey, indoption, indclass, indcollation arrays
+		// whose lengths match the number of index columns (indnatts).
+		for name, row := range byName {
+			if row.IndNatts == nil {
+				t.Errorf("index %q: indnatts is nil", name)
+				continue
+			}
+			natts := int(int64(*row.IndNatts))
+			if len(row.IndKey) != natts {
+				t.Errorf("index %q: expected len(indkey)=%d, got %d", name, natts, len(row.IndKey))
+			}
+			if len(row.IndOption) != natts {
+				t.Errorf("index %q: expected len(indoption)=%d, got %d", name, natts, len(row.IndOption))
+			}
+			if len(row.IndClass) != natts {
+				t.Errorf("index %q: expected len(indclass)=%d, got %d", name, natts, len(row.IndClass))
+			}
+			if len(row.IndCollation) != natts {
+				t.Errorf("index %q: expected len(indcollation)=%d, got %d", name, natts, len(row.IndCollation))
+			}
 		}
-	} else if unique.IndNullsNotDistinct != nil {
-		t.Errorf("expected indnullsnotdistinct=nil on PG<15, got %v", *unique.IndNullsNotDistinct)
-	}
 
-	// --- NULLS NOT DISTINCT unique index (PG15+ only) ---
-	if inst.version >= 15 {
-		nnd, ok := byName["idx_test_users_email_nnd"]
+		// --- Partial index: CREATE INDEX ... ON test_users(score) WHERE score > 50 ---
+		partial, ok := byName["idx_test_users_partial"]
 		if !ok {
-			t.Fatal("could not find idx_test_users_email_nnd in results")
+			t.Fatal("could not find idx_test_users_partial in results")
 		}
-		if nnd.IndNullsNotDistinct == nil || !bool(*nnd.IndNullsNotDistinct) {
-			t.Errorf("expected indnullsnotdistinct=true for NULLS NOT DISTINCT index, got %v", nnd.IndNullsNotDistinct)
+		if partial.IsPartial == nil || !bool(*partial.IsPartial) {
+			t.Error("expected is_partial=true for partial index")
 		}
-	}
+		if partial.IndPredSQL == nil {
+			t.Fatal("expected indpred_sql to be non-nil for partial index")
+		}
+		if !strings.Contains(string(*partial.IndPredSQL), "score") || !strings.Contains(string(*partial.IndPredSQL), "50") {
+			t.Errorf("expected indpred_sql to reference 'score' and '50', got %q", string(*partial.IndPredSQL))
+		}
+		// Partial index on a single column.
+		if partial.IndNKeyAtts == nil || int64(*partial.IndNKeyAtts) != 1 {
+			t.Errorf("expected indnkeyatts=1 for partial index, got %v", partial.IndNKeyAtts)
+		}
+
+		// --- Regular index: CREATE INDEX ... ON test_users(name) ---
+		regular, ok := byName["idx_test_users_name"]
+		if !ok {
+			t.Fatal("could not find idx_test_users_name in results")
+		}
+		if regular.IsPartial == nil || bool(*regular.IsPartial) {
+			t.Error("expected is_partial=false for regular index")
+		}
+		if regular.IndPredSQL != nil {
+			t.Errorf("expected indpred_sql=nil for regular index, got %q", string(*regular.IndPredSQL))
+		}
+		if regular.IndExprsSQL != nil {
+			t.Errorf("expected indexprs_sql=nil for regular index, got %q", string(*regular.IndExprsSQL))
+		}
+		// indclass entries should be non-zero (valid opclass OIDs).
+		for i, oc := range regular.IndClass {
+			if uint32(oc) == 0 {
+				t.Errorf("index idx_test_users_name: indclass[%d] is 0, expected valid opclass OID", i)
+			}
+		}
+		// indkey on a regular column-reference index should have a non-zero entry
+		// pointing to the underlying table column (0 is reserved for expressions).
+		if len(regular.IndKey) != 1 || int64(regular.IndKey[0]) == 0 {
+			t.Errorf("expected indkey=[<nonzero>] for regular index, got %v", regular.IndKey)
+		}
+
+		// --- Expression index: CREATE INDEX ... ON test_users ((lower(name))) ---
+		expr, ok := byName["idx_test_users_expr"]
+		if !ok {
+			t.Fatal("could not find idx_test_users_expr in results")
+		}
+		if expr.IndExprsSQL == nil {
+			t.Fatal("expected indexprs_sql to be non-nil for expression index")
+		}
+		if !strings.Contains(string(*expr.IndExprsSQL), "lower") {
+			t.Errorf("expected indexprs_sql to contain 'lower', got %q", string(*expr.IndExprsSQL))
+		}
+		// Expression index is not partial.
+		if expr.IsPartial == nil || bool(*expr.IsPartial) {
+			t.Error("expected is_partial=false for expression index")
+		}
+		if expr.IndPredSQL != nil {
+			t.Errorf("expected indpred_sql=nil for expression index, got %q", string(*expr.IndPredSQL))
+		}
+		// indkey entry of 0 signals that the column is an expression (resolved via indexprs).
+		if len(expr.IndKey) != 1 || int64(expr.IndKey[0]) != 0 {
+			t.Errorf("expected indkey=[0] for expression index, got %v", expr.IndKey)
+		}
+
+		// --- Unique index: CREATE UNIQUE INDEX ... ON test_users(email) ---
+		unique, ok := byName["idx_test_users_email"]
+		if !ok {
+			t.Fatal("could not find idx_test_users_email in results")
+		}
+		if unique.IndIsUnique == nil || !bool(*unique.IndIsUnique) {
+			t.Error("expected indisunique=true for unique index")
+		}
+		if unique.IsPartial == nil || bool(*unique.IsPartial) {
+			t.Error("expected is_partial=false for unique index")
+		}
+		// indnullsnotdistinct defaults to false on PG15+ (NULLs are distinct by default).
+		if inst.version >= 15 {
+			if unique.IndNullsNotDistinct == nil {
+				t.Error("expected indnullsnotdistinct to be non-nil on PG15+")
+			} else if bool(*unique.IndNullsNotDistinct) {
+				t.Error("expected indnullsnotdistinct=false for default unique index")
+			}
+		} else if unique.IndNullsNotDistinct != nil {
+			t.Errorf("expected indnullsnotdistinct=nil on PG<15, got %v", *unique.IndNullsNotDistinct)
+		}
+
+		// --- NULLS NOT DISTINCT unique index (PG15+ only) ---
+		if inst.version >= 15 {
+			nnd, ok := byName["idx_test_users_email_nnd"]
+			if !ok {
+				t.Fatal("could not find idx_test_users_email_nnd in results")
+			}
+			if nnd.IndNullsNotDistinct == nil || !bool(*nnd.IndNullsNotDistinct) {
+				t.Errorf("expected indnullsnotdistinct=true for NULLS NOT DISTINCT index, got %v", nnd.IndNullsNotDistinct)
+			}
+		}
+	})
 }
 
 func TestPgAttribute_ReturnsFixtureColumns(t *testing.T) {
-	inst := latestInstance()
-	c := PgAttributeCollector(inst.pool, noopPrepareCtx)
-	n := requireRows(t, c)
-	// test_users has 5 columns + index columns (each index has entries)
-	if n < 5 {
-		t.Fatalf("expected at least 5 attribute rows, got %d", n)
-	}
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		c := PgAttributeCollector(inst.pool, noopPrepareCtx)
+		n := requireRows(t, c)
+		// test_users has 5 columns + index columns (each index has entries)
+		if n < 5 {
+			t.Fatalf("expected at least 5 attribute rows, got %d", n)
+		}
+	})
 }
 
 func TestPgAttribute_NewFieldsPopulated(t *testing.T) {
-	inst := latestInstance()
-	c := PgAttributeCollector(inst.pool, noopPrepareCtx)
-	ctx := context.Background()
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		c := PgAttributeCollector(inst.pool, noopPrepareCtx)
+		ctx := context.Background()
 
-	result, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("Collect() error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("Collect() returned nil")
-	}
+		result, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("Collect() error: %v", err)
+		}
+		if result == nil {
+			t.Fatal("Collect() returned nil")
+		}
 
-	var p Payload[PgAttributeRow]
-	if err := json.Unmarshal(result.JSON, &p); err != nil {
-		t.Fatalf("failed to parse result: %v", err)
-	}
-	if len(p.Rows) == 0 {
-		t.Fatal("expected non-empty rows")
-	}
+		var p Payload[PgAttributeRow]
+		if err := json.Unmarshal(result.JSON, &p); err != nil {
+			t.Fatalf("failed to parse result: %v", err)
+		}
+		if len(p.Rows) == 0 {
+			t.Fatal("expected non-empty rows")
+		}
 
-	// Build a lookup by column name. pg_attribute rows span multiple tables,
-	// so we may see duplicates; just grab the first match per name.
-	byName := make(map[string]*PgAttributeRow, len(p.Rows))
-	for i := range p.Rows {
-		if p.Rows[i].AttName != nil {
-			name := string(*p.Rows[i].AttName)
-			if _, exists := byName[name]; !exists {
-				byName[name] = &p.Rows[i]
+		// Build a lookup by column name. pg_attribute rows span multiple tables,
+		// so we may see duplicates; just grab the first match per name.
+		byName := make(map[string]*PgAttributeRow, len(p.Rows))
+		for i := range p.Rows {
+			if p.Rows[i].AttName != nil {
+				name := string(*p.Rows[i].AttName)
+				if _, exists := byName[name]; !exists {
+					byName[name] = &p.Rows[i]
+				}
 			}
 		}
-	}
 
-	// --- "name" column: text NOT NULL ---
-	nameCol, ok := byName["name"]
-	if !ok {
-		t.Fatal("could not find 'name' column in pg_attribute results")
-	}
-	// text uses extended storage ("x").
-	if nameCol.AttStorage == nil {
-		t.Fatal("expected attstorage to be non-nil for 'name' column")
-	}
-	if string(*nameCol.AttStorage) != "x" {
-		t.Errorf("expected attstorage='x' (extended) for text column, got %q", string(*nameCol.AttStorage))
-	}
-	// NOT NULL constraint.
-	if nameCol.AttNotNull == nil || !bool(*nameCol.AttNotNull) {
-		t.Error("expected attnotnull=true for NOT NULL 'name' column")
-	}
-	// text alignment is "i" (int).
-	if nameCol.AttAlign == nil {
-		t.Fatal("expected attalign to be non-nil")
-	}
-	if string(*nameCol.AttAlign) != "i" {
-		t.Errorf("expected attalign='i' for text column, got %q", string(*nameCol.AttAlign))
-	}
-	// Default stats target: PG 17+ reports NULL; older versions report -1.
-	if inst.version >= 17 {
-		if nameCol.AttStatTarget != nil {
-			t.Errorf("expected attstattarget=nil (default) on PG %d, got %d", inst.version, int64(*nameCol.AttStatTarget))
+		// --- "name" column: text NOT NULL ---
+		nameCol, ok := byName["name"]
+		if !ok {
+			t.Fatal("could not find 'name' column in pg_attribute results")
 		}
-	} else {
-		if nameCol.AttStatTarget == nil {
-			t.Fatal("expected attstattarget to be non-nil")
+		// text uses extended storage ("x").
+		if nameCol.AttStorage == nil {
+			t.Fatal("expected attstorage to be non-nil for 'name' column")
 		}
-		if int64(*nameCol.AttStatTarget) != -1 {
-			t.Errorf("expected attstattarget=-1 (system default), got %d", int64(*nameCol.AttStatTarget))
+		if string(*nameCol.AttStorage) != "x" {
+			t.Errorf("expected attstorage='x' (extended) for text column, got %q", string(*nameCol.AttStorage))
 		}
-	}
-	// Plain text has atttypmod=-1 (no length modifier).
-	if nameCol.AttTypMod == nil {
-		t.Fatal("expected atttypmod to be non-nil")
-	}
-	if int64(*nameCol.AttTypMod) != -1 {
-		t.Errorf("expected atttypmod=-1 for plain text, got %d", int64(*nameCol.AttTypMod))
-	}
+		// NOT NULL constraint.
+		if nameCol.AttNotNull == nil || !bool(*nameCol.AttNotNull) {
+			t.Error("expected attnotnull=true for NOT NULL 'name' column")
+		}
+		// text alignment is "i" (int).
+		if nameCol.AttAlign == nil {
+			t.Fatal("expected attalign to be non-nil")
+		}
+		if string(*nameCol.AttAlign) != "i" {
+			t.Errorf("expected attalign='i' for text column, got %q", string(*nameCol.AttAlign))
+		}
+		// Default stats target: PG 17+ reports NULL; older versions report -1.
+		if inst.version >= 17 {
+			if nameCol.AttStatTarget != nil {
+				t.Errorf("expected attstattarget=nil (default) on PG %d, got %d", inst.version, int64(*nameCol.AttStatTarget))
+			}
+		} else {
+			if nameCol.AttStatTarget == nil {
+				t.Fatal("expected attstattarget to be non-nil")
+			}
+			if int64(*nameCol.AttStatTarget) != -1 {
+				t.Errorf("expected attstattarget=-1 (system default), got %d", int64(*nameCol.AttStatTarget))
+			}
+		}
+		// Plain text has atttypmod=-1 (no length modifier).
+		if nameCol.AttTypMod == nil {
+			t.Fatal("expected atttypmod to be non-nil")
+		}
+		if int64(*nameCol.AttTypMod) != -1 {
+			t.Errorf("expected atttypmod=-1 for plain text, got %d", int64(*nameCol.AttTypMod))
+		}
 
-	// --- "score" column: integer DEFAULT 0 (nullable) ---
-	scoreCol, ok := byName["score"]
-	if !ok {
-		t.Fatal("could not find 'score' column in pg_attribute results")
-	}
-	// integer uses plain storage ("p").
-	if scoreCol.AttStorage == nil {
-		t.Fatal("expected attstorage to be non-nil for 'score' column")
-	}
-	if string(*scoreCol.AttStorage) != "p" {
-		t.Errorf("expected attstorage='p' (plain) for integer column, got %q", string(*scoreCol.AttStorage))
-	}
-	// "score" is nullable (no NOT NULL).
-	if scoreCol.AttNotNull == nil || bool(*scoreCol.AttNotNull) {
-		t.Error("expected attnotnull=false for nullable 'score' column")
-	}
-	// integer alignment is "i" (int).
-	if scoreCol.AttAlign == nil {
-		t.Fatal("expected attalign to be non-nil for 'score' column")
-	}
-	if string(*scoreCol.AttAlign) != "i" {
-		t.Errorf("expected attalign='i' for integer column, got %q", string(*scoreCol.AttAlign))
-	}
+		// --- "score" column: integer DEFAULT 0 (nullable) ---
+		scoreCol, ok := byName["score"]
+		if !ok {
+			t.Fatal("could not find 'score' column in pg_attribute results")
+		}
+		// integer uses plain storage ("p").
+		if scoreCol.AttStorage == nil {
+			t.Fatal("expected attstorage to be non-nil for 'score' column")
+		}
+		if string(*scoreCol.AttStorage) != "p" {
+			t.Errorf("expected attstorage='p' (plain) for integer column, got %q", string(*scoreCol.AttStorage))
+		}
+		// "score" is nullable (no NOT NULL).
+		if scoreCol.AttNotNull == nil || bool(*scoreCol.AttNotNull) {
+			t.Error("expected attnotnull=false for nullable 'score' column")
+		}
+		// integer alignment is "i" (int).
+		if scoreCol.AttAlign == nil {
+			t.Fatal("expected attalign to be non-nil for 'score' column")
+		}
+		if string(*scoreCol.AttAlign) != "i" {
+			t.Errorf("expected attalign='i' for integer column, got %q", string(*scoreCol.AttAlign))
+		}
 
-	// --- "id" column: serial PRIMARY KEY (NOT NULL, integer) ---
-	idCol, ok := byName["id"]
-	if !ok {
-		t.Fatal("could not find 'id' column in pg_attribute results")
-	}
-	if idCol.AttNotNull == nil || !bool(*idCol.AttNotNull) {
-		t.Error("expected attnotnull=true for PRIMARY KEY 'id' column")
-	}
+		// --- "id" column: serial PRIMARY KEY (NOT NULL, integer) ---
+		idCol, ok := byName["id"]
+		if !ok {
+			t.Fatal("could not find 'id' column in pg_attribute results")
+		}
+		if idCol.AttNotNull == nil || !bool(*idCol.AttNotNull) {
+			t.Error("expected attnotnull=true for PRIMARY KEY 'id' column")
+		}
+	})
 }
 
 func TestPgClass_BackfillThenDelta(t *testing.T) {
-	inst := latestInstance()
-	ctx := context.Background()
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		ctx := context.Background()
 
-	// Use batch size 1 to force multiple backfill ticks and test pagination.
-	c := PgClassCollector(inst.pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: 1})
+		// Use batch size 1 to force multiple backfill ticks and test pagination.
+		c := PgClassCollector(inst.pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: 1})
 
-	// First call: backfill returns exactly 1 row (batch size 1).
-	r1, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("first Collect() error: %v", err)
-	}
-	if r1 == nil {
-		t.Fatal("first Collect() returned nil — expected backfill data")
-	}
-	var p1 Payload[PgClassRow]
-	if err := json.Unmarshal(r1.JSON, &p1); err != nil {
-		t.Fatalf("failed to parse first result: %v", err)
-	}
-	if len(p1.Rows) != 1 {
-		t.Fatalf("expected exactly 1 row with batch size 1, got %d", len(p1.Rows))
-	}
-	if p1.CollectedAt.IsZero() {
-		t.Fatal("expected non-zero collected_at on first backfill result")
-	}
-	// Verify row has non-empty identifiers.
-	if p1.Rows[0].SchemaName == "" || p1.Rows[0].Oid == 0 || p1.Rows[0].RelName == "" {
-		t.Fatalf("expected non-empty schemaname/oid/relname, got %q/%q/%q", p1.Rows[0].SchemaName, p1.Rows[0].Oid, p1.Rows[0].RelName)
-	}
-
-	// Drain the remaining backfill ticks until we get nil (backfill exhausted).
-	for i := 0; i < 100; i++ {
-		r, err := c.Collect(ctx)
+		// First call: backfill returns exactly 1 row (batch size 1).
+		r1, err := c.Collect(ctx)
 		if err != nil {
-			t.Fatalf("backfill tick %d error: %v", i+2, err)
+			t.Fatalf("first Collect() error: %v", err)
 		}
-		if r == nil {
-			break // backfill done, transitioned to delta
+		if r1 == nil {
+			t.Fatal("first Collect() returned nil — expected backfill data")
 		}
-	}
+		var p1 Payload[PgClassRow]
+		if err := json.Unmarshal(r1.JSON, &p1); err != nil {
+			t.Fatalf("failed to parse first result: %v", err)
+		}
+		if len(p1.Rows) != 1 {
+			t.Fatalf("expected exactly 1 row with batch size 1, got %d", len(p1.Rows))
+		}
+		if p1.CollectedAt.IsZero() {
+			t.Fatal("expected non-zero collected_at on first backfill result")
+		}
+		// Verify row has non-empty identifiers.
+		if p1.Rows[0].SchemaName == "" || p1.Rows[0].Oid == 0 || p1.Rows[0].RelName == "" {
+			t.Fatalf("expected non-empty schemaname/oid/relname, got %q/%q/%q", p1.Rows[0].SchemaName, p1.Rows[0].Oid, p1.Rows[0].RelName)
+		}
 
-	// Delta with no changes since last poll → nil.
-	rDelta, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("delta Collect() error: %v", err)
-	}
-	if rDelta != nil {
-		t.Fatal("expected nil delta result before any ANALYZE")
-	}
+		// Drain the remaining backfill ticks until we get nil (backfill exhausted).
+		for i := 0; i < 100; i++ {
+			r, err := c.Collect(ctx)
+			if err != nil {
+				t.Fatalf("backfill tick %d error: %v", i+2, err)
+			}
+			if r == nil {
+				break // backfill done, transitioned to delta
+			}
+		}
 
-	// ANALYZE triggers a timestamp change that the delta query detects.
-	_, _ = inst.admin.Exec(ctx, "ANALYZE test_users")
+		// Delta with no changes since last poll → nil.
+		rDelta, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("delta Collect() error: %v", err)
+		}
+		if rDelta != nil {
+			t.Fatal("expected nil delta result before any ANALYZE")
+		}
 
-	rAfterAnalyze, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("post-ANALYZE Collect() error: %v", err)
-	}
-	if rAfterAnalyze == nil {
-		t.Fatal("expected delta data after ANALYZE, got nil")
-	}
+		// ANALYZE triggers a timestamp change that the delta query detects.
+		_, _ = inst.admin.Exec(ctx, "ANALYZE test_users")
+		flushStats(ctx, inst)
+
+		rAfterAnalyze, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("post-ANALYZE Collect() error: %v", err)
+		}
+		if rAfterAnalyze == nil {
+			t.Fatal("expected delta data after ANALYZE, got nil")
+		}
+	})
 }
 
 func TestPgClass_FullRescanPicksUpAllRelkinds(t *testing.T) {
-	inst := latestInstance()
-	ctx := context.Background()
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		ctx := context.Background()
 
-	c := PgClassCollector(inst.pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: 1000})
+		c := PgClassCollector(inst.pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: 1000})
 
-	// Drain the backfill.
-	for i := 0; i < 100; i++ {
-		r, err := c.Collect(ctx)
-		if err != nil {
-			t.Fatalf("backfill tick %d error: %v", i+1, err)
+		// Drain the backfill.
+		for i := 0; i < 100; i++ {
+			r, err := c.Collect(ctx)
+			if err != nil {
+				t.Fatalf("backfill tick %d error: %v", i+1, err)
+			}
+			if r == nil {
+				break
+			}
 		}
-		if r == nil {
-			break
-		}
-	}
 
-	// Run delta ticks until we hit the full rescan interval.
-	// pgClassFullRescanInterval is 30, so tick 30 triggers the rescan.
-	var rescanResult *CollectResult
-	for i := 1; i <= pgClassFullRescanInterval; i++ {
-		r, err := c.Collect(ctx)
-		if err != nil {
-			t.Fatalf("delta tick %d error: %v", i, err)
+		// Run delta ticks until we hit the full rescan interval.
+		// pgClassFullRescanInterval is 30, so tick 30 triggers the rescan.
+		var rescanResult *CollectResult
+		for i := 1; i <= pgClassFullRescanInterval; i++ {
+			r, err := c.Collect(ctx)
+			if err != nil {
+				t.Fatalf("delta tick %d error: %v", i, err)
+			}
+			if i == pgClassFullRescanInterval {
+				rescanResult = r
+			}
 		}
-		if i == pgClassFullRescanInterval {
-			rescanResult = r
+		if rescanResult == nil {
+			t.Fatal("expected non-nil result on full rescan tick")
 		}
-	}
-	if rescanResult == nil {
-		t.Fatal("expected non-nil result on full rescan tick")
-	}
 
-	var p Payload[PgClassRow]
-	if err := json.Unmarshal(rescanResult.JSON, &p); err != nil {
-		t.Fatalf("failed to parse full rescan result: %v", err)
-	}
+		var p Payload[PgClassRow]
+		if err := json.Unmarshal(rescanResult.JSON, &p); err != nil {
+			t.Fatalf("failed to parse full rescan result: %v", err)
+		}
 
-	// Full rescan should include all relkinds (r, i, m).
-	relkinds := make(map[string]bool)
-	for _, row := range p.Rows {
-		relkinds[string(row.RelKind)] = true
-	}
-	if !relkinds["r"] {
-		t.Error("full rescan missing relkind='r' (tables)")
-	}
-	if !relkinds["i"] {
-		t.Error("full rescan missing relkind='i' (indexes)")
-	}
-	if !relkinds["m"] {
-		t.Error("full rescan missing relkind='m' (materialized views)")
-	}
+		// Full rescan should include all relkinds (r, i, m).
+		relkinds := make(map[string]bool)
+		for _, row := range p.Rows {
+			relkinds[string(row.RelKind)] = true
+		}
+		if !relkinds["r"] {
+			t.Error("full rescan missing relkind='r' (tables)")
+		}
+		if !relkinds["i"] {
+			t.Error("full rescan missing relkind='i' (indexes)")
+		}
+		if !relkinds["m"] {
+			t.Error("full rescan missing relkind='m' (materialized views)")
+		}
+	})
 }
 
 func TestPgClass_NewFieldsPopulated(t *testing.T) {
-	inst := latestInstance()
-	ctx := context.Background()
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		ctx := context.Background()
 
-	// Use a large batch size to get all rows in one backfill tick.
-	c := PgClassCollector(inst.pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: 1000})
-	result, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("Collect() error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("Collect() returned nil")
-	}
-
-	var p Payload[PgClassRow]
-	if err := json.Unmarshal(result.JSON, &p); err != nil {
-		t.Fatalf("failed to parse result: %v", err)
-	}
-
-	// Build a map of relname -> row for easy lookup.
-	byName := make(map[string]*PgClassRow, len(p.Rows))
-	for i := range p.Rows {
-		byName[string(p.Rows[i].RelName)] = &p.Rows[i]
-	}
-
-	// Collect observed relkinds to verify broadened filter.
-	relkinds := make(map[string]bool)
-	for _, row := range p.Rows {
-		relkinds[string(row.RelKind)] = true
-	}
-
-	// We should see tables ('r'), indexes ('i'), and materialized views ('m').
-	if !relkinds["r"] {
-		t.Error("expected relkind='r' (table) in results")
-	}
-	if !relkinds["i"] {
-		t.Error("expected relkind='i' (index) in results")
-	}
-	if !relkinds["m"] {
-		t.Error("expected relkind='m' (materialized view) in results")
-	}
-
-	// --- test_users table: relkind='r', persistent, has toast (text columns) ---
-	table, ok := byName["test_users"]
-	if !ok {
-		t.Fatal("could not find 'test_users' in pg_class results")
-	}
-	if string(table.RelKind) != "r" {
-		t.Errorf("expected relkind='r' for test_users, got %q", string(table.RelKind))
-	}
-	if string(table.RelPersistence) != "p" {
-		t.Errorf("expected relpersistence='p' (permanent) for test_users, got %q", string(table.RelPersistence))
-	}
-	if bool(table.RelIsPartition) {
-		t.Error("expected relispartition=false for test_users")
-	}
-	if bool(table.RelHasSubClass) {
-		t.Error("expected relhassubclass=false for test_users (not inherited)")
-	}
-	// Regular tables use the 'heap' access method by default.
-	if table.AccessMethod == nil {
-		t.Fatal("expected access_method to be non-nil for table")
-	}
-	if string(*table.AccessMethod) != "heap" {
-		t.Errorf("expected access_method='heap' for test_users, got %q", string(*table.AccessMethod))
-	}
-	// test_users has text columns, so it should have a TOAST table.
-	if uint32(table.RelToastRelID) == 0 {
-		t.Error("expected reltoastrelid != 0 for table with text columns")
-	}
-	// 0 = default tablespace.
-	if uint32(table.RelTablespace) != 0 {
-		t.Errorf("expected reltablespace=0 (default), got %d", uint32(table.RelTablespace))
-	}
-	// We inserted 500 rows and ran ANALYZE; reltuples should reflect this.
-	if float64(table.RelTuples) < 400 {
-		t.Errorf("expected reltuples >= 400 after inserting 500 rows, got %.0f", float64(table.RelTuples))
-	}
-	// After ANALYZE, some pages should be all-visible.
-	if int64(table.RelAllVisible) < 0 {
-		t.Errorf("expected relallvisible >= 0, got %d", int64(table.RelAllVisible))
-	}
-	// Regular table with no reloptions should have nil/empty reloptions.
-	if len(table.RelOptions) != 0 {
-		t.Errorf("expected empty reloptions for table with defaults, got %v", table.RelOptions)
-	}
-	// XID ages: we inserted data and ran ANALYZE, so relfrozenxid_age should
-	// be positive (transactions have occurred since the freeze point).
-	if int64(table.RelFrozenXIDAge) <= 0 {
-		t.Errorf("expected relfrozenxid_age > 0 for table with data, got %d", int64(table.RelFrozenXIDAge))
-	}
-	// relminmxid_age should be non-negative (0 if no multixact activity).
-	if int64(table.RelMinMXIDAge) < 0 {
-		t.Errorf("expected relminmxid_age >= 0, got %d", int64(table.RelMinMXIDAge))
-	}
-
-	// --- idx_test_users_name: relkind='i', btree access method ---
-	idx, ok := byName["idx_test_users_name"]
-	if !ok {
-		t.Fatal("could not find 'idx_test_users_name' in pg_class results")
-	}
-	if string(idx.RelKind) != "i" {
-		t.Errorf("expected relkind='i' for index, got %q", string(idx.RelKind))
-	}
-	if idx.AccessMethod == nil {
-		t.Fatal("expected access_method to be non-nil for index")
-	}
-	if string(*idx.AccessMethod) != "btree" {
-		t.Errorf("expected access_method='btree', got %q", string(*idx.AccessMethod))
-	}
-	// Indexes don't have TOAST tables.
-	if uint32(idx.RelToastRelID) != 0 {
-		t.Errorf("expected reltoastrelid=0 for index, got %d", uint32(idx.RelToastRelID))
-	}
-
-	// --- idx_test_users_score_ff70: index with fillfactor=70 in reloptions ---
-	idxFF, ok := byName["idx_test_users_score_ff70"]
-	if !ok {
-		t.Fatal("could not find 'idx_test_users_score_ff70' in pg_class results")
-	}
-	if len(idxFF.RelOptions) == 0 {
-		t.Fatal("expected non-empty reloptions for index with fillfactor=70")
-	}
-	foundFF := false
-	for _, opt := range idxFF.RelOptions {
-		if string(opt) == "fillfactor=70" {
-			foundFF = true
-			break
+		// Use a large batch size to get all rows in one backfill tick.
+		c := PgClassCollector(inst.pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: 1000})
+		result, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("Collect() error: %v", err)
 		}
-	}
-	if !foundFF {
-		t.Errorf("expected reloptions to contain 'fillfactor=70', got %v", idxFF.RelOptions)
-	}
-	if idxFF.AccessMethod == nil || string(*idxFF.AccessMethod) != "btree" {
-		t.Errorf("expected access_method='btree' for idx_test_users_score_ff70")
-	}
+		if result == nil {
+			t.Fatal("Collect() returned nil")
+		}
 
-	// --- mv_test_users: relkind='m', materialized view ---
-	mv, ok := byName["mv_test_users"]
-	if !ok {
-		t.Fatal("could not find 'mv_test_users' in pg_class results")
-	}
-	if string(mv.RelKind) != "m" {
-		t.Errorf("expected relkind='m' for materialized view, got %q", string(mv.RelKind))
-	}
-	if string(mv.RelPersistence) != "p" {
-		t.Errorf("expected relpersistence='p' for materialized view, got %q", string(mv.RelPersistence))
-	}
-	// Materialized views have heap access method.
-	if mv.AccessMethod == nil {
-		t.Fatal("expected access_method to be non-nil for materialized view")
-	}
-	if string(*mv.AccessMethod) != "heap" {
-		t.Errorf("expected access_method='heap' for materialized view, got %q", string(*mv.AccessMethod))
-	}
+		var p Payload[PgClassRow]
+		if err := json.Unmarshal(result.JSON, &p); err != nil {
+			t.Fatalf("failed to parse result: %v", err)
+		}
+
+		// Build a map of relname -> row for easy lookup.
+		byName := make(map[string]*PgClassRow, len(p.Rows))
+		for i := range p.Rows {
+			byName[string(p.Rows[i].RelName)] = &p.Rows[i]
+		}
+
+		// Collect observed relkinds to verify broadened filter.
+		relkinds := make(map[string]bool)
+		for _, row := range p.Rows {
+			relkinds[string(row.RelKind)] = true
+		}
+
+		// We should see tables ('r'), indexes ('i'), and materialized views ('m').
+		if !relkinds["r"] {
+			t.Error("expected relkind='r' (table) in results")
+		}
+		if !relkinds["i"] {
+			t.Error("expected relkind='i' (index) in results")
+		}
+		if !relkinds["m"] {
+			t.Error("expected relkind='m' (materialized view) in results")
+		}
+
+		// --- test_users table: relkind='r', persistent, has toast (text columns) ---
+		table, ok := byName["test_users"]
+		if !ok {
+			t.Fatal("could not find 'test_users' in pg_class results")
+		}
+		if string(table.RelKind) != "r" {
+			t.Errorf("expected relkind='r' for test_users, got %q", string(table.RelKind))
+		}
+		if string(table.RelPersistence) != "p" {
+			t.Errorf("expected relpersistence='p' (permanent) for test_users, got %q", string(table.RelPersistence))
+		}
+		if bool(table.RelIsPartition) {
+			t.Error("expected relispartition=false for test_users")
+		}
+		if bool(table.RelHasSubClass) {
+			t.Error("expected relhassubclass=false for test_users (not inherited)")
+		}
+		// Regular tables use the 'heap' access method by default.
+		if table.AccessMethod == nil {
+			t.Fatal("expected access_method to be non-nil for table")
+		}
+		if string(*table.AccessMethod) != "heap" {
+			t.Errorf("expected access_method='heap' for test_users, got %q", string(*table.AccessMethod))
+		}
+		// test_users has text columns, so it should have a TOAST table.
+		if uint32(table.RelToastRelID) == 0 {
+			t.Error("expected reltoastrelid != 0 for table with text columns")
+		}
+		// 0 = default tablespace.
+		if uint32(table.RelTablespace) != 0 {
+			t.Errorf("expected reltablespace=0 (default), got %d", uint32(table.RelTablespace))
+		}
+		// We inserted 500 rows and ran ANALYZE; reltuples should reflect this.
+		if float64(table.RelTuples) < 400 {
+			t.Errorf("expected reltuples >= 400 after inserting 500 rows, got %.0f", float64(table.RelTuples))
+		}
+		// After ANALYZE, some pages should be all-visible.
+		if int64(table.RelAllVisible) < 0 {
+			t.Errorf("expected relallvisible >= 0, got %d", int64(table.RelAllVisible))
+		}
+		// Regular table with no reloptions should have nil/empty reloptions.
+		if len(table.RelOptions) != 0 {
+			t.Errorf("expected empty reloptions for table with defaults, got %v", table.RelOptions)
+		}
+		// XID ages: we inserted data and ran ANALYZE, so relfrozenxid_age should
+		// be positive (transactions have occurred since the freeze point).
+		if int64(table.RelFrozenXIDAge) <= 0 {
+			t.Errorf("expected relfrozenxid_age > 0 for table with data, got %d", int64(table.RelFrozenXIDAge))
+		}
+		// relminmxid_age should be non-negative (0 if no multixact activity).
+		if int64(table.RelMinMXIDAge) < 0 {
+			t.Errorf("expected relminmxid_age >= 0, got %d", int64(table.RelMinMXIDAge))
+		}
+
+		// --- idx_test_users_name: relkind='i', btree access method ---
+		idx, ok := byName["idx_test_users_name"]
+		if !ok {
+			t.Fatal("could not find 'idx_test_users_name' in pg_class results")
+		}
+		if string(idx.RelKind) != "i" {
+			t.Errorf("expected relkind='i' for index, got %q", string(idx.RelKind))
+		}
+		if idx.AccessMethod == nil {
+			t.Fatal("expected access_method to be non-nil for index")
+		}
+		if string(*idx.AccessMethod) != "btree" {
+			t.Errorf("expected access_method='btree', got %q", string(*idx.AccessMethod))
+		}
+		// Indexes don't have TOAST tables.
+		if uint32(idx.RelToastRelID) != 0 {
+			t.Errorf("expected reltoastrelid=0 for index, got %d", uint32(idx.RelToastRelID))
+		}
+
+		// --- idx_test_users_score_ff70: index with fillfactor=70 in reloptions ---
+		idxFF, ok := byName["idx_test_users_score_ff70"]
+		if !ok {
+			t.Fatal("could not find 'idx_test_users_score_ff70' in pg_class results")
+		}
+		if len(idxFF.RelOptions) == 0 {
+			t.Fatal("expected non-empty reloptions for index with fillfactor=70")
+		}
+		foundFF := false
+		for _, opt := range idxFF.RelOptions {
+			if string(opt) == "fillfactor=70" {
+				foundFF = true
+				break
+			}
+		}
+		if !foundFF {
+			t.Errorf("expected reloptions to contain 'fillfactor=70', got %v", idxFF.RelOptions)
+		}
+		if idxFF.AccessMethod == nil || string(*idxFF.AccessMethod) != "btree" {
+			t.Errorf("expected access_method='btree' for idx_test_users_score_ff70")
+		}
+
+		// --- mv_test_users: relkind='m', materialized view ---
+		mv, ok := byName["mv_test_users"]
+		if !ok {
+			t.Fatal("could not find 'mv_test_users' in pg_class results")
+		}
+		if string(mv.RelKind) != "m" {
+			t.Errorf("expected relkind='m' for materialized view, got %q", string(mv.RelKind))
+		}
+		if string(mv.RelPersistence) != "p" {
+			t.Errorf("expected relpersistence='p' for materialized view, got %q", string(mv.RelPersistence))
+		}
+		// Materialized views have heap access method.
+		if mv.AccessMethod == nil {
+			t.Fatal("expected access_method to be non-nil for materialized view")
+		}
+		if string(*mv.AccessMethod) != "heap" {
+			t.Errorf("expected access_method='heap' for materialized view, got %q", string(*mv.AccessMethod))
+		}
+	})
 }
 
 func TestPgConstraint_ReturnsFixtureConstraints(t *testing.T) {
-	inst := latestInstance()
-	ctx := context.Background()
-	c := PgConstraintCollector(inst.pool, noopPrepareCtx)
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		ctx := context.Background()
+		c := PgConstraintCollector(inst.pool, noopPrepareCtx)
 
-	result, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("Collect() error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("Collect() returned nil")
-	}
-
-	var p Payload[PgConstraintRow]
-	if err := json.Unmarshal(result.JSON, &p); err != nil {
-		t.Fatalf("failed to parse result: %v", err)
-	}
-	if len(p.Rows) == 0 {
-		t.Fatal("expected non-empty constraint rows")
-	}
-
-	// Build a map of conname -> row.
-	byName := make(map[string]*PgConstraintRow, len(p.Rows))
-	for i := range p.Rows {
-		if p.Rows[i].ConName != nil {
-			byName[string(*p.Rows[i].ConName)] = &p.Rows[i]
+		result, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("Collect() error: %v", err)
 		}
-	}
-
-	// test_users has a PRIMARY KEY on 'id' → contype='p'.
-	var pk *PgConstraintRow
-	for i := range p.Rows {
-		row := &p.Rows[i]
-		if row.ConType != nil && string(*row.ConType) == "p" && row.ConRelID != nil {
-			pk = row
-			break
+		if result == nil {
+			t.Fatal("Collect() returned nil")
 		}
-	}
-	if pk == nil {
-		t.Fatal("could not find a primary key constraint (contype='p')")
-	}
-	if pk.ConName == nil || string(*pk.ConName) == "" {
-		t.Error("expected non-empty conname for primary key")
-	}
-	// PK has a single key column.
-	if len(pk.ConKey) != 1 {
-		t.Errorf("expected conkey length 1 for single-column PK, got %d", len(pk.ConKey))
-	}
-	// PK should reference a backing index.
-	if pk.ConIndID == nil || uint32(*pk.ConIndID) == 0 {
-		t.Error("expected non-zero conindid for primary key (backing index)")
-	}
-	// PK is not deferrable.
-	if pk.ConDeferrable == nil || bool(*pk.ConDeferrable) {
-		t.Error("expected condeferrable=false for primary key")
-	}
-	// PK is validated.
-	if pk.ConValidated == nil || !bool(*pk.ConValidated) {
-		t.Error("expected convalidated=true for primary key")
-	}
-	// PK is not a foreign key, so confrelid should be 0 and confkey empty.
-	if pk.ConfRelID != nil && uint32(*pk.ConfRelID) != 0 {
-		t.Errorf("expected confrelid=0 for PK, got %d", uint32(*pk.ConfRelID))
-	}
-	if len(pk.ConfKey) != 0 {
-		t.Errorf("expected empty confkey for PK, got %v", pk.ConfKey)
-	}
 
-	// Verify we see all expected constraint types in the results.
-	conTypes := make(map[string]bool)
-	for _, row := range p.Rows {
-		if row.ConType != nil {
-			conTypes[string(*row.ConType)] = true
+		var p Payload[PgConstraintRow]
+		if err := json.Unmarshal(result.JSON, &p); err != nil {
+			t.Fatalf("failed to parse result: %v", err)
 		}
-	}
-	// At minimum, we should see primary key constraints from test_users and test_cold.
-	if !conTypes["p"] {
-		t.Error("expected at least one primary key constraint (contype='p')")
-	}
+		if len(p.Rows) == 0 {
+			t.Fatal("expected non-empty constraint rows")
+		}
+
+		// Build a map of conname -> row.
+		byName := make(map[string]*PgConstraintRow, len(p.Rows))
+		for i := range p.Rows {
+			if p.Rows[i].ConName != nil {
+				byName[string(*p.Rows[i].ConName)] = &p.Rows[i]
+			}
+		}
+
+		// test_users has a PRIMARY KEY on 'id' → contype='p'.
+		var pk *PgConstraintRow
+		for i := range p.Rows {
+			row := &p.Rows[i]
+			if row.ConType != nil && string(*row.ConType) == "p" && row.ConRelID != nil {
+				pk = row
+				break
+			}
+		}
+		if pk == nil {
+			t.Fatal("could not find a primary key constraint (contype='p')")
+		}
+		if pk.ConName == nil || string(*pk.ConName) == "" {
+			t.Error("expected non-empty conname for primary key")
+		}
+		// PK has a single key column.
+		if len(pk.ConKey) != 1 {
+			t.Errorf("expected conkey length 1 for single-column PK, got %d", len(pk.ConKey))
+		}
+		// PK should reference a backing index.
+		if pk.ConIndID == nil || uint32(*pk.ConIndID) == 0 {
+			t.Error("expected non-zero conindid for primary key (backing index)")
+		}
+		// PK is not deferrable.
+		if pk.ConDeferrable == nil || bool(*pk.ConDeferrable) {
+			t.Error("expected condeferrable=false for primary key")
+		}
+		// PK is validated.
+		if pk.ConValidated == nil || !bool(*pk.ConValidated) {
+			t.Error("expected convalidated=true for primary key")
+		}
+		// PK is not a foreign key, so confrelid should be 0 and confkey empty.
+		if pk.ConfRelID != nil && uint32(*pk.ConfRelID) != 0 {
+			t.Errorf("expected confrelid=0 for PK, got %d", uint32(*pk.ConfRelID))
+		}
+		if len(pk.ConfKey) != 0 {
+			t.Errorf("expected empty confkey for PK, got %v", pk.ConfKey)
+		}
+
+		// Verify we see all expected constraint types in the results.
+		conTypes := make(map[string]bool)
+		for _, row := range p.Rows {
+			if row.ConType != nil {
+				conTypes[string(*row.ConType)] = true
+			}
+		}
+		// At minimum, we should see primary key constraints from test_users and test_cold.
+		if !conTypes["p"] {
+			t.Error("expected at least one primary key constraint (contype='p')")
+		}
+	})
 }
 
 func TestPgType_ReturnsBuiltinAndUserTypes(t *testing.T) {
-	inst := latestInstance()
-	ctx := context.Background()
-	c := PgTypeCollector(inst.pool, noopPrepareCtx)
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		ctx := context.Background()
+		c := PgTypeCollector(inst.pool, noopPrepareCtx)
 
-	result, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("Collect() error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("Collect() returned nil")
-	}
-
-	var p Payload[PgTypeRow]
-	if err := json.Unmarshal(result.JSON, &p); err != nil {
-		t.Fatalf("failed to parse result: %v", err)
-	}
-	if len(p.Rows) == 0 {
-		t.Fatal("expected non-empty type rows")
-	}
-
-	// Build a map of typname -> row.
-	byName := make(map[string]*PgTypeRow, len(p.Rows))
-	for i := range p.Rows {
-		if p.Rows[i].TypName != nil {
-			byName[string(*p.Rows[i].TypName)] = &p.Rows[i]
+		result, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("Collect() error: %v", err)
 		}
-	}
+		if result == nil {
+			t.Fatal("Collect() returned nil")
+		}
 
-	// --- Built-in type: "int4" (integer) ---
-	int4, ok := byName["int4"]
-	if !ok {
-		t.Fatal("could not find built-in type 'int4' in results")
-	}
-	// int4 is a base type.
-	if int4.TypType == nil || string(*int4.TypType) != "b" {
-		t.Errorf("expected typtype='b' (base) for int4, got %v", int4.TypType)
-	}
-	// int4 is 4 bytes, pass-by-value.
-	if int4.TypLen == nil || int64(*int4.TypLen) != 4 {
-		t.Errorf("expected typlen=4 for int4, got %v", int4.TypLen)
-	}
-	if int4.TypByVal == nil || !bool(*int4.TypByVal) {
-		t.Error("expected typbyval=true for int4")
-	}
-	// int4 uses plain storage.
-	if int4.TypStorage == nil || string(*int4.TypStorage) != "p" {
-		t.Errorf("expected typstorage='p' (plain) for int4, got %v", int4.TypStorage)
-	}
-	// int4 alignment is "i" (int).
-	if int4.TypAlign == nil || string(*int4.TypAlign) != "i" {
-		t.Errorf("expected typalign='i' for int4, got %v", int4.TypAlign)
-	}
-	// int4 is in the numeric category.
-	if int4.TypCategory == nil || string(*int4.TypCategory) != "N" {
-		t.Errorf("expected typcategory='N' (numeric) for int4, got %v", int4.TypCategory)
-	}
+		var p Payload[PgTypeRow]
+		if err := json.Unmarshal(result.JSON, &p); err != nil {
+			t.Fatalf("failed to parse result: %v", err)
+		}
+		if len(p.Rows) == 0 {
+			t.Fatal("expected non-empty type rows")
+		}
 
-	// --- Built-in type: "text" ---
-	text, ok := byName["text"]
-	if !ok {
-		t.Fatal("could not find built-in type 'text' in results")
-	}
-	// text is variable-length (typlen=-1), pass-by-reference.
-	if text.TypLen == nil || int64(*text.TypLen) != -1 {
-		t.Errorf("expected typlen=-1 for text, got %v", text.TypLen)
-	}
-	if text.TypByVal == nil || bool(*text.TypByVal) {
-		t.Error("expected typbyval=false for text")
-	}
-	// text uses extended storage.
-	if text.TypStorage == nil || string(*text.TypStorage) != "x" {
-		t.Errorf("expected typstorage='x' (extended) for text, got %v", text.TypStorage)
-	}
-	// text is in the string category.
-	if text.TypCategory == nil || string(*text.TypCategory) != "S" {
-		t.Errorf("expected typcategory='S' (string) for text, got %v", text.TypCategory)
-	}
+		// Build a map of typname -> row.
+		byName := make(map[string]*PgTypeRow, len(p.Rows))
+		for i := range p.Rows {
+			if p.Rows[i].TypName != nil {
+				byName[string(*p.Rows[i].TypName)] = &p.Rows[i]
+			}
+		}
 
-	// --- Built-in type: "bool" ---
-	boolType, ok := byName["bool"]
-	if !ok {
-		t.Fatal("could not find built-in type 'bool' in results")
-	}
-	// bool is 1 byte, pass-by-value.
-	if boolType.TypLen == nil || int64(*boolType.TypLen) != 1 {
-		t.Errorf("expected typlen=1 for bool, got %v", boolType.TypLen)
-	}
-	if boolType.TypByVal == nil || !bool(*boolType.TypByVal) {
-		t.Error("expected typbyval=true for bool")
-	}
+		// --- Built-in type: "int4" (integer) ---
+		int4, ok := byName["int4"]
+		if !ok {
+			t.Fatal("could not find built-in type 'int4' in results")
+		}
+		// int4 is a base type.
+		if int4.TypType == nil || string(*int4.TypType) != "b" {
+			t.Errorf("expected typtype='b' (base) for int4, got %v", int4.TypType)
+		}
+		// int4 is 4 bytes, pass-by-value.
+		if int4.TypLen == nil || int64(*int4.TypLen) != 4 {
+			t.Errorf("expected typlen=4 for int4, got %v", int4.TypLen)
+		}
+		if int4.TypByVal == nil || !bool(*int4.TypByVal) {
+			t.Error("expected typbyval=true for int4")
+		}
+		// int4 uses plain storage.
+		if int4.TypStorage == nil || string(*int4.TypStorage) != "p" {
+			t.Errorf("expected typstorage='p' (plain) for int4, got %v", int4.TypStorage)
+		}
+		// int4 alignment is "i" (int).
+		if int4.TypAlign == nil || string(*int4.TypAlign) != "i" {
+			t.Errorf("expected typalign='i' for int4, got %v", int4.TypAlign)
+		}
+		// int4 is in the numeric category.
+		if int4.TypCategory == nil || string(*int4.TypCategory) != "N" {
+			t.Errorf("expected typcategory='N' (numeric) for int4, got %v", int4.TypCategory)
+		}
+
+		// --- Built-in type: "text" ---
+		text, ok := byName["text"]
+		if !ok {
+			t.Fatal("could not find built-in type 'text' in results")
+		}
+		// text is variable-length (typlen=-1), pass-by-reference.
+		if text.TypLen == nil || int64(*text.TypLen) != -1 {
+			t.Errorf("expected typlen=-1 for text, got %v", text.TypLen)
+		}
+		if text.TypByVal == nil || bool(*text.TypByVal) {
+			t.Error("expected typbyval=false for text")
+		}
+		// text uses extended storage.
+		if text.TypStorage == nil || string(*text.TypStorage) != "x" {
+			t.Errorf("expected typstorage='x' (extended) for text, got %v", text.TypStorage)
+		}
+		// text is in the string category.
+		if text.TypCategory == nil || string(*text.TypCategory) != "S" {
+			t.Errorf("expected typcategory='S' (string) for text, got %v", text.TypCategory)
+		}
+
+		// --- Built-in type: "bool" ---
+		boolType, ok := byName["bool"]
+		if !ok {
+			t.Fatal("could not find built-in type 'bool' in results")
+		}
+		// bool is 1 byte, pass-by-value.
+		if boolType.TypLen == nil || int64(*boolType.TypLen) != 1 {
+			t.Errorf("expected typlen=1 for bool, got %v", boolType.TypLen)
+		}
+		if boolType.TypByVal == nil || !bool(*boolType.TypByVal) {
+			t.Error("expected typbyval=true for bool")
+		}
+	})
 }
 
 func TestPgStats_BackfillThenDelta(t *testing.T) {
-	inst := latestInstance()
-	ctx := context.Background()
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		ctx := context.Background()
 
-	// Use batch size 1 to force pagination.
-	c := PgStatsCollector(inst.pool, noopPrepareCtx, PgStatsConfig{BackfillBatchSize: 1, IncludeTableData: true})
+		// Use batch size 1 to force pagination.
+		c := PgStatsCollector(inst.pool, noopPrepareCtx, PgStatsConfig{BackfillBatchSize: 1, IncludeTableData: true})
 
-	// First call: backfill returns stats for 1 table.
-	r1, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("first Collect() error: %v", err)
-	}
-	if r1 == nil {
-		t.Fatal("first Collect() returned nil — expected pg_stats backfill data")
-	}
-
-	var p1 Payload[PgStatsRow]
-	if err := json.Unmarshal(r1.JSON, &p1); err != nil {
-		t.Fatalf("failed to parse first result: %v", err)
-	}
-	if len(p1.Rows) == 0 {
-		t.Fatal("expected non-empty pg_stats rows")
-	}
-	if p1.CollectedAt.IsZero() {
-		t.Fatal("expected non-zero collected_at on first backfill result")
-	}
-
-	// Verify rows have non-empty identifiers.
-	for _, row := range p1.Rows {
-		if row.SchemaName == "" || row.TableName == "" || row.AttName == "" {
-			t.Fatalf("expected non-empty schemaname/tablename/attname, got %q/%q/%q",
-				row.SchemaName, row.TableName, row.AttName)
+		// First call: backfill returns stats for 1 table.
+		r1, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("first Collect() error: %v", err)
 		}
-	}
+		if r1 == nil {
+			t.Fatal("first Collect() returned nil — expected pg_stats backfill data")
+		}
 
-	// Verify array columns are valid JSON when non-null.
-	for _, row := range p1.Rows {
-		for _, col := range []struct {
-			name string
-			val  json.RawMessage
-		}{
-			{"most_common_vals", row.MostCommonVals},
-			{"most_common_freqs", row.MostCommonFreqs},
-			{"histogram_bounds", row.HistogramBounds},
-			{"most_common_elems", row.MostCommonElems},
-			{"most_common_elem_freqs", row.MostCommonElemFreqs},
-			{"elem_count_histogram", row.ElemCountHistogram},
-		} {
-			if col.val != nil && !json.Valid(col.val) {
-				t.Fatalf("%s.%s.%s %s is not valid JSON: %s",
-					row.SchemaName, row.TableName, row.AttName, col.name, col.val)
+		var p1 Payload[PgStatsRow]
+		if err := json.Unmarshal(r1.JSON, &p1); err != nil {
+			t.Fatalf("failed to parse first result: %v", err)
+		}
+		if len(p1.Rows) == 0 {
+			t.Fatal("expected non-empty pg_stats rows")
+		}
+		if p1.CollectedAt.IsZero() {
+			t.Fatal("expected non-zero collected_at on first backfill result")
+		}
+
+		// Verify rows have non-empty identifiers.
+		for _, row := range p1.Rows {
+			if row.SchemaName == "" || row.TableName == "" || row.AttName == "" {
+				t.Fatalf("expected non-empty schemaname/tablename/attname, got %q/%q/%q",
+					row.SchemaName, row.TableName, row.AttName)
 			}
 		}
-	}
 
-	// Drain backfill.
-	for i := 0; i < 100; i++ {
-		r, err := c.Collect(ctx)
+		// Verify array columns are valid JSON when non-null.
+		for _, row := range p1.Rows {
+			for _, col := range []struct {
+				name string
+				val  json.RawMessage
+			}{
+				{"most_common_vals", row.MostCommonVals},
+				{"most_common_freqs", row.MostCommonFreqs},
+				{"histogram_bounds", row.HistogramBounds},
+				{"most_common_elems", row.MostCommonElems},
+				{"most_common_elem_freqs", row.MostCommonElemFreqs},
+				{"elem_count_histogram", row.ElemCountHistogram},
+			} {
+				if col.val != nil && !json.Valid(col.val) {
+					t.Fatalf("%s.%s.%s %s is not valid JSON: %s",
+						row.SchemaName, row.TableName, row.AttName, col.name, col.val)
+				}
+			}
+		}
+
+		// Drain backfill.
+		for i := 0; i < 100; i++ {
+			r, err := c.Collect(ctx)
+			if err != nil {
+				t.Fatalf("backfill tick %d error: %v", i+2, err)
+			}
+			if r == nil {
+				break
+			}
+		}
+
+		// Delta with no ANALYZE → nil.
+		rDelta, err := c.Collect(ctx)
 		if err != nil {
-			t.Fatalf("backfill tick %d error: %v", i+2, err)
+			t.Fatalf("delta Collect() error: %v", err)
 		}
-		if r == nil {
-			break
+		if rDelta != nil {
+			t.Fatal("expected nil delta result before any ANALYZE")
 		}
-	}
 
-	// Delta with no ANALYZE → nil.
-	rDelta, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("delta Collect() error: %v", err)
-	}
-	if rDelta != nil {
-		t.Fatal("expected nil delta result before any ANALYZE")
-	}
+		// ANALYZE triggers delta.
+		_, _ = inst.admin.Exec(ctx, "ANALYZE test_users")
+		flushStats(ctx, inst)
 
-	// ANALYZE triggers delta.
-	_, _ = inst.admin.Exec(ctx, "ANALYZE test_users")
-
-	rAfterAnalyze, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("post-ANALYZE Collect() error: %v", err)
-	}
-	if rAfterAnalyze == nil {
-		t.Fatal("expected delta data after ANALYZE, got nil")
-	}
+		rAfterAnalyze, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("post-ANALYZE Collect() error: %v", err)
+		}
+		if rAfterAnalyze == nil {
+			t.Fatal("expected delta data after ANALYZE, got nil")
+		}
+	})
 }
 
 func TestPgStats_RedactsWhenIncludeTableDataFalse(t *testing.T) {
-	inst := latestInstance()
-	c := PgStatsCollector(inst.pool, noopPrepareCtx, PgStatsConfig{BackfillBatchSize: PgStatsBackfillBatchSize})
-	ctx := context.Background()
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		c := PgStatsCollector(inst.pool, noopPrepareCtx, PgStatsConfig{BackfillBatchSize: PgStatsBackfillBatchSize})
+		ctx := context.Background()
 
-	r, err := c.Collect(ctx)
-	if err != nil {
-		t.Fatalf("Collect() error: %v", err)
-	}
-	if r == nil {
-		t.Fatal("Collect() returned nil")
-	}
+		r, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("Collect() error: %v", err)
+		}
+		if r == nil {
+			t.Fatal("Collect() returned nil")
+		}
 
-	var payload Payload[PgStatsRow]
-	if err := json.Unmarshal(r.JSON, &payload); err != nil {
-		t.Fatalf("failed to parse JSON: %v", err)
-	}
+		var payload Payload[PgStatsRow]
+		if err := json.Unmarshal(r.JSON, &payload); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
 
-	if payload.CollectedAt.IsZero() {
-		t.Fatal("expected non-zero collected_at")
-	}
-	for _, row := range payload.Rows {
-		// After JSON round-trip, nil json.RawMessage becomes []byte("null").
-		if row.MostCommonVals != nil && string(row.MostCommonVals) != "null" {
-			t.Fatalf("expected most_common_vals to be null when includeTableData=false, got %s", string(row.MostCommonVals))
+		if payload.CollectedAt.IsZero() {
+			t.Fatal("expected non-zero collected_at")
 		}
-		if row.HistogramBounds != nil && string(row.HistogramBounds) != "null" {
-			t.Fatalf("expected histogram_bounds to be null when includeTableData=false, got %s", string(row.HistogramBounds))
+		for _, row := range payload.Rows {
+			// After JSON round-trip, nil json.RawMessage becomes []byte("null").
+			if row.MostCommonVals != nil && string(row.MostCommonVals) != "null" {
+				t.Fatalf("expected most_common_vals to be null when includeTableData=false, got %s", string(row.MostCommonVals))
+			}
+			if row.HistogramBounds != nil && string(row.HistogramBounds) != "null" {
+				t.Fatalf("expected histogram_bounds to be null when includeTableData=false, got %s", string(row.HistogramBounds))
+			}
+			if row.MostCommonElems != nil && string(row.MostCommonElems) != "null" {
+				t.Fatalf("expected most_common_elems to be null when includeTableData=false, got %s", string(row.MostCommonElems))
+			}
 		}
-		if row.MostCommonElems != nil && string(row.MostCommonElems) != "null" {
-			t.Fatalf("expected most_common_elems to be null when includeTableData=false, got %s", string(row.MostCommonElems))
-		}
-	}
+	})
 }
 
 func TestPgStatStatements_AllVersions(t *testing.T) {
@@ -1698,9 +1671,10 @@ func TestPgStatStatements_AllVersions(t *testing.T) {
 }
 
 func TestAutovacuumCount_ReturnsData(t *testing.T) {
-	inst := latestInstance()
-	c := AutovacuumCountCollector(inst.pool, noopPrepareCtx)
-	requireRows(t, c)
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		c := AutovacuumCountCollector(inst.pool, noopPrepareCtx)
+		requireRows(t, c)
+	})
 }
 
 // buildCollectors creates all collectors for a given pool and PG version.
