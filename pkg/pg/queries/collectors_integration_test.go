@@ -1187,6 +1187,15 @@ func TestPgClass_NewFieldsPopulated(t *testing.T) {
 	if len(table.RelOptions) != 0 {
 		t.Errorf("expected empty reloptions for table with defaults, got %v", table.RelOptions)
 	}
+	// XID ages: we inserted data and ran ANALYZE, so relfrozenxid_age should
+	// be positive (transactions have occurred since the freeze point).
+	if int64(table.RelFrozenXIDAge) <= 0 {
+		t.Errorf("expected relfrozenxid_age > 0 for table with data, got %d", int64(table.RelFrozenXIDAge))
+	}
+	// relminmxid_age should be non-negative (0 if no multixact activity).
+	if int64(table.RelMinMXIDAge) < 0 {
+		t.Errorf("expected relminmxid_age >= 0, got %d", int64(table.RelMinMXIDAge))
+	}
 
 	// --- idx_test_users_name: relkind='i', btree access method ---
 	idx, ok := byName["idx_test_users_name"]

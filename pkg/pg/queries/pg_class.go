@@ -40,7 +40,9 @@ const pgClassColumns = `
     c.reltuples,
     c.relpages,
     c.relfrozenxid,
+    age(c.relfrozenxid)::bigint AS relfrozenxid_age,
     c.relminmxid,
+    mxid_age(c.relminmxid)::bigint AS relminmxid_age,
     c.reloptions::text[] AS reloptions,
     am.amname AS access_method,
     c.relallvisible,
@@ -93,22 +95,24 @@ ORDER BY n.nspname, c.relname
 
 // PgClassRow represents a single row from pg_class.
 type PgClassRow struct {
-	Oid            Oid     `json:"oid"`
-	SchemaName     Name    `json:"schemaname"`
-	RelName        Name    `json:"relname"`
-	RelKind        Text    `json:"relkind"`
-	RelTuples      Real    `json:"reltuples"`
-	RelPages       Integer `json:"relpages"`
-	RelFrozenXID   Xid     `json:"relfrozenxid"`
-	RelMinMXID     Xid     `json:"relminmxid"`
-	RelOptions     []Text  `json:"reloptions"`
-	AccessMethod   *Text   `json:"access_method" db:"access_method"`
-	RelAllVisible  Integer `json:"relallvisible"`
-	RelPersistence Text    `json:"relpersistence"`
-	RelIsPartition Boolean `json:"relispartition"`
-	RelHasSubClass Boolean `json:"relhassubclass"`
-	RelToastRelID  Oid     `json:"reltoastrelid"`
-	RelTablespace  Oid     `json:"reltablespace"`
+	Oid             Oid     `json:"oid"`
+	SchemaName      Name    `json:"schemaname"`
+	RelName         Name    `json:"relname"`
+	RelKind         Text    `json:"relkind"`
+	RelTuples       Real    `json:"reltuples"`
+	RelPages        Integer `json:"relpages"`
+	RelFrozenXID    Xid     `json:"relfrozenxid"`
+	RelFrozenXIDAge Bigint  `json:"relfrozenxid_age" db:"relfrozenxid_age"`
+	RelMinMXID      Xid     `json:"relminmxid"`
+	RelMinMXIDAge   Bigint  `json:"relminmxid_age" db:"relminmxid_age"`
+	RelOptions      []Text  `json:"reloptions"`
+	AccessMethod    *Text   `json:"access_method" db:"access_method"`
+	RelAllVisible   Integer `json:"relallvisible"`
+	RelPersistence  Text    `json:"relpersistence"`
+	RelIsPartition  Boolean `json:"relispartition"`
+	RelHasSubClass  Boolean `json:"relhassubclass"`
+	RelToastRelID   Oid     `json:"reltoastrelid"`
+	RelTablespace   Oid     `json:"reltablespace"`
 }
 
 // PgClassConfig holds configuration for the pg_class collector.
