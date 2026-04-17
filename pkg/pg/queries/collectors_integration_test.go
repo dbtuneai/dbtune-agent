@@ -48,6 +48,10 @@ func setupTestFixtures(ctx context.Context, pool *pgxpool.Pool) error {
 		`CREATE INDEX idx_test_users_name ON test_users(name)`,
 		`CREATE INDEX idx_test_users_score ON test_users(score)`,
 		`CREATE UNIQUE INDEX idx_test_users_email ON test_users(email)`,
+		// Partial index for pg_index is_partial / indpred_sql testing.
+		`CREATE INDEX idx_test_users_partial ON test_users(score) WHERE score > 50`,
+		// Expression index for pg_index indexprs_sql testing.
+		`CREATE INDEX idx_test_users_expr ON test_users ((lower(name)))`,
 		// Insert enough rows for pg_stats histograms and pg_class reltuples.
 		`INSERT INTO test_users (name, email, score)
 		 SELECT 'user_' || i, 'user_' || i || '@test.com', (i % 100)
@@ -740,9 +744,87 @@ func TestPgIndex_ReturnsFixtureIndexes(t *testing.T) {
 	inst := latestInstance()
 	c := PgIndexCollector(inst.pool, noopPrepareCtx)
 	n := requireRows(t, c)
-	// We created 4 indexes: PK + 3 explicit
-	if n < 4 {
-		t.Fatalf("expected at least 4 indexes, got %d", n)
+	// We created 6 indexes: PK + 3 explicit + 1 partial + 1 expression
+	if n < 6 {
+		t.Fatalf("expected at least 6 indexes, got %d", n)
+	}
+}
+
+func TestPgIndex_NewFieldsPopulated(t *testing.T) {
+	inst := latestInstance()
+	ctx := context.Background()
+	c := PgIndexCollector(inst.pool, noopPrepareCtx)
+
+	result, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("Collect() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Collect() returned nil")
+	}
+
+	var p Payload[PgIndexRow]
+	if err := json.Unmarshal(result.JSON, &p); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+
+	// Build a map of index name -> row for easy lookup.
+	byName := make(map[string]*PgIndexRow, len(p.Rows))
+	for i := range p.Rows {
+		if p.Rows[i].IndexName != nil {
+			byName[string(*p.Rows[i].IndexName)] = &p.Rows[i]
+		}
+	}
+
+	// All indexes should have indoption, indclass, indcollation arrays.
+	for name, row := range byName {
+		if len(row.IndOption) == 0 {
+			t.Errorf("index %q: expected non-empty indoption", name)
+		}
+		if len(row.IndClass) == 0 {
+			t.Errorf("index %q: expected non-empty indclass", name)
+		}
+		if len(row.IndCollation) == 0 {
+			t.Errorf("index %q: expected non-empty indcollation", name)
+		}
+	}
+
+	// Partial index: is_partial=true, indpred_sql non-nil.
+	partial, ok := byName["idx_test_users_partial"]
+	if !ok {
+		t.Fatal("could not find idx_test_users_partial in results")
+	}
+	if partial.IsPartial == nil || !bool(*partial.IsPartial) {
+		t.Error("expected is_partial=true for partial index")
+	}
+	if partial.IndPredSQL == nil {
+		t.Error("expected indpred_sql to be non-nil for partial index")
+	}
+
+	// Regular index: is_partial=false, indpred_sql nil.
+	regular, ok := byName["idx_test_users_name"]
+	if !ok {
+		t.Fatal("could not find idx_test_users_name in results")
+	}
+	if regular.IsPartial == nil || bool(*regular.IsPartial) {
+		t.Error("expected is_partial=false for regular index")
+	}
+	if regular.IndPredSQL != nil {
+		t.Error("expected indpred_sql to be nil for regular index")
+	}
+
+	// Expression index: indexprs_sql non-nil.
+	expr, ok := byName["idx_test_users_expr"]
+	if !ok {
+		t.Fatal("could not find idx_test_users_expr in results")
+	}
+	if expr.IndExprsSQL == nil {
+		t.Error("expected indexprs_sql to be non-nil for expression index")
+	}
+
+	// Regular index: indexprs_sql nil.
+	if regular.IndExprsSQL != nil {
+		t.Error("expected indexprs_sql to be nil for regular index")
 	}
 }
 
