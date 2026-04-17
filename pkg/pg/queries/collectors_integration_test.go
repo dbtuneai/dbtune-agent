@@ -756,6 +756,65 @@ func TestPgAttribute_ReturnsFixtureColumns(t *testing.T) {
 	}
 }
 
+func TestPgAttribute_NewFieldsPopulated(t *testing.T) {
+	inst := latestInstance()
+	c := PgAttributeCollector(inst.pool, noopPrepareCtx)
+	ctx := context.Background()
+
+	result, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("Collect() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Collect() returned nil")
+	}
+
+	var p Payload[PgAttributeRow]
+	if err := json.Unmarshal(result.JSON, &p); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if len(p.Rows) == 0 {
+		t.Fatal("expected non-empty rows")
+	}
+
+	// Find a test_users column (e.g. "name") which is NOT NULL text.
+	var nameCol *PgAttributeRow
+	for i := range p.Rows {
+		if p.Rows[i].AttName != nil && string(*p.Rows[i].AttName) == "name" {
+			nameCol = &p.Rows[i]
+			break
+		}
+	}
+	if nameCol == nil {
+		t.Fatal("could not find 'name' column in pg_attribute results")
+	}
+
+	// attstorage should be non-nil for any column.
+	if nameCol.AttStorage == nil {
+		t.Error("expected attstorage to be non-nil for 'name' column")
+	}
+	// attnotnull should be true for the NOT NULL 'name' column.
+	if nameCol.AttNotNull == nil {
+		t.Error("expected attnotnull to be non-nil")
+	} else if !bool(*nameCol.AttNotNull) {
+		t.Error("expected attnotnull=true for NOT NULL 'name' column")
+	}
+	// attalign should be non-nil.
+	if nameCol.AttAlign == nil {
+		t.Error("expected attalign to be non-nil")
+	}
+	// attstattarget should be non-nil.
+	if nameCol.AttStatTarget == nil {
+		t.Error("expected attstattarget to be non-nil")
+	}
+	// atttypmod for plain text is -1 (no modifier).
+	if nameCol.AttTypMod == nil {
+		t.Error("expected atttypmod to be non-nil")
+	} else if int64(*nameCol.AttTypMod) != -1 {
+		t.Errorf("expected atttypmod=-1 for plain text, got %d", int64(*nameCol.AttTypMod))
+	}
+}
+
 func TestPgClass_BackfillThenDelta(t *testing.T) {
 	inst := latestInstance()
 	ctx := context.Background()
