@@ -108,7 +108,7 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 		return nil, err
 	}
 	rdsAdapter.SetCatalogCollectors(catalog)
-	collectors := rdsAdapter.Collectors(false)
+	collectors := rdsAdapter.Collectors()
 	rdsAdapter.InitCollectors(collectors)
 	return rdsAdapter, nil
 }
@@ -205,7 +205,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 	return nil
 }
 
-func (adapter *RDSAdapter) Collectors(_ bool) []agent.MetricCollector {
+func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
 	return []agent.MetricCollector{
 		{
 			Key: pg.MetricHardware,
@@ -309,7 +309,7 @@ func CreateAuroraRDSAdapter() (*AuroraRDSAdapter, error) {
 		return nil, err
 	}
 	rdsAdapter.SetCatalogCollectors(catalog)
-	collectors := rdsAdapter.Collectors(true)
+	collectors := rdsAdapter.Collectors()
 	rdsAdapter.InitCollectors(collectors)
 	return &AuroraRDSAdapter{*rdsAdapter}, nil
 }
