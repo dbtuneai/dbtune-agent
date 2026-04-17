@@ -275,7 +275,23 @@ func TestCollectors_AllVersions(t *testing.T) {
 	}
 }
 
-// TestCollectors_SkipUnchanged verifies that collectors with SkipUnchanged
+// skipUnchangedCollectorNames lists catalog collectors that dedup identical
+// payloads between collections. Kept in the test rather than on the struct
+// because it's only needed here.
+var skipUnchangedCollectorNames = map[string]bool{
+	PgAttributeName:               true,
+	PgIndexName:                   true,
+	PgPreparedXactsName:           true,
+	PgReplicationSlotsName:        true,
+	PgStatArchiverName:            true,
+	PgStatDatabaseConflictsName:   true,
+	PgStatProgressAnalyzeName:     true,
+	PgStatProgressCreateIndexName: true,
+	PgStatProgressVacuumName:      true,
+	PgStatSubscriptionStatsName:   true,
+}
+
+// TestCollectors_SkipUnchanged verifies that collectors with dedup enabled
 // return nil on the second identical collection and force-send after the
 // threshold.
 func TestCollectors_SkipUnchanged(t *testing.T) {
@@ -285,7 +301,7 @@ func TestCollectors_SkipUnchanged(t *testing.T) {
 
 	collectors := buildCollectors(inst.pool, inst.version)
 	for _, c := range collectors {
-		if !c.SkipUnchanged {
+		if !skipUnchangedCollectorNames[c.Name] {
 			continue
 		}
 		c := c

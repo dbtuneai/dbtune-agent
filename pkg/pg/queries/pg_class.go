@@ -71,7 +71,7 @@ type PgClassRow struct {
 	RelTuples    Real    `json:"reltuples"`
 	RelPages     Integer `json:"relpages"`
 	RelFrozenXID Xid     `json:"relfrozenxid"`
-	RelMinXID    Xid     `json:"relminxid"`
+	RelMinMXID   Xid     `json:"relminmxid"`
 }
 
 // PgClassConfig holds configuration for the pg_class collector.

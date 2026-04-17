@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"strconv"
-	"strings"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
@@ -21,6 +19,7 @@ import (
 
 type DefaultPostgreSQLAdapter struct {
 	agent.CommonAgent
+	agent.CatalogGetter
 	pgDriver        *pgPool.Pool
 	pgConfig        pg.Config
 	GuardrailConfig guardrails.Config
@@ -57,77 +56,23 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 		GuardrailConfig: guardrailSettings,
 		PGVersion:       PGVersion,
 	}
-	collectors := DefaultCollectors(c)
-	c.InitCollectors(collectors)
+	collectors, err := pg.StandardCatalogCollectors(dbpool, PGVersion)
+	if err != nil {
+		return nil, err
+	}
+	c.SetCatalogCollectors(collectors)
+	c.InitCollectors(DefaultCollectors())
 
 	return c, nil
 }
 
-func DefaultCollectors(pgAdapter *DefaultPostgreSQLAdapter) []agent.MetricCollector {
-	pgDriver := pgAdapter.pgDriver
-	collectors := []agent.MetricCollector{
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pgDriver, pgAdapter.pgConfig.IncludeQueries, pgAdapter.pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pgDriver),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pgDriver),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pgDriver),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pgDriver),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pgDriver),
-		},
-		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pgDriver),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pgDriver),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pgDriver),
-		},
-		{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pgDriver),
-		},
-		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pgDriver),
-		},
+func DefaultCollectors() []agent.MetricCollector {
+	return []agent.MetricCollector{
 		{
 			Key:       "hardware",
 			Collector: HardwareInfoOnPremise(),
 		},
 	}
-	majorVersion := strings.Split(pgAdapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		pgAdapter.Logger().Warnf("Could not parse major version from version string %s: %v", pgAdapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_checkpointer",
-			Collector: pg.PGStatCheckpointer(pgDriver),
-		})
-	}
-	return collectors
 }
 
 func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(_ context.Context) ([]metrics.FlatValue, error) {
@@ -192,7 +137,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(_ context.Context) ([]met
 }
 
 func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(adapter.pgDriver, ctx, adapter.Logger())
+	return pg.GetActiveConfig(adapter.pgDriver, ctx)
 }
 
 func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *agent.ProposedConfigResponse) error {

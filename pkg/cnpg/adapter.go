@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -44,6 +43,7 @@ const (
 
 type CNPGAdapter struct {
 	agent.CommonAgent
+	agent.CatalogGetter
 	GuardrailSettings guardrails.Config
 	Config            Config
 	PGDriver          *pgxpool.Pool
@@ -121,15 +121,18 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 	// Initialize operations context for cancellation support
 	adapter.State.CreateOperationsContext()
 
+	collectors, err := pg.StandardCatalogCollectors(dbpool, pgVersion)
+	if err != nil {
+		return nil, err
+	}
+	adapter.SetCatalogCollectors(collectors)
+
 	// Initialize collectors
 	// Use cluster name (not pod name) so metrics always come from current primary
 	adapter.InitCollectors(Collectors(
-		dbpool,
 		client,
 		config.ClusterName,
 		config.ContainerName,
-		pgVersion,
-		adapter.Logger(),
 	))
 
 	return adapter, nil
@@ -378,7 +381,7 @@ func (adapter *CNPGAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigAr
 	// This ensures we get the fresh context created by recovery completion, not the pre-cancelled one
 	dbCtx := adapter.State.GetOperationsContext()
 
-	config, err := pg.GetActiveConfig(adapter.PGDriver, dbCtx, logger)
+	config, err := pg.GetActiveConfig(adapter.PGDriver, dbCtx)
 	if err != nil {
 		// If context was cancelled (failover detected mid-query), return FailoverDetectedError
 		if dbCtx.Err() == context.Canceled {
@@ -635,82 +638,13 @@ func (adapter *CNPGAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	return nil
 }
 
-func Collectors(pool *pgxpool.Pool, kubeClient kubernetes.Client, clusterName string, containerName string, pgVersion string, logger *log.Logger) []agent.MetricCollector {
-	// Get PG config for query settings
-	pgConfig, _ := pg.ConfigFromViper(nil)
-
-	collectors := []agent.MetricCollector{
-		// TODO: Re-enable pg_role collector once backend supports it
-		// {
-		// 	Key:        "postgresql_role",
-		// 	MetricType: "string",
-		// 	Collector:  pg.PostgreSQLRole(pool),
-		// },
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pool, pgConfig.IncludeQueries, pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pool),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pool),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pool),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pool),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pool),
-		},
-		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pool),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pool),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pool),
-		},
-		{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pool),
-		},
-		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pool),
-		},
+func Collectors(kubeClient kubernetes.Client, clusterName string, containerName string) []agent.MetricCollector {
+	return []agent.MetricCollector{
 		{
 			Key:       "hardware",
 			Collector: kubernetes.CNPGContainerMetricsCollector(kubeClient, clusterName, containerName),
 		},
 	}
-
-	// Add pg_checkpointer for PostgreSQL 17+
-	majorVersion := strings.Split(pgVersion, ".")
-	if len(majorVersion) > 0 {
-		intMajorVersion, err := strconv.Atoi(majorVersion[0])
-		if err != nil {
-			logger.Warn("Failed to parse PostgreSQL major version, skipping pg_checkpointer collector", "version", pgVersion, "error", err)
-		} else if intMajorVersion >= 17 {
-			collectors = append(collectors, agent.MetricCollector{
-				Key:       "pg_checkpointer",
-				Collector: pg.PGStatCheckpointer(pool),
-			})
-		}
-	}
-
-	return collectors
 }
 
 // extractSettingValue converts row.Setting to string for comparison.
@@ -727,7 +661,7 @@ func extractSettingValue(setting interface{}) string {
 // Returns a map of parameter name to current value in CNPG format (e.g., "2GB").
 // This is used to compare against proposed config to avoid applying unchanged parameters.
 func (adapter *CNPGAdapter) GetCurrentConfig(ctx context.Context) (map[string]string, error) {
-	configRows, err := pg.GetActiveConfig(adapter.PGDriver, ctx, adapter.Logger())
+	configRows, err := pg.GetActiveConfig(adapter.PGDriver, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active config: %w", err)
 	}

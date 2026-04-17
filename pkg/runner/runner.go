@@ -14,6 +14,10 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// catalogStagger is the delay applied between catalog collector goroutines
+// at startup to avoid a thundering herd when all catalog queries fire at once.
+const catalogStagger = 200 * time.Millisecond
+
 // isRecoveryError checks if an error indicates the system is in recovery/failover
 func isRecoveryError(err error) bool {
 	if err == nil {
@@ -22,6 +26,22 @@ func isRecoveryError(err error) bool {
 	errMsg := strings.ToLower(err.Error())
 	return strings.Contains(errMsg, "failover detected") ||
 		strings.Contains(errMsg, "recovery in progress")
+}
+
+// handleCollectorError handles errors from catalog collector Collect calls.
+// Recovery errors are suppressed (debug logged, nil returned).
+// Other errors are reported via SendError and returned.
+func handleCollectorError(ctx context.Context, adapter agent.AgentLooper, name string, err error) error {
+	if isRecoveryError(err) {
+		adapter.Logger().Debugf("Skipping %s during recovery: %v", name, err)
+		return nil
+	}
+	_ = adapter.SendError(ctx, agent.ErrorPayload{
+		ErrorMessage: fmt.Sprintf("Failed to collect %s: %s", name, err.Error()),
+		ErrorType:    name + "_error",
+		Timestamp:    time.Now().UTC().Format(time.RFC3339),
+	})
+	return err
 }
 
 func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger *logrus.Logger, skipFirst bool, fn func(ctx context.Context) error) {
@@ -184,6 +204,36 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 		}
 		return nil
 	})
+
+	// Catalog view collection goroutines — each runs at its own interval
+	// with a staggered start to avoid thundering herd on startup.
+	collectors := adapter.CatalogCollectors()
+	for i, c := range collectors {
+		c := c
+		delay := time.Duration(i) * catalogStagger
+		go func() {
+			if delay > 0 {
+				logger.Debugf("staggering %s by %s", c.Name, delay)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return
+				}
+			}
+			ticker := time.NewTicker(c.Interval)
+			defer ticker.Stop()
+			runWithTicker(ctx, ticker, c.Name, logger, false, func(ctx context.Context) error {
+				data, err := c.Collect(ctx)
+				if err != nil {
+					return handleCollectorError(ctx, adapter, c.Name, err)
+				}
+				if data == nil {
+					return nil
+				}
+				return adapter.SendCatalogPayload(ctx, c.Name, data.JSON)
+			})
+		}()
+	}
 
 	// Block until context is cancelled
 	<-ctx.Done()

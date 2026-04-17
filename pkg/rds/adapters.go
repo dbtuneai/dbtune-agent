@@ -3,19 +3,20 @@ package rds
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type RDSAdapter struct {
 	agent.CommonAgent
+	agent.CatalogGetter
 	Config            Config
 	GuardrailSettings guardrails.Config
 	pgConfig          pg.Config
@@ -102,7 +103,12 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	collectors := rdsAdapter.Collectors(false)
+	catalog, err := pg.StandardCatalogCollectors(rdsAdapter.PGDriver, rdsAdapter.PGVersion)
+	if err != nil {
+		return nil, err
+	}
+	rdsAdapter.SetCatalogCollectors(catalog)
+	collectors := rdsAdapter.Collectors()
 	rdsAdapter.InitCollectors(collectors)
 	return rdsAdapter, nil
 }
@@ -158,7 +164,7 @@ func (adapter *RDSAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatVal
 }
 
 func (adapter *RDSAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(adapter.PGDriver, ctx, adapter.Logger())
+	return pg.GetActiveConfig(adapter.PGDriver, ctx)
 }
 
 func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
@@ -199,49 +205,8 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 	return nil
 }
 
-func (adapter *RDSAdapter) Collectors(aurora bool) []agent.MetricCollector {
-	pool := adapter.PGDriver
-	collectors := []agent.MetricCollector{
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pool, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pool),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pool),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pool),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pool),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pool),
-		},
-		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pool),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pool),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pool),
-		},
-		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pool),
-		},
+func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
+	return []agent.MetricCollector{
 		{
 			Key: pg.MetricHardware,
 			Collector: RDSHardwareInfo(
@@ -252,26 +217,6 @@ func (adapter *RDSAdapter) Collectors(aurora bool) []agent.MetricCollector {
 			),
 		},
 	}
-	majorVersion := strings.Split(adapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_checkpointer",
-			Collector: pg.PGStatCheckpointer(pool),
-		})
-	}
-	if !aurora {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pool),
-		})
-	}
-
-	return collectors
 }
 
 // Guardrails checks memory utilization and returns Critical if thresholds are exceeded
@@ -349,7 +294,22 @@ func CreateAuroraRDSAdapter() (*AuroraRDSAdapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AuroraRDS adapter: %w", err)
 	}
-	collectors := rdsAdapter.Collectors(true)
+	cc, err := pg.CollectorsConfigFromViper()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse collectors config: %w", err)
+	}
+	// Aurora does not support pg_stat_wal: the underlying pg_stat_get_wal()
+	// function errors with "not supported in Aurora". AWS does not document
+	// this publicly; see https://github.com/DataDog/integrations-core/issues/15890.
+	rdsAdapter.Logger().Infof("Aurora: disabling %s (not supported)", queries.PgStatWalName)
+	disabled := false
+	cc.Simple[queries.PgStatWalName] = collectorconfig.BaseConfig{Enabled: &disabled}
+	catalog, err := pg.CatalogCollectorsForVersion(rdsAdapter.PGDriver, rdsAdapter.PGVersion, cc)
+	if err != nil {
+		return nil, err
+	}
+	rdsAdapter.SetCatalogCollectors(catalog)
+	collectors := rdsAdapter.Collectors()
 	rdsAdapter.InitCollectors(collectors)
 	return &AuroraRDSAdapter{*rdsAdapter}, nil
 }

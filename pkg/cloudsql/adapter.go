@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
-	"strings"
 	"time"
 
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
@@ -20,6 +18,7 @@ import (
 
 type CloudSQLAdapter struct {
 	agent.CommonAgent
+	agent.CatalogGetter
 	PGDriver              *pgPool.Pool
 	State                 *State
 	CloudSQLConfig        Config
@@ -87,6 +86,11 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		PGVersion:         PGVersion,
 	}
 
+	collectors, err := pg.StandardCatalogCollectors(pgPool, PGVersion)
+	if err != nil {
+		return nil, err
+	}
+	c.SetCatalogCollectors(collectors)
 	c.InitCollectors(c.Collectors())
 
 	return c, nil
@@ -130,7 +134,7 @@ func (adapter *CloudSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *a
 func (adapter *CloudSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	adapter.Logger().Debugf("Getting Active Config")
 
-	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx, adapter.Logger())
+	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -245,68 +249,10 @@ func (adapter *CloudSQLAdapter) Guardrails(_ context.Context) *guardrails.Signal
 }
 
 func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
-	pool := adapter.PGDriver
-	collectors := []agent.MetricCollector{
-		{
-			Key:       "database_average_query_runtime",
-			Collector: pg.PGStatStatements(pool, adapter.pgConfig.IncludeQueries, adapter.pgConfig.MaximumQueryTextLength),
-		},
-		{
-			Key:       "database_transactions_per_second",
-			Collector: pg.TransactionsPerSecond(pool),
-		},
-		{
-			Key:       "database_connections",
-			Collector: pg.Connections(pool),
-		},
-		{
-			Key:       "system_db_size",
-			Collector: pg.DatabaseSize(pool),
-		},
-		{
-			Key:       "database_autovacuum_count",
-			Collector: pg.Autovacuum(pool),
-		},
-		{
-			Key:       "server_uptime",
-			Collector: pg.UptimeMinutes(pool),
-		},
-		{
-			Key:       "pg_database",
-			Collector: pg.PGStatDatabase(pool),
-		},
-		{
-			Key:       "pg_user_tables",
-			Collector: pg.PGStatUserTables(pool),
-		},
-		{
-			Key:       "pg_bgwriter",
-			Collector: pg.PGStatBGwriter(pool),
-		},
-		{
-			Key:       "pg_wal",
-			Collector: pg.PGStatWAL(pool),
-		},
-		{
-			Key:       "database_wait_events",
-			Collector: pg.WaitEvents(pool),
-		},
+	return []agent.MetricCollector{
 		{
 			Key:       "hardware",
 			Collector: CloudSQLHardwareInfo(adapter.Logger(), adapter.CloudSQLConfig, adapter.CloudMonitoringClient),
 		},
 	}
-	majorVersion := strings.Split(adapter.PGVersion, ".")
-	intMajorVersion, err := strconv.Atoi(majorVersion[0])
-	if err != nil {
-		adapter.Logger().Warnf("Could not parse major version from version string %s: %v", adapter.PGVersion, err)
-		return collectors
-	}
-	if intMajorVersion >= 17 {
-		collectors = append(collectors, agent.MetricCollector{
-			Key:       "pg_checkpointer",
-			Collector: pg.PGStatCheckpointer(pool),
-		})
-	}
-	return collectors
 }

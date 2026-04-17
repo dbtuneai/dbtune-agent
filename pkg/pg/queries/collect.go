@@ -16,10 +16,9 @@ import (
 
 // CatalogCollector defines a periodic catalog collection task.
 type CatalogCollector struct {
-	Name          string
-	Interval      time.Duration
-	Collect       func(ctx context.Context) (*CollectResult, error)
-	SkipUnchanged bool // When true, skip send if payload hash matches previous
+	Name     string
+	Interval time.Duration
+	Collect  func(ctx context.Context) (*CollectResult, error)
 }
 
 // CollectResult holds both the typed payload and its pre-marshaled JSON bytes.
@@ -63,12 +62,12 @@ func WithMinPGVersion(pgMajorVersion, minVersion int) CollectorOption {
 	}
 }
 
-// skipUnchangedForceMultiplier controls how many collection intervals can
+// skipUnchangedMultiplier controls how many collection intervals can
 // pass before a hashed collector forces a send even if unchanged. This acts
 // as a heartbeat so the backend knows the collector is still alive.
-const skipUnchangedForceMultiplier = 30
+const skipUnchangedMultiplier = 30
 
-// skipTracker tracks hash-based deduplication state for SkipUnchanged collectors.
+// skipTracker tracks hash-based deduplication state for dedup-enabled collectors.
 type skipTracker struct {
 	lastHash       uint64
 	initialized    bool
@@ -101,10 +100,10 @@ func (s *skipTracker) shouldSkip(data []byte) bool {
 }
 
 // NewCollector creates a CatalogCollector for a catalog view query.
-// JSON is marshaled once per collection; when SkipUnchanged is set, an xxhash
-// of the bytes is compared to the previous collection to avoid redundant sends.
-// Even when unchanged, a send is forced every skipUnchangedForceMultiplier
-// collection intervals to act as a heartbeat.
+// JSON is marshaled once per collection; when WithSkipUnchanged is used, an
+// xxhash of the bytes is compared to the previous collection to avoid
+// redundant sends. Even when unchanged, a send is forced every
+// skipUnchangedMultiplier collection intervals to act as a heartbeat.
 func NewCollector[T any](
 	pool *pgxpool.Pool,
 	prepareCtx PrepareCtx,
@@ -118,11 +117,10 @@ func NewCollector[T any](
 		o(&cfg)
 	}
 	scanner := pgxutil.NewScanner[T]()
-	tracker := newSkipTracker(skipUnchangedForceMultiplier)
+	tracker := newSkipTracker(skipUnchangedMultiplier)
 	return CatalogCollector{
-		Name:          name,
-		Interval:      interval,
-		SkipUnchanged: cfg.skipUnchanged,
+		Name:     name,
+		Interval: interval,
 		Collect: func(ctx context.Context) (*CollectResult, error) {
 			if cfg.minPGVersion > 0 && cfg.pgMajorVersion < cfg.minPGVersion {
 				return nil, nil
