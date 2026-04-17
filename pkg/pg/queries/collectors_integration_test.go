@@ -73,8 +73,12 @@ func setupTestFixtures(ctx context.Context, pool *pgxpool.Pool, pgMajorVersion i
 		`CREATE INDEX idx_test_cold_val ON test_cold(val)`,
 		`INSERT INTO test_cold (val) SELECT i FROM generate_series(1, 100) AS i`,
 		`ANALYZE test_cold`,
-		// Materialized view for pg_class relkind='m' testing.
+		// Materialized view for pg_class relkind='m' testing. ANALYZE so it has
+		// pg_stats entries — otherwise it appears in pg_stat_user_tables without
+		// any pg_stats rows, which breaks pagination tests that assume every
+		// batch yields data.
 		`CREATE MATERIALIZED VIEW mv_test_users AS SELECT id, name, score FROM test_users`,
+		`ANALYZE mv_test_users`,
 		// Index with custom fillfactor for pg_class reloptions testing.
 		`CREATE INDEX idx_test_users_score_ff70 ON test_users(score) WITH (fillfactor = 70)`,
 		// Enable pg_stat_statements (shared_preload_libraries is set at container start).
@@ -978,12 +982,18 @@ func TestPgAttribute_NewFieldsPopulated(t *testing.T) {
 	if string(*nameCol.AttAlign) != "i" {
 		t.Errorf("expected attalign='i' for text column, got %q", string(*nameCol.AttAlign))
 	}
-	// Default stats target is -1 (use system default).
-	if nameCol.AttStatTarget == nil {
-		t.Fatal("expected attstattarget to be non-nil")
-	}
-	if int64(*nameCol.AttStatTarget) != -1 {
-		t.Errorf("expected attstattarget=-1 (system default), got %d", int64(*nameCol.AttStatTarget))
+	// Default stats target: PG 17+ reports NULL; older versions report -1.
+	if inst.version >= 17 {
+		if nameCol.AttStatTarget != nil {
+			t.Errorf("expected attstattarget=nil (default) on PG %d, got %d", inst.version, int64(*nameCol.AttStatTarget))
+		}
+	} else {
+		if nameCol.AttStatTarget == nil {
+			t.Fatal("expected attstattarget to be non-nil")
+		}
+		if int64(*nameCol.AttStatTarget) != -1 {
+			t.Errorf("expected attstattarget=-1 (system default), got %d", int64(*nameCol.AttStatTarget))
+		}
 	}
 	// Plain text has atttypmod=-1 (no length modifier).
 	if nameCol.AttTypMod == nil {
