@@ -113,7 +113,6 @@ type PgStatStatementsDelta struct {
 
 	Calls         *Bigint          `json:"calls" db:"calls"`
 	TotalExecTime *DoublePrecision `json:"total_exec_time" db:"total_exec_time"`
-	Rows          *Bigint          `json:"rows" db:"rows"`
 }
 
 // PgStatStatementsPayload is the JSON body POSTed to /api/v1/agent/pg_stat_statements.
@@ -241,11 +240,9 @@ func calculateStatementDeltas(prev, curr map[string]PgStatStatementsRow, diffLim
 
 		callsDiff := ptrDiff(zeroPtr(prevRow.Calls, exists), currRow.Calls)
 		execTimeDiff := ptrDiff(zeroPtr(prevRow.TotalExecTime, exists), currRow.TotalExecTime)
-		rowsDiff := ptrDiff(zeroPtr(prevRow.Rows, exists), currRow.Rows)
 
 		if callsDiff == nil || *callsDiff <= 0 ||
-			execTimeDiff == nil || *execTimeDiff <= 0 ||
-			rowsDiff == nil || *rowsDiff <= 0 {
+			execTimeDiff == nil || *execTimeDiff <= 0 {
 			continue
 		}
 
@@ -257,7 +254,6 @@ func calculateStatementDeltas(prev, curr map[string]PgStatStatementsRow, diffLim
 			QueryID:       currRow.QueryID,
 			Calls:         callsDiff,
 			TotalExecTime: execTimeDiff,
-			Rows:          rowsDiff,
 		})
 	}
 

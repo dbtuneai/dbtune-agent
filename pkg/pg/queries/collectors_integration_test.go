@@ -1026,9 +1026,6 @@ func TestPgStatStatements_AllVersions(t *testing.T) {
 				if d.TotalExecTime == nil || *d.TotalExecTime <= 0 {
 					t.Fatalf("delta[%d]: expected total_exec_time > 0", i)
 				}
-				if d.Rows == nil || *d.Rows <= 0 {
-					t.Fatalf("delta[%d]: expected rows > 0", i)
-				}
 			}
 		})
 	}
