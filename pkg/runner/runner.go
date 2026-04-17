@@ -16,7 +16,7 @@ import (
 
 // catalogStagger is the delay applied between catalog collector goroutines
 // at startup to avoid a thundering herd when all catalog queries fire at once.
-const catalogStagger = 500 * time.Millisecond
+const catalogStagger = 200 * time.Millisecond
 
 // isRecoveryError checks if an error indicates the system is in recovery/failover
 func isRecoveryError(err error) bool {
