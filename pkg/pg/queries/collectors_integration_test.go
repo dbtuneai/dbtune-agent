@@ -290,6 +290,7 @@ var skipUnchangedCollectorNames = map[string]bool{
 	PgAttributeName:               true,
 	PgConstraintName:              true,
 	PgIndexName:                   true,
+	PgTypeName:                    true,
 	PgPreparedXactsName:           true,
 	PgReplicationSlotsName:        true,
 	PgStatArchiverName:            true,
@@ -1328,6 +1329,99 @@ func TestPgConstraint_ReturnsFixtureConstraints(t *testing.T) {
 	}
 }
 
+func TestPgType_ReturnsBuiltinAndUserTypes(t *testing.T) {
+	inst := latestInstance()
+	ctx := context.Background()
+	c := PgTypeCollector(inst.pool, noopPrepareCtx)
+
+	result, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("Collect() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Collect() returned nil")
+	}
+
+	var p Payload[PgTypeRow]
+	if err := json.Unmarshal(result.JSON, &p); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if len(p.Rows) == 0 {
+		t.Fatal("expected non-empty type rows")
+	}
+
+	// Build a map of typname -> row.
+	byName := make(map[string]*PgTypeRow, len(p.Rows))
+	for i := range p.Rows {
+		if p.Rows[i].TypName != nil {
+			byName[string(*p.Rows[i].TypName)] = &p.Rows[i]
+		}
+	}
+
+	// --- Built-in type: "int4" (integer) ---
+	int4, ok := byName["int4"]
+	if !ok {
+		t.Fatal("could not find built-in type 'int4' in results")
+	}
+	// int4 is a base type.
+	if int4.TypType == nil || string(*int4.TypType) != "b" {
+		t.Errorf("expected typtype='b' (base) for int4, got %v", int4.TypType)
+	}
+	// int4 is 4 bytes, pass-by-value.
+	if int4.TypLen == nil || int64(*int4.TypLen) != 4 {
+		t.Errorf("expected typlen=4 for int4, got %v", int4.TypLen)
+	}
+	if int4.TypByVal == nil || !bool(*int4.TypByVal) {
+		t.Error("expected typbyval=true for int4")
+	}
+	// int4 uses plain storage.
+	if int4.TypStorage == nil || string(*int4.TypStorage) != "p" {
+		t.Errorf("expected typstorage='p' (plain) for int4, got %v", int4.TypStorage)
+	}
+	// int4 alignment is "i" (int).
+	if int4.TypAlign == nil || string(*int4.TypAlign) != "i" {
+		t.Errorf("expected typalign='i' for int4, got %v", int4.TypAlign)
+	}
+	// int4 is in the numeric category.
+	if int4.TypCategory == nil || string(*int4.TypCategory) != "N" {
+		t.Errorf("expected typcategory='N' (numeric) for int4, got %v", int4.TypCategory)
+	}
+
+	// --- Built-in type: "text" ---
+	text, ok := byName["text"]
+	if !ok {
+		t.Fatal("could not find built-in type 'text' in results")
+	}
+	// text is variable-length (typlen=-1), pass-by-reference.
+	if text.TypLen == nil || int64(*text.TypLen) != -1 {
+		t.Errorf("expected typlen=-1 for text, got %v", text.TypLen)
+	}
+	if text.TypByVal == nil || bool(*text.TypByVal) {
+		t.Error("expected typbyval=false for text")
+	}
+	// text uses extended storage.
+	if text.TypStorage == nil || string(*text.TypStorage) != "x" {
+		t.Errorf("expected typstorage='x' (extended) for text, got %v", text.TypStorage)
+	}
+	// text is in the string category.
+	if text.TypCategory == nil || string(*text.TypCategory) != "S" {
+		t.Errorf("expected typcategory='S' (string) for text, got %v", text.TypCategory)
+	}
+
+	// --- Built-in type: "bool" ---
+	boolType, ok := byName["bool"]
+	if !ok {
+		t.Fatal("could not find built-in type 'bool' in results")
+	}
+	// bool is 1 byte, pass-by-value.
+	if boolType.TypLen == nil || int64(*boolType.TypLen) != 1 {
+		t.Errorf("expected typlen=1 for bool, got %v", boolType.TypLen)
+	}
+	if boolType.TypByVal == nil || !bool(*boolType.TypByVal) {
+		t.Error("expected typbyval=true for bool")
+	}
+}
+
 func TestPgStats_BackfillThenDelta(t *testing.T) {
 	inst := latestInstance()
 	ctx := context.Background()
@@ -1556,6 +1650,7 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		PgAttributeCollector(pool, noopPrepareCtx),
 		PgClassCollector(pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: PgClassBackfillBatchSize}),
 		PgConstraintCollector(pool, noopPrepareCtx),
+		PgTypeCollector(pool, noopPrepareCtx),
 		PgDatabaseCollector(pool, noopPrepareCtx),
 		PgIndexCollector(pool, noopPrepareCtx),
 		PgLocksCollector(pool, noopPrepareCtx),

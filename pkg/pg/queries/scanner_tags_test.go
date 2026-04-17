@@ -44,6 +44,7 @@ var scannerBackedTypes = []interface{}{
 	PgStatReplicationSlotsRow{},
 	PgStatSlruRow{},
 	PgStatStatementsRow{},
+	PgTypeRow{},
 	PgStatSubscriptionRow{},
 	PgStatSubscriptionStatsRow{},
 	PgStatUserFunctionsRow{},

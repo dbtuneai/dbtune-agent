@@ -134,6 +134,7 @@ var collectors = []collectorDef{
 	simpleCollector(queries.PgLocksName),
 	simpleCollector(queries.PgPreparedXactsName),
 	simpleCollector(queries.PgReplicationSlotsName),
+	simpleCollector(queries.PgTypeName),
 	simpleCollector(queries.PgStatActivityName),
 	simpleCollector(queries.PgStatArchiverName),
 	simpleCollector(queries.PgStatBgwriterName),
