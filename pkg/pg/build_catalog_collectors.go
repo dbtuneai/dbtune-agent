@@ -47,7 +47,7 @@ func BuildCatalogCollectors(
 		{queries.PgAttributeCollector(pool, prepareCtx), simpleBase(queries.PgAttributeName)},
 		{queries.PgConstraintCollector(pool, prepareCtx), simpleBase(queries.PgConstraintName)},
 		{queries.PgDatabaseCollector(pool, prepareCtx), simpleBase(queries.PgDatabaseName)},
-		{queries.PgIndexCollector(pool, prepareCtx), simpleBase(queries.PgIndexName)},
+		{queries.PgIndexCollector(pool, prepareCtx, pgMajorVersion), simpleBase(queries.PgIndexName)},
 		{queries.PgLocksCollector(pool, prepareCtx), simpleBase(queries.PgLocksName)},
 		{queries.PgPreparedXactsCollector(pool, prepareCtx), simpleBase(queries.PgPreparedXactsName)},
 		{queries.PgReplicationSlotsCollector(pool, prepareCtx), simpleBase(queries.PgReplicationSlotsName)},

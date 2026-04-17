@@ -34,7 +34,7 @@ var pgInstances []pgInstance
 
 // setupTestFixtures creates tables, indexes, functions, inserts data, and
 // runs ANALYZE so that collectors have actual data to return.
-func setupTestFixtures(ctx context.Context, pool *pgxpool.Pool) error {
+func setupTestFixtures(ctx context.Context, pool *pgxpool.Pool, pgMajorVersion int) error {
 	fixtures := []string{
 		// Create a table with columns exercising different types.
 		`CREATE TABLE test_users (
@@ -79,6 +79,12 @@ func setupTestFixtures(ctx context.Context, pool *pgxpool.Pool) error {
 		`CREATE INDEX idx_test_users_score_ff70 ON test_users(score) WITH (fillfactor = 70)`,
 		// Enable pg_stat_statements (shared_preload_libraries is set at container start).
 		`CREATE EXTENSION IF NOT EXISTS pg_stat_statements`,
+	}
+	if pgMajorVersion >= 15 {
+		// NULLS NOT DISTINCT unique index for pg_index.indnullsnotdistinct testing.
+		fixtures = append(fixtures,
+			`CREATE UNIQUE INDEX idx_test_users_email_nnd ON test_users(email) NULLS NOT DISTINCT`,
+		)
 	}
 	for _, sql := range fixtures {
 		if _, err := pool.Exec(ctx, sql); err != nil {
@@ -160,7 +166,7 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 
-		if err := setupTestFixtures(ctx, adminPool); err != nil {
+		if err := setupTestFixtures(ctx, adminPool, v); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to setup fixtures for postgres %d: %v\n", v, err)
 			cleanup()
 			os.Exit(1)
@@ -748,7 +754,7 @@ func TestPgStatUserFunctions_ReturnsFixtureFunction(t *testing.T) {
 
 func TestPgIndex_ReturnsFixtureIndexes(t *testing.T) {
 	inst := latestInstance()
-	c := PgIndexCollector(inst.pool, noopPrepareCtx)
+	c := PgIndexCollector(inst.pool, noopPrepareCtx, inst.version)
 	n := requireRows(t, c)
 	// We created 6 indexes: PK + 3 explicit + 1 partial + 1 expression
 	if n < 6 {
@@ -759,7 +765,7 @@ func TestPgIndex_ReturnsFixtureIndexes(t *testing.T) {
 func TestPgIndex_NewFieldsPopulated(t *testing.T) {
 	inst := latestInstance()
 	ctx := context.Background()
-	c := PgIndexCollector(inst.pool, noopPrepareCtx)
+	c := PgIndexCollector(inst.pool, noopPrepareCtx, inst.version)
 
 	result, err := c.Collect(ctx)
 	if err != nil {
@@ -782,7 +788,7 @@ func TestPgIndex_NewFieldsPopulated(t *testing.T) {
 		}
 	}
 
-	// All indexes should have indoption, indclass, indcollation arrays
+	// All indexes should have indkey, indoption, indclass, indcollation arrays
 	// whose lengths match the number of index columns (indnatts).
 	for name, row := range byName {
 		if row.IndNatts == nil {
@@ -790,6 +796,9 @@ func TestPgIndex_NewFieldsPopulated(t *testing.T) {
 			continue
 		}
 		natts := int(int64(*row.IndNatts))
+		if len(row.IndKey) != natts {
+			t.Errorf("index %q: expected len(indkey)=%d, got %d", name, natts, len(row.IndKey))
+		}
 		if len(row.IndOption) != natts {
 			t.Errorf("index %q: expected len(indoption)=%d, got %d", name, natts, len(row.IndOption))
 		}
@@ -840,6 +849,11 @@ func TestPgIndex_NewFieldsPopulated(t *testing.T) {
 			t.Errorf("index idx_test_users_name: indclass[%d] is 0, expected valid opclass OID", i)
 		}
 	}
+	// indkey on a regular column-reference index should have a non-zero entry
+	// pointing to the underlying table column (0 is reserved for expressions).
+	if len(regular.IndKey) != 1 || int64(regular.IndKey[0]) == 0 {
+		t.Errorf("expected indkey=[<nonzero>] for regular index, got %v", regular.IndKey)
+	}
 
 	// --- Expression index: CREATE INDEX ... ON test_users ((lower(name))) ---
 	expr, ok := byName["idx_test_users_expr"]
@@ -859,6 +873,10 @@ func TestPgIndex_NewFieldsPopulated(t *testing.T) {
 	if expr.IndPredSQL != nil {
 		t.Errorf("expected indpred_sql=nil for expression index, got %q", string(*expr.IndPredSQL))
 	}
+	// indkey entry of 0 signals that the column is an expression (resolved via indexprs).
+	if len(expr.IndKey) != 1 || int64(expr.IndKey[0]) != 0 {
+		t.Errorf("expected indkey=[0] for expression index, got %v", expr.IndKey)
+	}
 
 	// --- Unique index: CREATE UNIQUE INDEX ... ON test_users(email) ---
 	unique, ok := byName["idx_test_users_email"]
@@ -870,6 +888,27 @@ func TestPgIndex_NewFieldsPopulated(t *testing.T) {
 	}
 	if unique.IsPartial == nil || bool(*unique.IsPartial) {
 		t.Error("expected is_partial=false for unique index")
+	}
+	// indnullsnotdistinct defaults to false on PG15+ (NULLs are distinct by default).
+	if inst.version >= 15 {
+		if unique.IndNullsNotDistinct == nil {
+			t.Error("expected indnullsnotdistinct to be non-nil on PG15+")
+		} else if bool(*unique.IndNullsNotDistinct) {
+			t.Error("expected indnullsnotdistinct=false for default unique index")
+		}
+	} else if unique.IndNullsNotDistinct != nil {
+		t.Errorf("expected indnullsnotdistinct=nil on PG<15, got %v", *unique.IndNullsNotDistinct)
+	}
+
+	// --- NULLS NOT DISTINCT unique index (PG15+ only) ---
+	if inst.version >= 15 {
+		nnd, ok := byName["idx_test_users_email_nnd"]
+		if !ok {
+			t.Fatal("could not find idx_test_users_email_nnd in results")
+		}
+		if nnd.IndNullsNotDistinct == nil || !bool(*nnd.IndNullsNotDistinct) {
+			t.Errorf("expected indnullsnotdistinct=true for NULLS NOT DISTINCT index, got %v", nnd.IndNullsNotDistinct)
+		}
 	}
 }
 
@@ -1289,7 +1328,8 @@ func TestPgConstraint_ReturnsFixtureConstraints(t *testing.T) {
 
 	// test_users has a PRIMARY KEY on 'id' → contype='p'.
 	var pk *PgConstraintRow
-	for _, row := range p.Rows {
+	for i := range p.Rows {
+		row := &p.Rows[i]
 		if row.ConType != nil && string(*row.ConType) == "p" && row.ConRelID != nil {
 			pk = row
 			break
@@ -1661,7 +1701,7 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		PgConstraintCollector(pool, noopPrepareCtx),
 		PgTypeCollector(pool, noopPrepareCtx),
 		PgDatabaseCollector(pool, noopPrepareCtx),
-		PgIndexCollector(pool, noopPrepareCtx),
+		PgIndexCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgLocksCollector(pool, noopPrepareCtx),
 		PgPreparedXactsCollector(pool, noopPrepareCtx),
 		PgReplicationSlotsCollector(pool, noopPrepareCtx),
