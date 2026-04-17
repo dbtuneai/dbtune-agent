@@ -36,7 +36,7 @@ func TestMain(m *testing.M) {
 	ctx := context.Background()
 	versions := []int{13, 14, 15, 16, 17, 18}
 
-	var containers []*postgres.PostgresContainer
+	containers := make([]*postgres.PostgresContainer, 0, len(versions))
 
 	cleanup := func() {
 		for _, c := range containers {
@@ -803,7 +803,7 @@ func TestScan_MultipleRows(t *testing.T) {
 		t.Fatalf("expected 5 rows, got %d", len(result))
 	}
 	for i, r := range result {
-		expectedN := int32(i + 1) //nolint:gosec
+		expectedN := int32(i + 1)
 		expectedLabel := fmt.Sprintf("row_%d", expectedN)
 		if r.N != expectedN || r.Label != expectedLabel {
 			t.Fatalf("row %d: got N=%d Label=%q, want N=%d Label=%q",

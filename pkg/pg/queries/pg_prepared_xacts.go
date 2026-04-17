@@ -12,10 +12,10 @@ import (
 type PgPreparedXactsRow struct {
 	Transaction    *Xid         `json:"transaction" db:"transaction"`
 	TransactionAge *Bigint      `json:"transaction_age" db:"transaction_age"`
-	GID         *Text        `json:"gid" db:"gid"`
-	Prepared    *TimestampTZ `json:"prepared" db:"prepared"`
-	Owner       *Name        `json:"owner" db:"owner"`
-	Database    *Name        `json:"database" db:"database"`
+	GID            *Text        `json:"gid" db:"gid"`
+	Prepared       *TimestampTZ `json:"prepared" db:"prepared"`
+	Owner          *Name        `json:"owner" db:"owner"`
+	Database       *Name        `json:"database" db:"database"`
 }
 
 const (

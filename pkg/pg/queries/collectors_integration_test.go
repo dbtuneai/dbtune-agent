@@ -106,7 +106,7 @@ func TestMain(m *testing.M) {
 	ctx := context.Background()
 	versions := []int{13, 14, 15, 16, 17, 18}
 
-	var containers []*postgres.PostgresContainer
+	containers := make([]*postgres.PostgresContainer, 0, len(versions))
 
 	cleanup := func() {
 		for _, inst := range pgInstances {
@@ -1564,15 +1564,16 @@ func TestPgStats_RedactsWhenIncludeTableDataFalse(t *testing.T) {
 		if payload.CollectedAt.IsZero() {
 			t.Fatal("expected non-zero collected_at")
 		}
+		// After JSON round-trip, nil json.RawMessage becomes []byte("null").
+		const jsonNull = "null"
 		for _, row := range payload.Rows {
-			// After JSON round-trip, nil json.RawMessage becomes []byte("null").
-			if row.MostCommonVals != nil && string(row.MostCommonVals) != "null" {
+			if row.MostCommonVals != nil && string(row.MostCommonVals) != jsonNull {
 				t.Fatalf("expected most_common_vals to be null when includeTableData=false, got %s", string(row.MostCommonVals))
 			}
-			if row.HistogramBounds != nil && string(row.HistogramBounds) != "null" {
+			if row.HistogramBounds != nil && string(row.HistogramBounds) != jsonNull {
 				t.Fatalf("expected histogram_bounds to be null when includeTableData=false, got %s", string(row.HistogramBounds))
 			}
-			if row.MostCommonElems != nil && string(row.MostCommonElems) != "null" {
+			if row.MostCommonElems != nil && string(row.MostCommonElems) != jsonNull {
 				t.Fatalf("expected most_common_elems to be null when includeTableData=false, got %s", string(row.MostCommonElems))
 			}
 		}

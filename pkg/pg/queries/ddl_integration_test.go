@@ -38,7 +38,6 @@ func execDDL(t *testing.T, pool *pgxpool.Pool, createSQL, tableName string) {
 
 func TestDDL_ColumnTypes(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
-
 		tests := []struct {
 			name     string
 			sqlType  string
@@ -88,7 +87,6 @@ func TestDDL_ColumnTypes(t *testing.T) {
 
 func TestDDL_Defaults(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
-
 		tests := []struct {
 			name     string
 			colDef   string
@@ -171,7 +169,6 @@ func TestDDL_NotNull(t *testing.T) {
 
 func TestDDL_Constraints(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
-
 		t.Run("single_pk", func(t *testing.T) {
 			table := "ddl_con_single_pk"
 			execDDL(t, inst.admin, fmt.Sprintf("CREATE TABLE %s (id integer, PRIMARY KEY (id))", table), table)
@@ -339,7 +336,6 @@ func TestDDL_ScopeExclusions(t *testing.T) {
 
 func TestDDL_IdentifierQuoting(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
-
 		t.Run("mixed_case_column", func(t *testing.T) {
 			table := "ddl_quote_mixcase"
 			execDDL(t, inst.admin, fmt.Sprintf(`CREATE TABLE %s ("userId" integer, "createdAt" timestamptz)`, table), table)
@@ -361,7 +357,6 @@ func TestDDL_IdentifierQuoting(t *testing.T) {
 
 func TestDDL_ForeignKeys(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
-
 		t.Run("simple_fk", func(t *testing.T) {
 			parent := "ddl_fk_parent"
 			child := "ddl_fk_child"
@@ -420,7 +415,6 @@ func TestDDL_ForeignKeysAsAlterTable(t *testing.T) {
 
 func TestDDL_CheckConstraints(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
-
 		t.Run("simple_check", func(t *testing.T) {
 			table := "ddl_chk_simple"
 			execDDL(t, inst.admin, fmt.Sprintf("CREATE TABLE %s (x integer CHECK (x > 0))", table), table)
@@ -534,7 +528,6 @@ func TestDDL_GeneratedColumns(t *testing.T) {
 
 func TestDDL_IdentityColumns(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
-
 		t.Run("always_identity", func(t *testing.T) {
 			table := "ddl_ident_always"
 			execDDL(t, inst.admin, fmt.Sprintf(`CREATE TABLE %s (id integer GENERATED ALWAYS AS IDENTITY, name text)`, table), table)
@@ -685,7 +678,6 @@ func TestDDL_Functions(t *testing.T) {
 
 func TestDDL_StorageParameters(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
-
 		t.Run("table_fillfactor", func(t *testing.T) {
 			table := "ddl_storage_fill"
 			execDDL(t, inst.admin, fmt.Sprintf("CREATE TABLE %s (id integer) WITH (fillfactor=70)", table), table)
