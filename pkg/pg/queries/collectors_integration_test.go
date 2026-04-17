@@ -73,6 +73,10 @@ func setupTestFixtures(ctx context.Context, pool *pgxpool.Pool) error {
 		`CREATE INDEX idx_test_cold_val ON test_cold(val)`,
 		`INSERT INTO test_cold (val) SELECT i FROM generate_series(1, 100) AS i`,
 		`ANALYZE test_cold`,
+		// Materialized view for pg_class relkind='m' testing.
+		`CREATE MATERIALIZED VIEW mv_test_users AS SELECT id, name, score FROM test_users`,
+		// Index with custom fillfactor for pg_class reloptions testing.
+		`CREATE INDEX idx_test_users_score_ff70 ON test_users(score) WITH (fillfactor = 70)`,
 		// Enable pg_stat_statements (shared_preload_libraries is set at container start).
 		`CREATE EXTENSION IF NOT EXISTS pg_stat_statements`,
 	}
@@ -1041,6 +1045,205 @@ func TestPgClass_BackfillThenDelta(t *testing.T) {
 	}
 	if rAfterAnalyze == nil {
 		t.Fatal("expected delta data after ANALYZE, got nil")
+	}
+}
+
+func TestPgClass_FullRescanPicksUpAllRelkinds(t *testing.T) {
+	inst := latestInstance()
+	ctx := context.Background()
+
+	c := PgClassCollector(inst.pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: 1000})
+
+	// Drain the backfill.
+	for i := 0; i < 100; i++ {
+		r, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("backfill tick %d error: %v", i+1, err)
+		}
+		if r == nil {
+			break
+		}
+	}
+
+	// Run delta ticks until we hit the full rescan interval.
+	// pgClassFullRescanInterval is 30, so tick 30 triggers the rescan.
+	var rescanResult *CollectResult
+	for i := 1; i <= pgClassFullRescanInterval; i++ {
+		r, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("delta tick %d error: %v", i, err)
+		}
+		if i == pgClassFullRescanInterval {
+			rescanResult = r
+		}
+	}
+	if rescanResult == nil {
+		t.Fatal("expected non-nil result on full rescan tick")
+	}
+
+	var p Payload[PgClassRow]
+	if err := json.Unmarshal(rescanResult.JSON, &p); err != nil {
+		t.Fatalf("failed to parse full rescan result: %v", err)
+	}
+
+	// Full rescan should include all relkinds (r, i, m).
+	relkinds := make(map[string]bool)
+	for _, row := range p.Rows {
+		relkinds[string(row.RelKind)] = true
+	}
+	if !relkinds["r"] {
+		t.Error("full rescan missing relkind='r' (tables)")
+	}
+	if !relkinds["i"] {
+		t.Error("full rescan missing relkind='i' (indexes)")
+	}
+	if !relkinds["m"] {
+		t.Error("full rescan missing relkind='m' (materialized views)")
+	}
+}
+
+func TestPgClass_NewFieldsPopulated(t *testing.T) {
+	inst := latestInstance()
+	ctx := context.Background()
+
+	// Use a large batch size to get all rows in one backfill tick.
+	c := PgClassCollector(inst.pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: 1000})
+	result, err := c.Collect(ctx)
+	if err != nil {
+		t.Fatalf("Collect() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Collect() returned nil")
+	}
+
+	var p Payload[PgClassRow]
+	if err := json.Unmarshal(result.JSON, &p); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+
+	// Build a map of relname -> row for easy lookup.
+	byName := make(map[string]*PgClassRow, len(p.Rows))
+	for i := range p.Rows {
+		byName[string(p.Rows[i].RelName)] = &p.Rows[i]
+	}
+
+	// Collect observed relkinds to verify broadened filter.
+	relkinds := make(map[string]bool)
+	for _, row := range p.Rows {
+		relkinds[string(row.RelKind)] = true
+	}
+
+	// We should see tables ('r'), indexes ('i'), and materialized views ('m').
+	if !relkinds["r"] {
+		t.Error("expected relkind='r' (table) in results")
+	}
+	if !relkinds["i"] {
+		t.Error("expected relkind='i' (index) in results")
+	}
+	if !relkinds["m"] {
+		t.Error("expected relkind='m' (materialized view) in results")
+	}
+
+	// --- test_users table: relkind='r', persistent, has toast (text columns) ---
+	table, ok := byName["test_users"]
+	if !ok {
+		t.Fatal("could not find 'test_users' in pg_class results")
+	}
+	if string(table.RelKind) != "r" {
+		t.Errorf("expected relkind='r' for test_users, got %q", string(table.RelKind))
+	}
+	if string(table.RelPersistence) != "p" {
+		t.Errorf("expected relpersistence='p' (permanent) for test_users, got %q", string(table.RelPersistence))
+	}
+	if bool(table.RelIsPartition) {
+		t.Error("expected relispartition=false for test_users")
+	}
+	if bool(table.RelHasSubClass) {
+		t.Error("expected relhassubclass=false for test_users (not inherited)")
+	}
+	// Tables don't have an access method.
+	if table.AccessMethod != nil {
+		t.Errorf("expected access_method=nil for table, got %q", string(*table.AccessMethod))
+	}
+	// test_users has text columns, so it should have a TOAST table.
+	if uint32(table.RelToastRelID) == 0 {
+		t.Error("expected reltoastrelid != 0 for table with text columns")
+	}
+	// 0 = default tablespace.
+	if uint32(table.RelTablespace) != 0 {
+		t.Errorf("expected reltablespace=0 (default), got %d", uint32(table.RelTablespace))
+	}
+	// We inserted 500 rows and ran ANALYZE; reltuples should reflect this.
+	if float64(table.RelTuples) < 400 {
+		t.Errorf("expected reltuples >= 400 after inserting 500 rows, got %.0f", float64(table.RelTuples))
+	}
+	// After ANALYZE, some pages should be all-visible.
+	if int64(table.RelAllVisible) < 0 {
+		t.Errorf("expected relallvisible >= 0, got %d", int64(table.RelAllVisible))
+	}
+	// Regular table with no reloptions should have nil/empty reloptions.
+	if len(table.RelOptions) != 0 {
+		t.Errorf("expected empty reloptions for table with defaults, got %v", table.RelOptions)
+	}
+
+	// --- idx_test_users_name: relkind='i', btree access method ---
+	idx, ok := byName["idx_test_users_name"]
+	if !ok {
+		t.Fatal("could not find 'idx_test_users_name' in pg_class results")
+	}
+	if string(idx.RelKind) != "i" {
+		t.Errorf("expected relkind='i' for index, got %q", string(idx.RelKind))
+	}
+	if idx.AccessMethod == nil {
+		t.Fatal("expected access_method to be non-nil for index")
+	}
+	if string(*idx.AccessMethod) != "btree" {
+		t.Errorf("expected access_method='btree', got %q", string(*idx.AccessMethod))
+	}
+	// Indexes don't have TOAST tables.
+	if uint32(idx.RelToastRelID) != 0 {
+		t.Errorf("expected reltoastrelid=0 for index, got %d", uint32(idx.RelToastRelID))
+	}
+
+	// --- idx_test_users_score_ff70: index with fillfactor=70 in reloptions ---
+	idxFF, ok := byName["idx_test_users_score_ff70"]
+	if !ok {
+		t.Fatal("could not find 'idx_test_users_score_ff70' in pg_class results")
+	}
+	if len(idxFF.RelOptions) == 0 {
+		t.Fatal("expected non-empty reloptions for index with fillfactor=70")
+	}
+	foundFF := false
+	for _, opt := range idxFF.RelOptions {
+		if string(opt) == "fillfactor=70" {
+			foundFF = true
+			break
+		}
+	}
+	if !foundFF {
+		t.Errorf("expected reloptions to contain 'fillfactor=70', got %v", idxFF.RelOptions)
+	}
+	if idxFF.AccessMethod == nil || string(*idxFF.AccessMethod) != "btree" {
+		t.Errorf("expected access_method='btree' for idx_test_users_score_ff70")
+	}
+
+	// --- mv_test_users: relkind='m', materialized view ---
+	mv, ok := byName["mv_test_users"]
+	if !ok {
+		t.Fatal("could not find 'mv_test_users' in pg_class results")
+	}
+	if string(mv.RelKind) != "m" {
+		t.Errorf("expected relkind='m' for materialized view, got %q", string(mv.RelKind))
+	}
+	if string(mv.RelPersistence) != "p" {
+		t.Errorf("expected relpersistence='p' for materialized view, got %q", string(mv.RelPersistence))
+	}
+	// Materialized views have heap access method.
+	if mv.AccessMethod == nil {
+		t.Fatal("expected access_method to be non-nil for materialized view")
+	}
+	if string(*mv.AccessMethod) != "heap" {
+		t.Errorf("expected access_method='heap' for materialized view, got %q", string(*mv.AccessMethod))
 	}
 }
 
