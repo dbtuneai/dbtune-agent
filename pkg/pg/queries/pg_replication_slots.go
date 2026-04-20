@@ -19,7 +19,9 @@ type PgReplicationSlotsRow struct {
 	Active             *Boolean `json:"active" db:"active"`
 	ActivePID          *Integer `json:"active_pid" db:"active_pid"`
 	Xmin               *Xid     `json:"xmin" db:"xmin"`
+	XminAge            *Bigint  `json:"xmin_age" db:"xmin_age"`
 	CatalogXmin        *Xid     `json:"catalog_xmin" db:"catalog_xmin"`
+	CatalogXminAge     *Bigint  `json:"catalog_xmin_age" db:"catalog_xmin_age"`
 	RestartLsn         *PgLsn   `json:"restart_lsn" db:"restart_lsn"`
 	ConfirmedFlushLsn  *PgLsn   `json:"confirmed_flush_lsn" db:"confirmed_flush_lsn"`
 	WalStatus          *Text    `json:"wal_status" db:"wal_status"`
@@ -36,7 +38,7 @@ const (
 	PgReplicationSlotsInterval = 1 * time.Minute
 )
 
-const pgReplicationSlotsQuery = `SELECT * FROM pg_replication_slots`
+const pgReplicationSlotsQuery = `SELECT *, age(xmin)::bigint AS xmin_age, age(catalog_xmin)::bigint AS catalog_xmin_age FROM pg_replication_slots`
 
 func PgReplicationSlotsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgReplicationSlotsRow](pool, prepareCtx, PgReplicationSlotsName, PgReplicationSlotsInterval, pgReplicationSlotsQuery, WithSkipUnchanged())

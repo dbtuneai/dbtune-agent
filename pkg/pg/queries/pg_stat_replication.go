@@ -19,6 +19,7 @@ type PgStatReplicationRow struct {
 	ClientPort      *Integer     `json:"client_port" db:"client_port"`
 	BackendStart    *TimestampTZ `json:"backend_start" db:"backend_start"`
 	BackendXmin     *Xid         `json:"backend_xmin" db:"backend_xmin"`
+	BackendXminAge  *Bigint      `json:"backend_xmin_age" db:"backend_xmin_age"`
 	State           *Text        `json:"state" db:"state"`
 	SentLsn         *PgLsn       `json:"sent_lsn" db:"sent_lsn"`
 	WriteLsn        *PgLsn       `json:"write_lsn" db:"write_lsn"`
@@ -37,7 +38,7 @@ const (
 	PgStatReplicationInterval = 1 * time.Minute
 )
 
-const pgStatReplicationQuery = `SELECT * FROM pg_stat_replication`
+const pgStatReplicationQuery = `SELECT *, age(backend_xmin)::bigint AS backend_xmin_age FROM pg_stat_replication`
 
 func PgStatReplicationCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 	return NewCollector[PgStatReplicationRow](pool, prepareCtx, PgStatReplicationName, PgStatReplicationInterval, pgStatReplicationQuery)

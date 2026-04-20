@@ -128,11 +128,13 @@ var collectors = []collectorDef{
 	// Simple collectors (no extra config beyond BaseConfig)
 	simpleCollector(queries.AutovacuumCountName),
 	simpleCollector(queries.PgAttributeName),
+	simpleCollector(queries.PgConstraintName),
 	simpleCollector(queries.PgDatabaseName),
 	simpleCollector(queries.PgIndexName),
 	simpleCollector(queries.PgLocksName),
 	simpleCollector(queries.PgPreparedXactsName),
 	simpleCollector(queries.PgReplicationSlotsName),
+	simpleCollector(queries.PgTypeName),
 	simpleCollector(queries.PgStatActivityName),
 	simpleCollector(queries.PgStatArchiverName),
 	simpleCollector(queries.PgStatBgwriterName),

@@ -10,11 +10,17 @@ import (
 
 // PgAttributeRow represents a row from pg_attribute for user-table and index columns.
 type PgAttributeRow struct {
-	AttRelID *Oid      `json:"attrelid" db:"attrelid"`
-	AttName  *Name     `json:"attname" db:"attname"`
-	AttTypID *Bigint   `json:"atttypid" db:"atttypid"`
-	AttLen   *Smallint `json:"attlen" db:"attlen"`
-	AttNum   *Smallint `json:"attnum" db:"attnum"`
+	AttRelID       *Oid      `json:"attrelid" db:"attrelid"`
+	AttName        *Name     `json:"attname" db:"attname"`
+	AttTypID       *Bigint   `json:"atttypid" db:"atttypid"`
+	AttLen         *Smallint `json:"attlen" db:"attlen"`
+	AttNum         *Smallint `json:"attnum" db:"attnum"`
+	AttStorage     *Text     `json:"attstorage" db:"attstorage"`
+	AttCompression *Text     `json:"attcompression" db:"attcompression"` // PG14+; nil on older versions (column not in query)
+	AttNotNull     *Boolean  `json:"attnotnull" db:"attnotnull"`
+	AttStatTarget  *Integer  `json:"attstattarget" db:"attstattarget"`
+	AttAlign       *Text     `json:"attalign" db:"attalign"`
+	AttTypMod      *Integer  `json:"atttypmod" db:"atttypmod"`
 }
 
 const (
@@ -30,7 +36,12 @@ SELECT
     a.attname,
     a.atttypid::bigint AS atttypid,
     a.attlen::bigint AS attlen,
-    a.attnum::bigint AS attnum
+    a.attnum::bigint AS attnum,
+    a.attstorage::text AS attstorage,
+    a.attnotnull,
+    a.attstattarget::bigint AS attstattarget,
+    a.attalign::text AS attalign,
+    a.atttypmod::bigint AS atttypmod
 FROM pg_attribute a
 JOIN pg_class c ON c.oid = a.attrelid
 JOIN pg_namespace n ON n.oid = c.relnamespace

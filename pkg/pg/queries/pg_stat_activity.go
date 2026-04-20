@@ -28,7 +28,9 @@ type PgStatActivityRow struct {
 	WaitEvent       *Text        `json:"wait_event" db:"wait_event"`
 	State           *Text        `json:"state" db:"state"`
 	BackendXID      *Xid         `json:"backend_xid" db:"backend_xid"`
+	BackendXIDAge   *Bigint      `json:"backend_xid_age" db:"backend_xid_age"`
 	BackendXmin     *Xid         `json:"backend_xmin" db:"backend_xmin"`
+	BackendXminAge  *Bigint      `json:"backend_xmin_age" db:"backend_xmin_age"`
 	QueryID         *Text        `json:"query_id" db:"query_id"` // PG 14+: composite queryid_usesysid_datid (matches pg_stat_statements key)
 	BackendType     *Text        `json:"backend_type" db:"backend_type"`
 }
@@ -47,7 +49,8 @@ const pgStatActivityQueryPG13 = `SELECT
 	application_name, client_addr, client_hostname, client_port,
 	backend_start, xact_start, query_start, state_change,
 	wait_event_type, wait_event, state,
-	backend_xid, backend_xmin,
+	backend_xid, age(backend_xid)::bigint AS backend_xid_age,
+	backend_xmin, age(backend_xmin)::bigint AS backend_xmin_age,
 	NULL as query_id,
 	backend_type
 FROM pg_stat_activity
@@ -58,7 +61,8 @@ const pgStatActivityQueryPG14 = `SELECT
 	application_name, client_addr, client_hostname, client_port,
 	backend_start, xact_start, query_start, state_change,
 	wait_event_type, wait_event, state,
-	backend_xid, backend_xmin,
+	backend_xid, age(backend_xid)::bigint AS backend_xid_age,
+	backend_xmin, age(backend_xmin)::bigint AS backend_xmin_age,
 	CASE WHEN query_id IS NULL THEN NULL ELSE format('%s_%s_%s', query_id, usesysid, datid) END as query_id,
 	backend_type
 FROM pg_stat_activity

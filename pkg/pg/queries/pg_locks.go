@@ -17,6 +17,7 @@ type PgLocksRow struct {
 	Tuple              *Smallint    `json:"tuple" db:"tuple"`
 	VirtualXID         *Text        `json:"virtualxid" db:"virtualxid"`
 	TransactionID      *Xid         `json:"transactionid" db:"transactionid"`
+	TransactionIDAge   *Bigint      `json:"transactionid_age" db:"transactionid_age"`
 	ClassID            *Oid         `json:"classid" db:"classid"`
 	ObjID              *Oid         `json:"objid" db:"objid"`
 	ObjSubID           *Smallint    `json:"objsubid" db:"objsubid"`
@@ -40,7 +41,7 @@ WITH blocked AS (
     FROM pg_locks
     WHERE NOT granted
 )
-SELECT l.*
+SELECT l.*, age(l.transactionid)::bigint AS transactionid_age
 FROM pg_locks l
 WHERE l.pid IN (SELECT blocked_pid FROM blocked UNION SELECT blocking_pid FROM blocked)
   AND l.database IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))
