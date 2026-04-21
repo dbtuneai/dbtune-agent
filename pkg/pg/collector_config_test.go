@@ -69,7 +69,7 @@ func TestAllTypedCollectorDefaults(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 500, cfg.PgStatStatements.Extra.DiffLimit)
-	assert.False(t, cfg.PgStatStatements.Extra.IncludeQueries)
+	assert.True(t, cfg.PgStatStatements.Extra.IncludeQueries)
 	assert.Equal(t, 8192, cfg.PgStatStatements.Extra.MaxQueryTextLength)
 
 	assert.Equal(t, 500, cfg.PgClass.Extra.BackfillBatchSize)
@@ -82,9 +82,6 @@ func TestAllTypedCollectorDefaults(t *testing.T) {
 	assert.Equal(t, 200, cfg.PgStatUserIndexes.Extra.CategoryLimit)
 
 	assert.Equal(t, 2000, cfg.PgStatioUserIndexes.Extra.BackfillBatchSize)
-
-	assert.False(t, cfg.DatabaseAvgQueryRuntime.Extra.IncludeQueries)
-	assert.Equal(t, 8192, cfg.DatabaseAvgQueryRuntime.Extra.MaxQueryTextLength)
 }
 
 type configTestCase struct {
@@ -187,18 +184,6 @@ collectors:
 			},
 		},
 		{
-			name: "database_average_query_runtime YAML",
-			yaml: `
-collectors:
-  database_average_query_runtime:
-    include_queries: true
-    max_query_text_length: 2048`,
-			check: func(t *testing.T, cfg CollectorsConfig) {
-				assert.True(t, cfg.DatabaseAvgQueryRuntime.Extra.IncludeQueries)
-				assert.Equal(t, 2048, cfg.DatabaseAvgQueryRuntime.Extra.MaxQueryTextLength)
-			},
-		},
-		{
 			name: "pg_statio_user_indexes YAML",
 			yaml: `
 collectors:
@@ -234,7 +219,7 @@ collectors:
 		{
 			name: "empty config has defaults",
 			check: func(t *testing.T, cfg CollectorsConfig) {
-				assert.Equal(t, queries.PgStatStatementsConfig{DiffLimit: 500, MaxQueryTextLength: 8192}, cfg.PgStatStatements.Extra)
+				assert.Equal(t, queries.PgStatStatementsConfig{DiffLimit: 500, IncludeQueries: true, MaxQueryTextLength: 8192}, cfg.PgStatStatements.Extra)
 				assert.Equal(t, queries.PgClassConfig{BackfillBatchSize: 500}, cfg.PgClass.Extra)
 				assert.True(t, cfg.PgClass.Base.IsEnabled())
 			},
@@ -322,12 +307,93 @@ collectors:
 				assert.Equal(t, 75, cfg.PgStatUserIndexes.Extra.CategoryLimit)
 			},
 		},
+
+		// --- Legacy include_queries aliases (backwards compat) ---
 		{
-			name:    "database_average_query_runtime env var",
-			envVars: map[string]string{"DBT_COLLECTOR_DATABASE_AVERAGE_QUERY_RUNTIME_INCLUDE_QUERIES": "true", "DBT_COLLECTOR_DATABASE_AVERAGE_QUERY_RUNTIME_MAX_QUERY_TEXT_LENGTH": "4096"},
+			name:    "legacy DBT_POSTGRESQL_INCLUDE_QUERIES=false forwards to pg_stat_statements",
+			envVars: map[string]string{"DBT_POSTGRESQL_INCLUDE_QUERIES": "false"},
 			check: func(t *testing.T, cfg CollectorsConfig) {
-				assert.True(t, cfg.DatabaseAvgQueryRuntime.Extra.IncludeQueries)
-				assert.Equal(t, 4096, cfg.DatabaseAvgQueryRuntime.Extra.MaxQueryTextLength)
+				assert.False(t, cfg.PgStatStatements.Extra.IncludeQueries)
+			},
+		},
+		{
+			name:    "legacy DBT_POSTGRESQL_INCLUDE_QUERIES=true forwards to pg_stat_statements",
+			envVars: map[string]string{"DBT_POSTGRESQL_INCLUDE_QUERIES": "true"},
+			check: func(t *testing.T, cfg CollectorsConfig) {
+				assert.True(t, cfg.PgStatStatements.Extra.IncludeQueries)
+			},
+		},
+		{
+			name: "legacy postgresql.include_queries YAML forwards to pg_stat_statements",
+			yaml: `
+postgresql:
+  connection_url: postgres://u:p@h:5432/d
+  include_queries: false`,
+			check: func(t *testing.T, cfg CollectorsConfig) {
+				assert.False(t, cfg.PgStatStatements.Extra.IncludeQueries)
+			},
+		},
+		{
+			name: "legacy postgres.include_queries YAML (older key) forwards to pg_stat_statements",
+			yaml: `
+postgres:
+  connection_url: postgres://u:p@h:5432/d
+  include_queries: false`,
+			check: func(t *testing.T, cfg CollectorsConfig) {
+				assert.False(t, cfg.PgStatStatements.Extra.IncludeQueries)
+			},
+		},
+		{
+			name: "new collector env var wins over legacy env var",
+			envVars: map[string]string{
+				"DBT_POSTGRESQL_INCLUDE_QUERIES":                   "true",
+				"DBT_COLLECTOR_PG_STAT_STATEMENTS_INCLUDE_QUERIES": "false",
+			},
+			check: func(t *testing.T, cfg CollectorsConfig) {
+				assert.False(t, cfg.PgStatStatements.Extra.IncludeQueries)
+			},
+		},
+		{
+			name: "new collector YAML wins over legacy YAML",
+			yaml: `
+postgresql:
+  connection_url: postgres://u:p@h:5432/d
+  include_queries: false
+collectors:
+  pg_stat_statements:
+    include_queries: true`,
+			check: func(t *testing.T, cfg CollectorsConfig) {
+				assert.True(t, cfg.PgStatStatements.Extra.IncludeQueries)
+			},
+		},
+		{
+			name:    "legacy DBT_POSTGRESQL_MAXIMUM_QUERY_TEXT_LENGTH forwards to pg_stat_statements",
+			envVars: map[string]string{"DBT_POSTGRESQL_MAXIMUM_QUERY_TEXT_LENGTH": "1024"},
+			check: func(t *testing.T, cfg CollectorsConfig) {
+				assert.Equal(t, 1024, cfg.PgStatStatements.Extra.MaxQueryTextLength)
+			},
+		},
+		{
+			name: "legacy postgresql.maximum_query_text_length YAML forwards to pg_stat_statements",
+			yaml: `
+postgresql:
+  connection_url: postgres://u:p@h:5432/d
+  maximum_query_text_length: 2048`,
+			check: func(t *testing.T, cfg CollectorsConfig) {
+				assert.Equal(t, 2048, cfg.PgStatStatements.Extra.MaxQueryTextLength)
+			},
+		},
+		{
+			name: "new collector max_query_text_length wins over legacy maximum_query_text_length",
+			yaml: `
+postgresql:
+  connection_url: postgres://u:p@h:5432/d
+  maximum_query_text_length: 2048
+collectors:
+  pg_stat_statements:
+    max_query_text_length: 4096`,
+			check: func(t *testing.T, cfg CollectorsConfig) {
+				assert.Equal(t, 4096, cfg.PgStatStatements.Extra.MaxQueryTextLength)
 			},
 		},
 		{
@@ -469,12 +535,6 @@ collectors:
 			envVars:         map[string]string{"DBT_COLLECTOR_PG_STAT_STATEMENTS_MAX_QUERY_TEXT_LENGTH": "8193"},
 			wantErrContains: "max_query_text_length",
 		},
-		{
-			name:            "database_average_query_runtime env var exceeding max",
-			envVars:         map[string]string{"DBT_COLLECTOR_DATABASE_AVERAGE_QUERY_RUNTIME_MAX_QUERY_TEXT_LENGTH": "8193"},
-			wantErrContains: "max_query_text_length",
-		},
-
 		// --- Boundary values (accepted) ---
 		{
 			name: "boundary: diff_limit at zero",

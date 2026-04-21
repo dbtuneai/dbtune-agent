@@ -53,7 +53,6 @@ docker run \
     -e DBT_DBTUNE_SERVER_URL=https://app.dbtune.com \
     -e DBT_DBTUNE_API_KEY=your-api-key \
     -e DBT_DBTUNE_DATABASE_ID=your-database-id \
-    -e DBT_POSTGRESQL_INCLUDE_QUERIES=true \
     public.ecr.aws/dbtune/dbtune/agent:latest
 ```
 
@@ -86,12 +85,14 @@ The shared options for the `dbtune.yaml` are listed below:
 # dbtune.yaml
 postgresql:
   connection_url: postgresql://user:password@localhost:5432/database # Connection url to your database
-  include_queries: true # Whether to include place-holdered query text when transmitting to DBtune.
-                        # This is provided so that you can identify you queries by their text.
-                        # DBtune does not require this info, and will instead display query ids
-                        # if this is disabled.
   allow_restart: false  # Whether to allow the agent to restart PostgreSQL when applying
                         # configuration changes that require a restart. Defaults to false.
+
+# Query text is collected by the pg_stat_statements collector (enabled by
+# default). To opt out, disable it on the collector:
+# collectors:
+#   pg_stat_statements:
+#     include_queries: false  # or set DBT_COLLECTOR_PG_STAT_STATEMENTS_INCLUDE_QUERIES=false
 
 # Optional
 guardrail_settings:
@@ -112,7 +113,6 @@ The shared options for environment variables are listed below:
 export DBT_DBTUNE_SERVER_URL="https://app.dbtune.com"
 export DBT_DBTUNE_API_KEY=""
 export DBT_DBTUNE_DATABASE_ID=""
-export DBT_POSTGRESQL_INCLUDE_QUERIES=true
 export DBT_POSTGRESQL_ALLOW_RESTART=false  # Set to true to allow PostgreSQL restarts
 
 # Your database specific
