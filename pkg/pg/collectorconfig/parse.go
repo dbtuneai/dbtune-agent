@@ -42,23 +42,30 @@ func ParseIntValue(raw any) (int, error) {
 
 // fieldSpec describes a single config struct field, extracted from struct tags.
 type fieldSpec struct {
-	index      int          // struct field index
-	key        string       // config tag value
-	valueKind  reflect.Kind // bool or int (unwrapped from pointer)
-	isPointer  bool         // field is *bool or *int
-	defaultInt int          // default for non-pointer int fields
-	minInt     *int         // min constraint for int fields (nil = none)
-	maxInt     *int         // max constraint for int fields (nil = none)
+	index       int          // struct field index
+	key         string       // config tag value
+	valueKind   reflect.Kind // bool or int (unwrapped from pointer)
+	isPointer   bool         // field is *bool or *int
+	defaultInt  int          // default for non-pointer int fields
+	defaultBool bool         // default for non-pointer bool fields
+	hasDefault  bool         // whether a default should be applied
+	minInt      *int         // min constraint for int fields (nil = none)
+	maxInt      *int         // max constraint for int fields (nil = none)
 }
 
-// HasDefault reports whether this spec has a non-zero default to apply.
+// HasDefault reports whether this spec has a default to apply.
 func (s *fieldSpec) HasDefault() bool {
-	return !s.isPointer && s.valueKind == reflect.Int && s.defaultInt != 0
+	return !s.isPointer && s.hasDefault
 }
 
 // SetDefault applies the default value to the given reflect field.
 func (s *fieldSpec) SetDefault(field reflect.Value) {
-	field.SetInt(int64(s.defaultInt))
+	switch s.valueKind { //nolint:exhaustive // bool/int are the only supported kinds
+	case reflect.Bool:
+		field.SetBool(s.defaultBool)
+	case reflect.Int:
+		field.SetInt(int64(s.defaultInt))
+	}
 }
 
 // SetValue parses raw, validates constraints, and sets the field.
@@ -133,9 +140,19 @@ func buildFieldSpecs(t reflect.Type) fieldSpecs {
 		}
 		spec := fieldSpec{index: i, key: key, valueKind: valueKind, isPointer: isPtr}
 		if !isPtr {
-			if def := f.Tag.Get("default"); def != "" && valueKind == reflect.Int {
-				n, _ := strconv.Atoi(def)
-				spec.defaultInt = n
+			if def := f.Tag.Get("default"); def != "" {
+				switch valueKind { //nolint:exhaustive // bool/int are the only supported kinds
+				case reflect.Int:
+					if n, err := strconv.Atoi(def); err == nil {
+						spec.defaultInt = n
+						spec.hasDefault = true
+					}
+				case reflect.Bool:
+					if b, err := strconv.ParseBool(def); err == nil {
+						spec.defaultBool = b
+						spec.hasDefault = true
+					}
+				}
 			}
 		}
 		if valueKind == reflect.Int {

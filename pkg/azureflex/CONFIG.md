@@ -2,7 +2,6 @@
 ```yaml
 postgresql:
   connection_url: postgresql://user:password@localhost:5432/database # Database connection string
-  include_queries: true # Whether to include query text when sending stats
   allow_restart: false  # Allow the agent to restart PostgreSQL. Defaults to false.
 
 azure_flex:
@@ -30,7 +29,6 @@ debug: false # Enable debug logging
 export DBT_DBTUNE_SERVER_URL=http://localhost:8000
 export DBT_DBTUNE_API_KEY=your-api-key
 export DBT_DBTUNE_DATABASE_ID=your-database-id
-export DBT_POSTGRESQL_INCLUDE_QUERIES=true
 
 # Your database specific
 export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database 

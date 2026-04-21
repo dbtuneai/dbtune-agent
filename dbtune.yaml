@@ -5,7 +5,6 @@ disable_checks: false
 postgresql:
   connection_url: postgresql://username:password@your-ip:5432/database
   service_name: postgresql-17 # (required) name of the service in case of restarts
-  include_queries: true # Include query text
 
 # Use with docker flag to monitor a PostgreSQL container
 docker:
@@ -42,6 +41,3 @@ guardrail_settings:
 #     category_limit: 200
 #   pg_statio_user_indexes:
 #     backfill_batch_size: 2000
-#   database_average_query_runtime:
-#     include_queries: true
-#     max_query_text_length: 4096

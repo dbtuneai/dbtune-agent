@@ -33,7 +33,7 @@ const PgStatStatementsDiffLimit = 500
 // PgStatStatementsConfig holds configuration for the pg_stat_statements collector.
 type PgStatStatementsConfig struct {
 	DiffLimit          int  `config:"diff_limit" default:"500" min:"0" max:"500"`
-	IncludeQueries     bool `config:"include_queries"`
+	IncludeQueries     bool `config:"include_queries" default:"true"`
 	MaxQueryTextLength int  `config:"max_query_text_length" default:"8192" min:"0" max:"8192"`
 }
 

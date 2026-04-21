@@ -15,7 +15,6 @@ import (
 // Metric collector key constants.
 // These are the Key values used in adapter MetricCollector entries.
 const (
-	MetricDatabaseAvgQueryRuntime       = "database_average_query_runtime"
 	MetricDatabaseTransactionsPerSecond = "database_transactions_per_second"
 	MetricDatabaseConnections           = "database_connections"
 	MetricSystemDbSize                  = "system_db_size"
@@ -34,13 +33,12 @@ const (
 
 // CollectorsConfig holds the parsed, typed configuration for every collector.
 type CollectorsConfig struct {
-	PgStatStatements        collectorconfig.TypedEntry[queries.PgStatStatementsConfig]
-	PgClass                 collectorconfig.TypedEntry[queries.PgClassConfig]
-	PgStats                 collectorconfig.TypedEntry[queries.PgStatsConfig]
-	PgStatUserTables        collectorconfig.TypedEntry[queries.PgStatUserTablesConfig]
-	PgStatUserIndexes       collectorconfig.TypedEntry[queries.PgStatUserIndexesConfig]
-	PgStatioUserIndexes     collectorconfig.TypedEntry[queries.PgStatioUserIndexesConfig]
-	DatabaseAvgQueryRuntime collectorconfig.TypedEntry[DatabaseAvgQueryRuntimeConfig]
+	PgStatStatements    collectorconfig.TypedEntry[queries.PgStatStatementsConfig]
+	PgClass             collectorconfig.TypedEntry[queries.PgClassConfig]
+	PgStats             collectorconfig.TypedEntry[queries.PgStatsConfig]
+	PgStatUserTables    collectorconfig.TypedEntry[queries.PgStatUserTablesConfig]
+	PgStatUserIndexes   collectorconfig.TypedEntry[queries.PgStatUserIndexesConfig]
+	PgStatioUserIndexes collectorconfig.TypedEntry[queries.PgStatioUserIndexesConfig]
 
 	// Simple holds config for collectors that only use BaseConfig.
 	Simple map[string]collectorconfig.BaseConfig
@@ -119,10 +117,6 @@ var collectors = []collectorDef{
 	typedCollector[queries.PgStatioUserIndexesConfig](queries.PgStatioUserIndexesName,
 		func(c *CollectorsConfig) *collectorconfig.TypedEntry[queries.PgStatioUserIndexesConfig] {
 			return &c.PgStatioUserIndexes
-		}),
-	typedCollector[DatabaseAvgQueryRuntimeConfig](MetricDatabaseAvgQueryRuntime,
-		func(c *CollectorsConfig) *collectorconfig.TypedEntry[DatabaseAvgQueryRuntimeConfig] {
-			return &c.DatabaseAvgQueryRuntime
 		}),
 
 	// Simple collectors (no extra config beyond BaseConfig)
@@ -258,6 +252,23 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 		rawMaps[matchedName][fieldKey] = envValue
 	}
 
+	// Phase 2.5: legacy aliases — older configs/installs set query-text options
+	// on the top-level postgresql block (YAML or DBT_POSTGRESQL_* env). These
+	// settings now live on the pg_stat_statements collector; forward each
+	// legacy source if the new one is unset. Docs only show the new form.
+	for _, a := range legacyPgStatStatementsAliases {
+		value, ok := lookupLegacyValue(a)
+		if !ok {
+			continue
+		}
+		if rawMaps[queries.PgStatStatementsName] == nil {
+			rawMaps[queries.PgStatStatementsName] = make(map[string]any)
+		}
+		if _, set := rawMaps[queries.PgStatStatementsName][a.newField]; !set {
+			rawMaps[queries.PgStatStatementsName][a.newField] = value
+		}
+	}
+
 	// Phase 3: parse every collector (nil raw -> defaults only).
 	cfg := CollectorsConfig{Simple: make(map[string]collectorconfig.BaseConfig)}
 	for _, def := range collectors {
@@ -267,6 +278,33 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+// legacyAlias maps a legacy top-level postgresql setting onto a field on the
+// pg_stat_statements collector. Precedence: env > postgresql.* YAML >
+// postgres.* YAML (older key alias).
+type legacyAlias struct {
+	envVar   string
+	yamlKey  string // under postgresql.* (and postgres.* as older alias)
+	newField string // field name on pg_stat_statements collector
+}
+
+var legacyPgStatStatementsAliases = []legacyAlias{
+	{envVar: "DBT_POSTGRESQL_INCLUDE_QUERIES", yamlKey: "include_queries", newField: "include_queries"},
+	{envVar: "DBT_POSTGRESQL_MAXIMUM_QUERY_TEXT_LENGTH", yamlKey: "maximum_query_text_length", newField: "max_query_text_length"},
+}
+
+func lookupLegacyValue(a legacyAlias) (any, bool) {
+	if v := os.Getenv(a.envVar); v != "" {
+		return v, true
+	}
+	if viper.IsSet("postgresql." + a.yamlKey) {
+		return viper.Get("postgresql." + a.yamlKey), true
+	}
+	if viper.IsSet("postgres." + a.yamlKey) {
+		return viper.Get("postgres." + a.yamlKey), true
+	}
+	return nil, false
 }
 
 // collectDBTCollectorEnvSuffixes returns DBT_COLLECTOR_* env vars keyed by
