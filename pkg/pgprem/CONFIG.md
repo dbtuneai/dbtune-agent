@@ -3,7 +3,10 @@
 postgresql:
   connection_url: postgresql://user:password@localhost:5432/database # Database connection string
   include_queries: true # Whether to include query text when sending stats
-  service_name: "postgresql-17" # (required for restart) name of your database service running under systemctl 
+  service_name: "postgresql-17" # (required for systemctl restart) name of your database service running under systemctl
+  restart_command: "" # Optional. Shell command executed via `sh -c` to restart PostgreSQL.
+                      # When set, takes precedence over service_name. Accepts a script path
+                      # (e.g. /opt/scripts/restart-postgres.sh) or a full command line.
 
 dbtune:
   server_url: https://app.dbtune.com # DBtune server endpoint
@@ -30,4 +33,5 @@ export DBT_POSTGRESQL_INCLUDE_QUERIES=true
 # Your database specific
 export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database 
 export DBT_POSTGRESQL_SERVICE_NAME=
+export DBT_POSTGRESQL_RESTART_COMMAND=  # e.g. /opt/scripts/restart-postgres.sh
 ```

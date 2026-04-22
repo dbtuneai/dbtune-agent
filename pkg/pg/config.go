@@ -14,7 +14,8 @@ const (
 
 type Config struct {
 	ConnectionURL          string `mapstructure:"connection_url" validate:"required"`
-	ServiceName            string `mapstructure:"service_name"` // TODO(eddie): Should be moved under pgprem, as it doesn't apply to all other PG providers
+	ServiceName            string `mapstructure:"service_name"`    // TODO(eddie): Should be moved under pgprem, as it doesn't apply to all other PG providers
+	RestartCommand         string `mapstructure:"restart_command"` // Shell command executed via `sh -c` to restart Postgres. When set, takes precedence over ServiceName-based systemctl restart.
 	IncludeQueries         bool   `mapstructure:"include_queries"`
 	MaximumQueryTextLength int    `mapstructure:"maximum_query_text_length"`
 }
@@ -42,6 +43,7 @@ func ConfigFromViper(key *string) (Config, error) {
 
 	dbtuneConfig.BindEnv("connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
 	dbtuneConfig.BindEnv("service_name", "DBT_POSTGRESQL_SERVICE_NAME")
+	dbtuneConfig.BindEnv("restart_command", "DBT_POSTGRESQL_RESTART_COMMAND")
 	dbtuneConfig.BindEnv("include_queries", "DBT_POSTGRESQL_INCLUDE_QUERIES")
 	dbtuneConfig.BindEnv("maximum_query_text_length", "DBT_POSTGRESQL_MAXIMUM_QUERY_TEXT_LENGTH")
 

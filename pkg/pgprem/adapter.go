@@ -198,9 +198,9 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 	adapter.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
 	if proposedConfig.KnobApplication == "restart" {
-		// If service name is missing, skip
-		if adapter.pgConfig.ServiceName == "" {
-			return fmt.Errorf("service name not configured, skipping restarting and applying configuration")
+		// Need either a custom restart command or a systemctl service name.
+		if adapter.pgConfig.RestartCommand == "" && adapter.pgConfig.ServiceName == "" {
+			return fmt.Errorf("neither restart_command nor service_name configured, skipping restarting and applying configuration")
 		}
 	}
 
@@ -220,18 +220,31 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(proposedConfig *agent.Propo
 	case "restart":
 		// Restart the service
 		adapter.Logger().Warn("Restarting service")
-		// Execute systemctl restart command if it fails try executing it with sudo
-		cmd := exec.Command("systemctl", "restart", adapter.pgConfig.ServiceName)
-		if err := cmd.Run(); err != nil {
-			adapter.Logger().Warnf("failed to restart PostgreSQL service: %v. Trying with sudo...", err)
 
-			sudoCmd := exec.Command("sudo", "systemctl", "restart", adapter.pgConfig.ServiceName)
-			if sudoErr := sudoCmd.Run(); sudoErr != nil {
-				return fmt.Errorf("failed to restart PostgreSQL service with sudo: %w", sudoErr)
+		if adapter.pgConfig.RestartCommand != "" {
+			// Custom restart command takes precedence. Executed via `sh -c` so
+			// either a script path or a full command line works.
+			cmd := exec.Command("sh", "-c", adapter.pgConfig.RestartCommand)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				adapter.Logger().Warnf("restart command output: %s", string(output))
+				return fmt.Errorf("failed to restart PostgreSQL via restart_command: %w", err)
 			}
-			adapter.Logger().Warn("Service restarted using sudo.")
+			adapter.Logger().Warn("Service restarted via restart_command.")
 		} else {
-			adapter.Logger().Warn("Service restarted.")
+			// Execute systemctl restart command if it fails try executing it with sudo
+			cmd := exec.Command("systemctl", "restart", adapter.pgConfig.ServiceName)
+			if err := cmd.Run(); err != nil {
+				adapter.Logger().Warnf("failed to restart PostgreSQL service: %v. Trying with sudo...", err)
+
+				sudoCmd := exec.Command("sudo", "systemctl", "restart", adapter.pgConfig.ServiceName)
+				if sudoErr := sudoCmd.Run(); sudoErr != nil {
+					return fmt.Errorf("failed to restart PostgreSQL service with sudo: %w", sudoErr)
+				}
+				adapter.Logger().Warn("Service restarted using sudo.")
+			} else {
+				adapter.Logger().Warn("Service restarted.")
+			}
 		}
 
 		err := pg.WaitPostgresReady(adapter.pgDriver)
