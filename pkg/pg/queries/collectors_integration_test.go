@@ -544,18 +544,21 @@ func TestTransactionCommits_ComputesTPS(t *testing.T) {
 		if r1 == nil {
 			t.Fatal("first Collect() returned nil")
 		}
-		var p1 TransactionCommitsPayload
+		var p1 Payload[TransactionCommitsRow]
 		if err := json.Unmarshal(r1.JSON, &p1); err != nil {
 			t.Fatalf("failed to parse first result: %v", err)
 		}
 		if p1.CollectedAt.IsZero() {
 			t.Fatal("expected non-zero collected_at on first call")
 		}
-		if p1.XactCommit <= 0 {
-			t.Fatalf("expected xact_commit > 0 on first call, got %d", p1.XactCommit)
+		if len(p1.Rows) != 1 {
+			t.Fatalf("expected 1 row on first call, got %d", len(p1.Rows))
 		}
-		if p1.TPS != 0 {
-			t.Fatalf("expected TPS = 0 on first call (no baseline), got %f", p1.TPS)
+		if p1.Rows[0].XactCommit <= 0 {
+			t.Fatalf("expected xact_commit > 0 on first call, got %d", p1.Rows[0].XactCommit)
+		}
+		if p1.Rows[0].TPS != 0 {
+			t.Fatalf("expected TPS = 0 on first call (no baseline), got %f", p1.Rows[0].TPS)
 		}
 
 		// Generate some transactions and wait for PG stats collector to update.
@@ -572,18 +575,21 @@ func TestTransactionCommits_ComputesTPS(t *testing.T) {
 		if r2 == nil {
 			t.Fatal("second Collect() returned nil")
 		}
-		var p2 TransactionCommitsPayload
+		var p2 Payload[TransactionCommitsRow]
 		if err := json.Unmarshal(r2.JSON, &p2); err != nil {
 			t.Fatalf("failed to parse second result: %v", err)
 		}
 		if p2.CollectedAt.IsZero() {
 			t.Fatal("expected non-zero collected_at on second call")
 		}
-		if p2.XactCommit < p1.XactCommit {
-			t.Fatalf("xact_commit decreased: %d → %d", p1.XactCommit, p2.XactCommit)
+		if len(p2.Rows) != 1 {
+			t.Fatalf("expected 1 row on second call, got %d", len(p2.Rows))
 		}
-		if p2.TPS < 0 {
-			t.Fatalf("expected TPS >= 0, got %f", p2.TPS)
+		if p2.Rows[0].XactCommit < p1.Rows[0].XactCommit {
+			t.Fatalf("xact_commit decreased: %d → %d", p1.Rows[0].XactCommit, p2.Rows[0].XactCommit)
+		}
+		if p2.Rows[0].TPS < 0 {
+			t.Fatalf("expected TPS >= 0, got %f", p2.Rows[0].TPS)
 		}
 	})
 }
