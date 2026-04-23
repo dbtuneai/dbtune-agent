@@ -24,10 +24,9 @@ const transactionCommitsQuery = `
 SELECT SUM(xact_commit)::bigint AS server_xact_commits
 FROM pg_stat_database`
 
-type TransactionCommitsPayload struct {
-	CollectedAt time.Time `json:"collected_at"`
-	XactCommit  int64     `json:"xact_commit"`
-	TPS         float64   `json:"tps,omitempty"`
+type TransactionCommitsRow struct {
+	XactCommit int64   `json:"xact_commit"`
+	TPS        float64 `json:"tps,omitempty"`
 }
 
 func TransactionCommitsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
@@ -51,23 +50,22 @@ func TransactionCommitsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) Cata
 				return nil, fmt.Errorf("failed to query %s: %w", TransactionCommitsName, err)
 			}
 
-			payload := TransactionCommitsPayload{
-				CollectedAt: collectedAt,
-				XactCommit:  xactCommit,
-			}
+			row := TransactionCommitsRow{XactCommit: xactCommit}
 
-			now := collectedAt
 			if !prev.timestamp.IsZero() && xactCommit >= prev.count {
-				duration := now.Sub(prev.timestamp).Seconds()
+				duration := collectedAt.Sub(prev.timestamp).Seconds()
 				if duration > 0 {
-					payload.TPS = float64(xactCommit-prev.count) / duration
+					row.TPS = float64(xactCommit-prev.count) / duration
 				}
 			}
 
 			prev.count = xactCommit
-			prev.timestamp = now
+			prev.timestamp = collectedAt
 
-			data, err := json.Marshal(&payload)
+			data, err := json.Marshal(&Payload[TransactionCommitsRow]{
+				CollectedAt: collectedAt,
+				Rows:        []TransactionCommitsRow{row},
+			})
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal %s: %w", TransactionCommitsName, err)
 			}
