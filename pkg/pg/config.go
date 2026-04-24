@@ -13,9 +13,10 @@ const (
 )
 
 type Config struct {
-	ConnectionURL string `mapstructure:"connection_url" validate:"required"`
-	ServiceName   string `mapstructure:"service_name"` // TODO(eddie): Should be moved under pgprem, as it doesn't apply to all other PG providers
-	AllowRestart  bool   `mapstructure:"allow_restart"`
+	ConnectionURL  string `mapstructure:"connection_url" validate:"required"`
+	ServiceName    string `mapstructure:"service_name"`    // TODO(eddie): Should be moved under pgprem, as it doesn't apply to all other PG providers
+	RestartCommand string `mapstructure:"restart_command"` // TODO(eddie): pgprem-only, same as ServiceName. Shell command executed via `sh -c`; takes precedence over ServiceName-based systemctl restart.
+	AllowRestart   bool   `mapstructure:"allow_restart"`
 }
 
 func ConfigFromViper(key *string) (Config, error) {
@@ -41,6 +42,7 @@ func ConfigFromViper(key *string) (Config, error) {
 
 	_ = dbtuneConfig.BindEnv("connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
 	_ = dbtuneConfig.BindEnv("service_name", "DBT_POSTGRESQL_SERVICE_NAME")
+	_ = dbtuneConfig.BindEnv("restart_command", "DBT_POSTGRESQL_RESTART_COMMAND")
 	_ = dbtuneConfig.BindEnv("allow_restart", "DBT_POSTGRESQL_ALLOW_RESTART")
 
 	// Also bind on the global viper so dotted lookups like
