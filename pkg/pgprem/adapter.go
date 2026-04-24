@@ -37,6 +37,13 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 		return nil, err
 	}
 
+	if pgConfig.AllowRestart && pgConfig.ServiceName == "" && pgConfig.RestartCommand == "" {
+		return nil, fmt.Errorf(
+			"postgresql.allow_restart is true but neither postgresql.service_name nor postgresql.restart_command is configured; " +
+				"restarts would fail silently. Set one of them (env: DBT_POSTGRESQL_SERVICE_NAME or DBT_POSTGRESQL_RESTART_COMMAND)",
+		)
+	}
+
 	dbpool, err := pgPool.New(context.Background(), pgConfig.ConnectionURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PG driver: %w", err)
@@ -169,31 +176,55 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 		}
 	}
 
-	if requiresRestart {
-		// Restart the service
-		adapter.Logger().Warn("Restarting service")
-		// Execute systemctl restart command if it fails try executing it with sudo
-		cmd := exec.Command("systemctl", "restart", adapter.pgConfig.ServiceName) //nolint:gosec // ServiceName is from trusted config
-		if err := cmd.Run(); err != nil {
-			adapter.Logger().Warnf("failed to restart PostgreSQL service: %v. Trying with sudo...", err)
-
-			sudoCmd := exec.Command("sudo", "systemctl", "restart", adapter.pgConfig.ServiceName) //nolint:gosec // ServiceName is from trusted config
-			if sudoErr := sudoCmd.Run(); sudoErr != nil {
-				return &agent.ConfigApplyError{Err: fmt.Errorf("failed to restart PostgreSQL service with sudo: %w", sudoErr)}
+	switch proposedConfig.KnobApplication {
+	case "restart":
+		if !agent.IsRestartAllowed() {
+			return &agent.RestartNotAllowedError{
+				Message: "restart is not allowed in the agent",
 			}
-			adapter.Logger().Warn("Service restarted using sudo.")
+		}
+		adapter.Logger().Warn("Restarting service")
+
+		if adapter.pgConfig.RestartCommand != "" {
+			// Custom restart command takes precedence. Executed via `sh -c` so
+			// either a script path or a full command line works.
+			cmd := exec.Command("sh", "-c", adapter.pgConfig.RestartCommand) //nolint:gosec // RestartCommand is from trusted config
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				adapter.Logger().Warnf("restart command output: %s", string(output))
+				return &agent.ConfigApplyError{Err: fmt.Errorf("failed to restart PostgreSQL via restart_command: %w", err)}
+			}
+			adapter.Logger().Warn("Service restarted via restart_command.")
 		} else {
-			adapter.Logger().Warn("Service restarted.")
+			// Execute systemctl restart command if it fails try executing it with sudo
+			cmd := exec.Command("systemctl", "restart", adapter.pgConfig.ServiceName) //nolint:gosec // ServiceName is from trusted config
+			if err := cmd.Run(); err != nil {
+				adapter.Logger().Warnf("failed to restart PostgreSQL service: %v. Trying with sudo...", err)
+
+				sudoCmd := exec.Command("sudo", "systemctl", "restart", adapter.pgConfig.ServiceName) //nolint:gosec // ServiceName is from trusted config
+				if sudoErr := sudoCmd.Run(); sudoErr != nil {
+					return &agent.ConfigApplyError{Err: fmt.Errorf("failed to restart PostgreSQL service with sudo: %w", sudoErr)}
+				}
+				adapter.Logger().Warn("Service restarted using sudo.")
+			} else {
+				adapter.Logger().Warn("Service restarted.")
+			}
 		}
 
 		err := pg.WaitPostgresReady(adapter.pgDriver)
 		if err != nil {
 			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)}
 		}
-	} else {
-		// Reload database when everything is applied. KnobApplication=restart
-		// with no postmaster-context params falls through here too: the intent
-		// is treated as a hint, and we avoid a needless restart.
+	case "reload":
+		// Reload database when everything is applied
+		err := pg.ReloadConfig(adapter.pgDriver)
+		if err != nil {
+			return &agent.ConfigApplyError{Err: err}
+		}
+	case "":
+		// TODO(eddie): We should make this more explicit somehow.
+		// This happens when nothing is sent from the backend about this.
+		// We should send an explicit string instead of leaving it blank.
 		err := pg.ReloadConfig(adapter.pgDriver)
 		if err != nil {
 			return &agent.ConfigApplyError{Err: err}
