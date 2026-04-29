@@ -2,10 +2,13 @@
 ```yaml
 postgresql:
   connection_url: postgresql://user:password@localhost:5432/database # Database connection string
-  service_name: "postgresql-17" # (required for restart unless `restart_command` is set) name of your database service running under systemctl
-  # restart_command: "/usr/local/bin/restart-pg.sh" # Optional shell command executed via `sh -c` to restart PostgreSQL. Takes precedence over `service_name` when set.
+  service_name: "postgresql-17" # (required for restart unless `use_restart_command` is true) name of your database service running under systemctl
+  # use_restart_command: false  # When true, restarts are performed by directly executing the script at
+                                # /opt/dbtune-agent/restart.sh (no shell interpolation). Takes precedence
+                                # over `service_name`. The script must exist and be executable by the agent.
   allow_restart: false  # Allow the agent to restart PostgreSQL. Defaults to false.
-                        # When true, at least one of `service_name` or `restart_command` must be set.
+                        # When true, either `service_name` must be set or `use_restart_command` must be true
+                        # (with /opt/dbtune-agent/restart.sh present).
 
 dbtune:
   server_url: https://app.dbtune.com # DBtune server endpoint
@@ -31,7 +34,7 @@ export DBT_DBTUNE_DATABASE_ID=your-database-id
 # Your database specific
 export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database
 export DBT_POSTGRESQL_SERVICE_NAME=
-# export DBT_POSTGRESQL_RESTART_COMMAND=  # Optional: shell command executed via `sh -c`. Takes precedence over SERVICE_NAME.
+# export DBT_POSTGRESQL_USE_RESTART_COMMAND=false  # When true, restarts execute /opt/dbtune-agent/restart.sh directly. Takes precedence over SERVICE_NAME.
 export DBT_POSTGRESQL_ALLOW_RESTART=false  # Set to true to allow PostgreSQL restarts.
-                                           # When true, at least one of SERVICE_NAME or RESTART_COMMAND must be set.
+                                           # When true, either SERVICE_NAME must be set or USE_RESTART_COMMAND must be true.
 ```
