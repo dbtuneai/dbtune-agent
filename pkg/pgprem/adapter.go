@@ -3,6 +3,7 @@ package pgprem
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -37,11 +38,29 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 		return nil, err
 	}
 
-	if pgConfig.AllowRestart && pgConfig.ServiceName == "" && pgConfig.RestartCommand == "" {
+	if pgConfig.AllowRestart && pgConfig.ServiceName == "" && !pgConfig.UseRestartCommand {
 		return nil, fmt.Errorf(
-			"postgresql.allow_restart is true but neither postgresql.service_name nor postgresql.restart_command is configured; " +
-				"restarts would fail silently. Set one of them (env: DBT_POSTGRESQL_SERVICE_NAME or DBT_POSTGRESQL_RESTART_COMMAND)",
+			"postgresql.allow_restart is true but neither postgresql.service_name nor postgresql.use_restart_command is configured; " +
+				"restarts would fail silently. Set postgresql.service_name (env: DBT_POSTGRESQL_SERVICE_NAME) " +
+				"or set postgresql.use_restart_command=true (env: DBT_POSTGRESQL_USE_RESTART_COMMAND) and provide " +
+				pg.RestartScriptPath,
 		)
+	}
+
+	if pgConfig.UseRestartCommand {
+		info, err := os.Stat(pg.RestartScriptPath)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"postgresql.use_restart_command is true but %s is not accessible: %w",
+				pg.RestartScriptPath, err,
+			)
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf("%s is a directory, expected an executable file", pg.RestartScriptPath)
+		}
+		if info.Mode()&0o111 == 0 {
+			return nil, fmt.Errorf("%s is not executable (mode %s); chmod +x it", pg.RestartScriptPath, info.Mode())
+		}
 	}
 
 	dbpool, err := pgPool.New(context.Background(), pgConfig.ConnectionURL)
@@ -171,16 +190,16 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(_ context.Context, proposed
 		}
 		adapter.Logger().Warn("Restarting service")
 
-		if adapter.pgConfig.RestartCommand != "" {
-			// Custom restart command takes precedence. Executed via `sh -c` so
-			// either a script path or a full command line works.
-			cmd := exec.Command("sh", "-c", adapter.pgConfig.RestartCommand) //nolint:gosec // RestartCommand is from trusted config
+		if adapter.pgConfig.UseRestartCommand {
+			// Execute the operator-provided restart script directly (no shell
+			// interpolation). Path is fixed so we never exec an attacker-controlled string.
+			cmd := exec.Command(pg.RestartScriptPath) //nolint:gosec
 			output, err := cmd.CombinedOutput()
 			if err != nil {
-				adapter.Logger().Warnf("restart command output: %s", string(output))
-				return fmt.Errorf("failed to restart PostgreSQL via restart_command: %w", err)
+				adapter.Logger().Warnf("restart script output: %s", string(output))
+				return fmt.Errorf("failed to restart PostgreSQL via %s: %w", pg.RestartScriptPath, err)
 			}
-			adapter.Logger().Warn("Service restarted via restart_command.")
+			adapter.Logger().Warnf("Service restarted via %s.", pg.RestartScriptPath)
 		} else {
 			// Execute systemctl restart command if it fails try executing it with sudo
 			cmd := exec.Command("systemctl", "restart", adapter.pgConfig.ServiceName) //nolint:gosec // ServiceName is from trusted config
