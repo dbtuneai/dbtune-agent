@@ -1598,7 +1598,7 @@ func TestPgStatStatements_AllVersions(t *testing.T) {
 					DiffLimit:          PgStatStatementsDiffLimit,
 					IncludeQueries:     true,
 					MaxQueryTextLength: 1000,
-				}, inst.version,
+				},
 			)
 
 			// First call: snapshot, no deltas, no avg runtime.
@@ -1677,6 +1677,142 @@ func TestPgStatStatements_AllVersions(t *testing.T) {
 	}
 }
 
+// TestPgStatStatements_AdaptsToOldExtensionOnNewServer is the integration-level
+// regression test for the bug where the collector built the query from the
+// PostgreSQL server major version instead of the pg_stat_statements extension
+// version. On a server upgraded to PG 17 with the extension still pinned at
+// 1.10 (the realistic Amazon RDS state until ALTER EXTENSION ... UPDATE is
+// run), the old logic generated SELECT shared_blk_read_time which does not
+// exist in the 1.10 view (SQLSTATE 42703). This test reproduces that exact
+// "new server / old extension" combination by explicitly creating the
+// extension at version 1.10 in a fresh database, then exercises the
+// version-change rebuild path by ALTERing the extension up to 1.11.
+//
+// The reproduction depends on the PG container shipping the
+// pg_stat_statements--*--*.sql upgrade scripts down to 1.4 (it does, see
+// contrib/pg_stat_statements in the postgres source tree). PG 15 is the
+// earliest version that supports installing at exactly 1.10; PG 17 is the
+// earliest version that supports updating to 1.11.
+func TestPgStatStatements_AdaptsToOldExtensionOnNewServer(t *testing.T) {
+	for _, inst := range pgInstances {
+		// PG 15 is the earliest version where 1.10 is reachable as the
+		// install target. On PG 13/14, the contrib package still tops out at
+		// 1.9 / 1.8 respectively, so installing at 1.10 isn't possible.
+		if inst.version < 15 {
+			continue
+		}
+		inst := inst
+		t.Run(fmt.Sprintf("PG%d_install_ext_1_10", inst.version), func(t *testing.T) {
+			// No t.Parallel() — we create and drop a fresh database, but
+			// keeping things sequential makes failure modes easier to read.
+			ctx := context.Background()
+
+			// Create an isolated database so we don't disturb shared
+			// extension state in testdb (which other parallel subtests rely
+			// on).
+			dbName := fmt.Sprintf("pgss_oldext_pg%d", inst.version)
+			if _, err := inst.admin.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", dbName)); err != nil {
+				t.Fatalf("CREATE DATABASE %s: %v", dbName, err)
+			}
+			t.Cleanup(func() {
+				// Force-disconnect any leftover sessions so DROP succeeds.
+				_, _ = inst.admin.Exec(ctx,
+					"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
+					dbName)
+				_, _ = inst.admin.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName))
+			})
+
+			// Build a pool to the fresh database (admin user, since CREATE
+			// EXTENSION needs superuser).
+			baseConn, err := inst.container.ConnectionString(ctx, "sslmode=disable")
+			if err != nil {
+				t.Fatalf("ConnectionString: %v", err)
+			}
+			cfg, err := pgxpool.ParseConfig(baseConn)
+			if err != nil {
+				t.Fatalf("pgxpool.ParseConfig: %v", err)
+			}
+			cfg.ConnConfig.Database = dbName
+			pool, err := pgxpool.NewWithConfig(ctx, cfg)
+			if err != nil {
+				t.Fatalf("pgxpool.NewWithConfig: %v", err)
+			}
+			defer pool.Close()
+
+			// Install pg_stat_statements at exactly 1.10 — the extension
+			// version that lacks shared_blk_read_time.
+			if _, err := pool.Exec(ctx, "CREATE EXTENSION pg_stat_statements VERSION '1.10'"); err != nil {
+				t.Fatalf("CREATE EXTENSION pg_stat_statements VERSION '1.10': %v", err)
+			}
+
+			// Sanity: confirm the installed version is what we asked for.
+			var installed string
+			if err := pool.QueryRow(ctx, "SELECT extversion FROM pg_extension WHERE extname='pg_stat_statements'").Scan(&installed); err != nil {
+				t.Fatalf("SELECT extversion: %v", err)
+			}
+			if installed != "1.10" {
+				t.Fatalf("expected installed extversion 1.10, got %q", installed)
+			}
+
+			// Generate some pg_stat_statements activity.
+			for i := 0; i < 5; i++ {
+				_, _ = pool.Exec(ctx, "SELECT count(*) FROM pg_class WHERE oid > $1", i*100)
+			}
+
+			c := PgStatStatementsCollector(pool, noopPrepareCtx, PgStatStatementsConfig{
+				DiffLimit:          PgStatStatementsDiffLimit,
+				IncludeQueries:     true,
+				MaxQueryTextLength: 1000,
+			})
+
+			// REGRESSION: under the old (server-version-based) gate, this
+			// Collect() would fail on PG >= 17 with
+			//   ERROR: column "shared_blk_read_time" does not exist
+			// because the server reports >=17 but the 1.10 view only has
+			// blk_read_time. The new (extension-version-based) gate must
+			// succeed.
+			r1, err := c.Collect(ctx)
+			if err != nil {
+				t.Fatalf("PG%d + ext 1.10: Collect failed (regression): %v", inst.version, err)
+			}
+			var p1 PgStatStatementsPayload
+			if err := json.Unmarshal(r1.JSON, &p1); err != nil {
+				t.Fatalf("unmarshal first payload: %v", err)
+			}
+			if len(p1.Rows) == 0 {
+				t.Fatalf("PG%d + ext 1.10: expected non-empty rows", inst.version)
+			}
+
+			// Exercise the version-change rebuild path by upgrading the
+			// extension to 1.11. This is only meaningful (and only
+			// reachable) on PG 17+, since 1.11 was added with PG 17.
+			if inst.version >= 17 {
+				if _, err := pool.Exec(ctx, "ALTER EXTENSION pg_stat_statements UPDATE TO '1.11'"); err != nil {
+					t.Fatalf("ALTER EXTENSION ... UPDATE TO '1.11': %v", err)
+				}
+
+				// Generate additional activity so the collector has fresh
+				// rows to report after the rebuild.
+				for i := 0; i < 5; i++ {
+					_, _ = pool.Exec(ctx, "SELECT count(*) FROM pg_attribute WHERE attnum > $1", i)
+				}
+
+				r2, err := c.Collect(ctx)
+				if err != nil {
+					t.Fatalf("PG%d + ext 1.11 (after UPDATE): Collect failed: %v", inst.version, err)
+				}
+				var p2 PgStatStatementsPayload
+				if err := json.Unmarshal(r2.JSON, &p2); err != nil {
+					t.Fatalf("unmarshal second payload: %v", err)
+				}
+				if len(p2.Rows) == 0 {
+					t.Fatalf("PG%d + ext 1.11: expected non-empty rows after extension UPDATE", inst.version)
+				}
+			}
+		})
+	}
+}
+
 func TestAutovacuumCount_ReturnsData(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
 		c := AutovacuumCountCollector(inst.pool, noopPrepareCtx)
@@ -1717,7 +1853,7 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 			DiffLimit:          PgStatStatementsDiffLimit,
 			IncludeQueries:     true,
 			MaxQueryTextLength: 1000,
-		}, pgMajorVersion),
+		}),
 		PgStatSubscriptionCollector(pool, noopPrepareCtx),
 		PgStatSubscriptionStatsCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatUserFunctionsCollector(pool, noopPrepareCtx),
