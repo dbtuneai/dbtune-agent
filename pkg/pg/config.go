@@ -43,6 +43,14 @@ func ConfigFromViper(key *string) (Config, error) {
 	_ = dbtuneConfig.BindEnv("service_name", "DBT_POSTGRESQL_SERVICE_NAME")
 	_ = dbtuneConfig.BindEnv("allow_restart", "DBT_POSTGRESQL_ALLOW_RESTART")
 
+	// Also bind on the global viper so dotted lookups like
+	// viper.GetBool("postgresql.allow_restart") (used by agent.IsRestartAllowed)
+	// resolve the env var. BindEnv on a sub-viper does not propagate to the parent.
+	_ = viper.BindEnv("postgresql.connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
+	_ = viper.BindEnv("postgresql.service_name", "DBT_POSTGRESQL_SERVICE_NAME")
+	_ = viper.BindEnv("postgresql.use_restart_command", "DBT_POSTGRESQL_USE_RESTART_COMMAND")
+	_ = viper.BindEnv("postgresql.allow_restart", "DBT_POSTGRESQL_ALLOW_RESTART")
+
 	dbtuneConfig.SetDefault("allow_restart", false)
 
 	var pgConfig Config
