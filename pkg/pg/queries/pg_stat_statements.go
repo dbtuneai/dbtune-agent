@@ -124,8 +124,62 @@ type PgStatStatementsPayload struct {
 	AverageQueryRuntime float64                 `json:"average_query_runtime"`
 }
 
-// buildPgStatStatementsQuery returns a version-specific query for pg_stat_statements.
-func buildPgStatStatementsQuery(includeQueries bool, maxQueryTextLength int, pgVersion int) string {
+// PgStatStatementsExtVersion is a parsed pg_stat_statements extension version
+// (e.g. extversion '1.10' -> {Major:1, Minor:10}). The available column set is
+// determined by this extension version, not by the PostgreSQL server major
+// version: a server that has been upgraded (e.g. PG 16 -> 17) keeps the
+// previously-installed extension version until ALTER EXTENSION ... UPDATE is
+// run, so the two move independently. Managed services such as Amazon RDS
+// regularly upgrade the server but leave existing extensions at their old
+// version, producing the realistic "new server / old extension" combination.
+//
+// References:
+//   - https://www.postgresql.org/docs/current/pgstatstatements.html
+//   - https://www.postgresql.org/docs/current/sql-alterextension.html (ALTER EXTENSION ... UPDATE)
+type PgStatStatementsExtVersion struct {
+	Major int
+	Minor int
+}
+
+// GTE reports whether v is at least major.minor.
+func (v PgStatStatementsExtVersion) GTE(major, minor int) bool {
+	if v.Major != major {
+		return v.Major > major
+	}
+	return v.Minor >= minor
+}
+
+// buildPgStatStatementsQuery returns an extension-version-specific query for
+// pg_stat_statements. Column availability follows the extension changelog;
+// the version-to-PG mapping below is the default_version recorded in the
+// pg_stat_statements.control file for each PostgreSQL stable branch (the
+// canonical source of truth for which extension version a fresh PG ships).
+//
+//   - 1.8  (default in PG 13): split total_time / min_time / max_time /
+//     mean_time / stddev_time into _exec_ / _plan_ counterparts.
+//     https://github.com/postgres/postgres/blob/REL_13_STABLE/contrib/pg_stat_statements/pg_stat_statements.control
+//   - 1.9  (default in PG 14): adds the toplevel column.
+//     https://github.com/postgres/postgres/blob/REL_14_STABLE/contrib/pg_stat_statements/pg_stat_statements.control
+//     https://www.postgresql.org/docs/release/14.0/ (separate top/nested tracking)
+//   - 1.10 (default in PG 15 and PG 16): adds temp_blk_read_time /
+//     temp_blk_write_time and the jit_* columns (jit_functions,
+//     jit_generation_time, jit_inlining_count, jit_inlining_time,
+//     jit_optimization_count, jit_optimization_time, jit_emission_count,
+//     jit_emission_time).
+//     https://github.com/postgres/postgres/blob/REL_15_STABLE/contrib/pg_stat_statements/pg_stat_statements.control
+//     https://github.com/postgres/postgres/blob/REL_16_STABLE/contrib/pg_stat_statements/pg_stat_statements.control
+//     https://www.postgresql.org/docs/release/15.0/ (temp file I/O + JIT counters)
+//   - 1.11 (default in PG 17): renames blk_read_time / blk_write_time to
+//     shared_blk_read_time / shared_blk_write_time, and adds
+//     local_blk_read_time / local_blk_write_time.
+//     https://github.com/postgres/postgres/blob/REL_17_STABLE/contrib/pg_stat_statements/pg_stat_statements.control
+//     https://www.postgresql.org/docs/release/17.0/ (E.10.3.11.1 pg_stat_statements)
+//
+// Because PG 16 shipped 1.10 by default, an Amazon RDS instance upgraded from
+// PG 16 to PG 17 keeps the extension at 1.10 until the operator explicitly
+// runs ALTER EXTENSION pg_stat_statements UPDATE — that's the realistic
+// "new server / old extension" combination this gating must handle.
+func buildPgStatStatementsQuery(includeQueries bool, maxQueryTextLength int, extVersion PgStatStatementsExtVersion) string {
 	var cols []string
 
 	cols = append(cols, "userid", "dbid", "queryid")
@@ -150,7 +204,7 @@ func buildPgStatStatementsQuery(includeQueries bool, maxQueryTextLength int, pgV
 		"temp_blks_read", "temp_blks_written",
 	)
 
-	if pgVersion >= 17 {
+	if extVersion.GTE(1, 11) {
 		cols = append(cols, "shared_blk_read_time", "shared_blk_write_time")
 		cols = append(cols, "local_blk_read_time", "local_blk_write_time")
 	} else {
@@ -166,11 +220,11 @@ func buildPgStatStatementsQuery(includeQueries bool, maxQueryTextLength int, pgV
 		"wal_records", "wal_fpi", "wal_bytes",
 	)
 
-	if pgVersion >= 14 {
+	if extVersion.GTE(1, 9) {
 		cols = append(cols, "toplevel")
 	}
 
-	if pgVersion >= 15 {
+	if extVersion.GTE(1, 10) {
 		cols = append(cols,
 			"temp_blk_read_time", "temp_blk_write_time",
 			"jit_functions", "jit_generation_time",
@@ -304,37 +358,46 @@ func calculateAvgRuntime(prev, curr map[string]PgStatStatementsRow) float64 {
 	return totalExecTime / float64(totalCalls)
 }
 
-// pgMajorVersionRegex extracts the major version from SELECT version() output.
-var pgMajorVersionRegex = regexp.MustCompile(`PostgreSQL (\d+)`)
+// pgStatStatementsExtVersionRegex extracts the major.minor pair from a
+// pg_extension.extversion value such as "1.10".
+var pgStatStatementsExtVersionRegex = regexp.MustCompile(`^(\d+)\.(\d+)`)
 
-const pgVersionQuery = `SELECT version()`
+const pgStatStatementsExtVersionQuery = `SELECT extversion FROM pg_extension WHERE extname = 'pg_stat_statements'`
 
-func queryPGMajorVersion(pool *pgxpool.Pool, ctx context.Context) (int, error) {
-	var versionStr string
-	err := utils.QueryRowWithPrefix(pool, ctx, pgVersionQuery).Scan(&versionStr)
+func queryPgStatStatementsExtVersion(pool *pgxpool.Pool, ctx context.Context) (PgStatStatementsExtVersion, error) {
+	var s string
+	err := utils.QueryRowWithPrefix(pool, ctx, pgStatStatementsExtVersionQuery).Scan(&s)
 	if err != nil {
-		return 0, fmt.Errorf("failed to query PG version: %w", err)
+		return PgStatStatementsExtVersion{}, fmt.Errorf("failed to query pg_stat_statements extension version: %w", err)
 	}
-	matches := pgMajorVersionRegex.FindStringSubmatch(versionStr)
-	if len(matches) < 2 {
-		return 0, fmt.Errorf("could not parse PG version from %q", versionStr)
+	m := pgStatStatementsExtVersionRegex.FindStringSubmatch(s)
+	if len(m) < 3 {
+		return PgStatStatementsExtVersion{}, fmt.Errorf("could not parse pg_stat_statements extension version from %q", s)
 	}
-	return strconv.Atoi(matches[1])
+	major, err := strconv.Atoi(m[1])
+	if err != nil {
+		return PgStatStatementsExtVersion{}, fmt.Errorf("could not parse major version from %q: %w", s, err)
+	}
+	minor, err := strconv.Atoi(m[2])
+	if err != nil {
+		return PgStatStatementsExtVersion{}, fmt.Errorf("could not parse minor version from %q: %w", s, err)
+	}
+	return PgStatStatementsExtVersion{Major: major, Minor: minor}, nil
 }
 
 // PgStatStatementsCollector returns a CatalogCollector that queries
 // pg_stat_statements, computes deltas between consecutive snapshots,
-// and emits a structured payload. The query is version-aware and will
-// be rebuilt if a PG version change is detected.
+// and emits a structured payload. The query is rebuilt whenever the
+// detected pg_stat_statements extension version changes (e.g. after
+// ALTER EXTENSION pg_stat_statements UPDATE).
 func PgStatStatementsCollector(
 	pool *pgxpool.Pool,
 	prepareCtx PrepareCtx,
 	cfg PgStatStatementsConfig,
-	initialPGVersion int,
 ) CatalogCollector {
 	var prevSnapshot map[string]PgStatStatementsRow
-	currentVersion := initialPGVersion
-	query := buildPgStatStatementsQuery(cfg.IncludeQueries, cfg.MaxQueryTextLength, currentVersion)
+	var currentExtVersion PgStatStatementsExtVersion
+	var query string
 	scanner := pgxutil.NewScanner[PgStatStatementsRow]()
 
 	return CatalogCollector{
@@ -347,13 +410,13 @@ func PgStatStatementsCollector(
 			}
 
 			collectedAt := time.Now().UTC()
-			detectedVersion, err := queryPGMajorVersion(pool, ctx)
+			detectedExtVersion, err := queryPgStatStatementsExtVersion(pool, ctx)
 			if err != nil {
 				return nil, err
 			}
-			if detectedVersion != currentVersion {
-				currentVersion = detectedVersion
-				query = buildPgStatStatementsQuery(cfg.IncludeQueries, cfg.MaxQueryTextLength, currentVersion)
+			if detectedExtVersion != currentExtVersion {
+				currentExtVersion = detectedExtVersion
+				query = buildPgStatStatementsQuery(cfg.IncludeQueries, cfg.MaxQueryTextLength, currentExtVersion)
 				prevSnapshot = nil
 			}
 
