@@ -15,6 +15,22 @@ const (
 // RestartScriptPath is the fixed location of the optional operator-provided
 // restart script. When UseRestartCommand is true, the agent executes this
 // script directly (no shell interpolation) instead of `systemctl restart`.
+//
+// Contract: the script MUST signal success with exit code 0 and failure with
+// any non-zero exit code. Output written to stdout/stderr is treated as
+// diagnostic only (logged on failure) and does not affect the success/failure
+// decision — many tools write to stderr during normal operation.
+//
+// Minimal example (/opt/dbtune-agent/restart.sh):
+//
+//	#!/bin/bash
+//	# Must exit 0 on success, non-zero on failure.
+//	set -eo pipefail
+//	# Assumes PGDATA points to the data folder of postgres.
+//	exec gosu postgres pg_ctl restart -D "$PGDATA" -m fast -w -t 600
+//
+// The file must be executable (chmod +x). Adjust the data directory (-D) and
+// the user running pg_ctl to match your deployment.
 const RestartScriptPath = "/opt/dbtune-agent/restart.sh"
 
 type Config struct {

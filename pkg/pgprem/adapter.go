@@ -193,13 +193,20 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(_ context.Context, proposed
 		if adapter.pgConfig.UseRestartCommand {
 			// Execute the operator-provided restart script directly (no shell
 			// interpolation). Path is fixed so we never exec an attacker-controlled string.
+			//
+			// Contract: the script MUST signal success with exit code 0 and failure
+			// with any non-zero exit code. Output written to stdout/stderr is treated
+			// as diagnostic only and does not affect the success/failure decision.
 			cmd := exec.Command(pg.RestartScriptPath) //nolint:gosec
 			output, err := cmd.CombinedOutput()
-			if err != nil {
-				adapter.Logger().Warnf("restart script output: %s", string(output))
-				return fmt.Errorf("failed to restart PostgreSQL via %s: %w", pg.RestartScriptPath, err)
+			exitCode := cmd.ProcessState.ExitCode() // -1 if the process never ran
+			if err != nil || exitCode != 0 {
+				adapter.Logger().Warnf("restart script %s exited with code %d; output: %s",
+					pg.RestartScriptPath, exitCode, string(output))
+				return fmt.Errorf("restart script %s failed (exit code %d): %w",
+					pg.RestartScriptPath, exitCode, err)
 			}
-			adapter.Logger().Warnf("Service restarted via %s.", pg.RestartScriptPath)
+			adapter.Logger().Warnf("Service restarted via %s (exit code 0).", pg.RestartScriptPath)
 		} else {
 			// Execute systemctl restart command if it fails try executing it with sudo
 			cmd := exec.Command("systemctl", "restart", adapter.pgConfig.ServiceName) //nolint:gosec // ServiceName is from trusted config
