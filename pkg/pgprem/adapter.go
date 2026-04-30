@@ -40,8 +40,8 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 
 	if pgConfig.AllowRestart && pgConfig.ServiceName == "" && !pgConfig.UseRestartCommand {
 		return nil, fmt.Errorf(
-			"postgresql.allow_restart is true but neither postgresql.service_name nor postgresql.use_restart_command is configured; " +
-				"restarts would fail silently. Set postgresql.service_name (env: DBT_POSTGRESQL_SERVICE_NAME) " +
+			"postgresql.allow_restart is true but neither postgresql.service_name nor postgresql.use_restart_command is configured. " +
+				"Set postgresql.service_name (env: DBT_POSTGRESQL_SERVICE_NAME) " +
 				"or set postgresql.use_restart_command=true (env: DBT_POSTGRESQL_USE_RESTART_COMMAND) and provide " +
 				pg.RestartScriptPath,
 		)
