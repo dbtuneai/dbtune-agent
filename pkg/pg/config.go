@@ -3,6 +3,7 @@ package pg
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/spf13/viper"
@@ -65,6 +66,11 @@ func ConfigFromViper(key *string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+
+	if pgConfig.AllowRestart && runtime.GOOS == "windows" {
+		return Config{}, fmt.Errorf("postgresql.allow_restart is not supported on Windows: the agent restarts PostgreSQL via systemctl, which has no Windows equivalent yet. Set postgresql.allow_restart=false (or unset DBT_POSTGRESQL_ALLOW_RESTART) to run the agent in monitoring/reload-only mode")
+	}
+
 	return pgConfig, nil
 }
 
