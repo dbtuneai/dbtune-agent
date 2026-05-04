@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/aiven"
@@ -67,7 +68,13 @@ func main() {
 	// Locations where to look for the config file
 	viper.AddConfigPath("/etc/")        // config at /etc/dbtune.yaml
 	viper.AddConfigPath("/etc/dbtune/") // config at /etc/dbtune/dbtune.yaml
-	viper.AddConfigPath(".")            // optionally look for config in the working directory
+	if pd := os.Getenv("PROGRAMDATA"); pd != "" {
+		viper.AddConfigPath(filepath.Join(pd, "dbtune")) // %PROGRAMDATA%\dbtune\dbtune.yaml (Windows system-wide)
+	}
+	if ad := os.Getenv("APPDATA"); ad != "" {
+		viper.AddConfigPath(filepath.Join(ad, "dbtune")) // %APPDATA%\dbtune\dbtune.yaml (Windows per-user)
+	}
+	viper.AddConfigPath(".") // optionally look for config in the working directory
 
 	// Read the configuration file
 	if err := viper.ReadInConfig(); err != nil {
