@@ -300,6 +300,7 @@ var skipUnchangedCollectorNames = map[string]bool{
 	PgAttributeName:               true,
 	PgConstraintName:              true,
 	PgIndexName:                   true,
+	PgIndexInventoryName:          true,
 	PgTypeName:                    true,
 	PgPreparedXactsName:           true,
 	PgReplicationSlotsName:        true,
@@ -724,7 +725,7 @@ func TestPgStatUserFunctions_ReturnsFixtureFunction(t *testing.T) {
 
 func TestPgIndex_ReturnsFixtureIndexes(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
-		c := PgIndexCollector(inst.pool, noopPrepareCtx, inst.version)
+		c := PgIndexCollector(inst.pool, noopPrepareCtx)
 		n := requireRows(t, c)
 		// We created 6 indexes: PK + 3 explicit + 1 partial + 1 expression
 		if n < 6 {
@@ -733,10 +734,10 @@ func TestPgIndex_ReturnsFixtureIndexes(t *testing.T) {
 	})
 }
 
-func TestPgIndex_NewFieldsPopulated(t *testing.T) {
+func TestPgIndexInventory_NewFieldsPopulated(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
 		ctx := context.Background()
-		c := PgIndexCollector(inst.pool, noopPrepareCtx, inst.version)
+		c := PgIndexInventoryCollector(inst.pool, noopPrepareCtx, inst.version)
 
 		result, err := c.Collect(ctx)
 		if err != nil {
@@ -746,13 +747,13 @@ func TestPgIndex_NewFieldsPopulated(t *testing.T) {
 			t.Fatal("Collect() returned nil")
 		}
 
-		var p Payload[PgIndexRow]
+		var p Payload[PgIndexInventoryRow] //nolint:typecheck
 		if err := json.Unmarshal(result.JSON, &p); err != nil {
 			t.Fatalf("failed to parse result: %v", err)
 		}
 
 		// Build a map of index name -> row for easy lookup.
-		byName := make(map[string]*PgIndexRow, len(p.Rows))
+		byName := make(map[string]*PgIndexInventoryRow, len(p.Rows))
 		for i := range p.Rows {
 			if p.Rows[i].IndexName != nil {
 				byName[string(*p.Rows[i].IndexName)] = &p.Rows[i]
@@ -1831,7 +1832,8 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		PgConstraintCollector(pool, noopPrepareCtx),
 		PgTypeCollector(pool, noopPrepareCtx),
 		PgDatabaseCollector(pool, noopPrepareCtx),
-		PgIndexCollector(pool, noopPrepareCtx, pgMajorVersion),
+		PgIndexCollector(pool, noopPrepareCtx),
+		PgIndexInventoryCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgLocksCollector(pool, noopPrepareCtx),
 		PgPreparedXactsCollector(pool, noopPrepareCtx),
 		PgReplicationSlotsCollector(pool, noopPrepareCtx),
