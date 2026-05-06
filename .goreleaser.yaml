@@ -6,6 +6,7 @@ builds:
     goos:
       - linux
       - darwin
+      - windows
     goarch:
       - amd64
       - arm64
@@ -19,6 +20,8 @@ builds:
     ignore:
       - goos: darwin
         goarch: amd64
+      - goos: windows
+        goarch: arm64
 
 dockers_v2:
   - images:
@@ -49,6 +52,9 @@ dockers_v2:
 
 archives:
   - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
