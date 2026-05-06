@@ -36,7 +36,7 @@ type PgIndexInventoryRow struct {
 
 const (
 	PgIndexInventoryName     = "pg_index_inventory"
-	PgIndexInventoryInterval = 24 * time.Hour
+	PgIndexInventoryInterval = 1 * time.Hour
 )
 
 // %s is the indnullsnotdistinct column (real column on PG15+, NULL literal below).
@@ -69,10 +69,6 @@ WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
 ORDER BY n.nspname, t.relname, c.relname
 `
 
-// PgIndexInventoryCollector returns a CatalogCollector that emits the full
-// structural snapshot of every user-visible index on PgIndexInventoryInterval.
-// The collector always emits — skip-unchanged dedup is deliberately not
-// used so the inventory lands on a predictable schedule.
 func PgIndexInventoryCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
 	nullsNotDistinct := "NULL::bool"
 	if pgMajorVersion >= 15 {
@@ -83,5 +79,6 @@ func PgIndexInventoryCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajo
 		pool, prepareCtx,
 		PgIndexInventoryName, PgIndexInventoryInterval,
 		query,
+		WithSkipUnchanged(),
 	)
 }

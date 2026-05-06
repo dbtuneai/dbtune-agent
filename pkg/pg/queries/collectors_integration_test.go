@@ -300,6 +300,7 @@ var skipUnchangedCollectorNames = map[string]bool{
 	PgAttributeName:               true,
 	PgConstraintName:              true,
 	PgIndexName:                   true,
+	PgIndexInventoryName:          true,
 	PgTypeName:                    true,
 	PgPreparedXactsName:           true,
 	PgReplicationSlotsName:        true,
