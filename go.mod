@@ -1,6 +1,6 @@
 module github.com/dbtuneai/agent
 
-go 1.24.0
+go 1.25.0
 
 require (
 	cloud.google.com/go/monitoring v1.24.2
@@ -22,7 +22,7 @@ require (
 	github.com/go-playground/validator/v10 v10.25.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-retryablehttp v0.7.7
-	github.com/jackc/pgx/v5 v5.7.1
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/jaypipes/ghw v0.13.0
 	github.com/shirou/gopsutil/v4 v4.26.2
 	github.com/sirupsen/logrus v1.9.3
