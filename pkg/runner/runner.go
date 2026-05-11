@@ -9,6 +9,7 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/pg/queries"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
@@ -208,6 +209,31 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	// Catalog view collection goroutines — each runs at its own interval
 	// with a staggered start to avoid thundering herd on startup.
 	collectors := adapter.CatalogCollectors()
+
+	collectAndSend := func(ctx context.Context, c queries.CatalogCollector) error {
+		data, err := c.Collect(ctx)
+		if err != nil {
+			return handleCollectorError(ctx, adapter, c.Name, err)
+		}
+		if data == nil {
+			return nil
+		}
+		return adapter.SendCatalogPayload(ctx, c.Name, data.JSON)
+	}
+
+	// Bootstrap pass: collectors marked BootstrapBeforeOthers get one
+	// synchronous Collect+Send before any goroutine starts. Best-effort —
+	// a failure here is logged and the regular ticker loop will retry.
+	for _, c := range collectors {
+		if !c.BootstrapBeforeOthers {
+			continue
+		}
+		logger.Debugf("bootstrapping %s before launching catalog goroutines", c.Name)
+		if err := collectAndSend(ctx, c); err != nil {
+			logger.Warnf("bootstrap %s failed (continuing): %v", c.Name, err)
+		}
+	}
+
 	for i, c := range collectors {
 		c := c
 		delay := time.Duration(i) * catalogStagger
@@ -222,15 +248,10 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 			}
 			ticker := time.NewTicker(c.Interval)
 			defer ticker.Stop()
-			runWithTicker(ctx, ticker, c.Name, logger, false, func(ctx context.Context) error {
-				data, err := c.Collect(ctx)
-				if err != nil {
-					return handleCollectorError(ctx, adapter, c.Name, err)
-				}
-				if data == nil {
-					return nil
-				}
-				return adapter.SendCatalogPayload(ctx, c.Name, data.JSON)
+			// skipFirst for already-bootstrapped collectors so we don't
+			// re-fire the same Collect+Send back-to-back.
+			runWithTicker(ctx, ticker, c.Name, logger, c.BootstrapBeforeOthers, func(ctx context.Context) error {
+				return collectAndSend(ctx, c)
 			})
 		}()
 	}

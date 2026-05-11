@@ -75,10 +75,16 @@ func PgIndexInventoryCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajo
 		nullsNotDistinct = "i.indnullsnotdistinct"
 	}
 	query := fmt.Sprintf(pgIndexInventoryQueryFmt, nullsNotDistinct)
-	return NewCollector[PgIndexInventoryRow](
+	c := NewCollector[PgIndexInventoryRow](
 		pool, prepareCtx,
 		PgIndexInventoryName, PgIndexInventoryInterval,
 		query,
 		WithSkipUnchanged(),
 	)
+	// Definitional rows must be on the platform before any pg_index
+	// volatile tick lands, otherwise the volatile upsert's JOIN to
+	// pg_index_entry drops the row and the index renders without size
+	// or validity until the next 5-min tick.
+	c.BootstrapBeforeOthers = true
+	return c
 }

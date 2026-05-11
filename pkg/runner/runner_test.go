@@ -485,6 +485,184 @@ func TestRunnerCatalogLoop_NilDataSkipsSend(t *testing.T) {
 	mockAgent.AssertNotCalled(t, "SendCatalogPayload")
 }
 
+// setupMinimalAgent registers all non-catalog mock expectations so a
+// catalog-loop test only has to declare its CatalogCollectors / SendCatalogPayload
+// expectations.
+func setupMinimalAgent(t *testing.T) (*MockAgentLooper, *logrus.Logger) {
+	t.Helper()
+	m := new(MockAgentLooper)
+	logger := logrus.New()
+	m.On("Logger").Return(logger)
+	m.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	m.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
+	m.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
+	m.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
+	m.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	m.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	m.On("GetProposedConfig", mock.Anything).Return(nil, nil)
+	m.On("Guardrails", mock.Anything).Return(nil)
+	return m, logger
+}
+
+// TestRunnerCatalogLoop_BootstrapRunsBeforeOthers: a collector flagged
+// BootstrapBeforeOthers must finish its Collect+Send before any other
+// collector's first Collect starts.
+func TestRunnerCatalogLoop_BootstrapRunsBeforeOthers(t *testing.T) {
+	mockAgent, _ := setupMinimalAgent(t)
+
+	type event struct {
+		name string
+		kind string // "collect" | "send"
+		t    time.Time
+	}
+	var (
+		mu     sync.Mutex
+		events []event
+	)
+	record := func(name, kind string) {
+		mu.Lock()
+		events = append(events, event{name: name, kind: kind, t: time.Now()})
+		mu.Unlock()
+	}
+
+	bootstrap := queries.CatalogCollector{
+		Name:                  "bootstrap_inv",
+		Interval:              1 * time.Hour, // long: don't interfere with the window
+		BootstrapBeforeOthers: true,
+		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+			record("bootstrap_inv", "collect")
+			time.Sleep(30 * time.Millisecond) // pretend a non-trivial query
+			return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+		},
+	}
+	other := queries.CatalogCollector{
+		Name:     "other",
+		Interval: 1 * time.Hour,
+		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+			record("other", "collect")
+			return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+		},
+	}
+
+	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{bootstrap, other})
+	mockAgent.On("SendCatalogPayload", mock.Anything, "bootstrap_inv", mock.Anything).
+		Run(func(_ mock.Arguments) { record("bootstrap_inv", "send") }).
+		Return(nil)
+	mockAgent.On("SendCatalogPayload", mock.Anything, "other", mock.Anything).
+		Run(func(_ mock.Arguments) { record("other", "send") }).
+		Return(nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), catalogStagger+500*time.Millisecond)
+	defer cancel()
+
+	go Runner(ctx, mockAgent)
+	<-ctx.Done()
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Find the bootstrap Send and the first "other" Collect, assert ordering.
+	var bootstrapSendAt, otherFirstCollectAt time.Time
+	for _, e := range events {
+		if e.name == "bootstrap_inv" && e.kind == "send" && bootstrapSendAt.IsZero() {
+			bootstrapSendAt = e.t
+		}
+		if e.name == "other" && e.kind == "collect" && otherFirstCollectAt.IsZero() {
+			otherFirstCollectAt = e.t
+		}
+	}
+	assert.False(t, bootstrapSendAt.IsZero(), "bootstrap Send must have been recorded")
+	assert.False(t, otherFirstCollectAt.IsZero(), "other Collect must have been recorded")
+	assert.True(t, bootstrapSendAt.Before(otherFirstCollectAt),
+		"bootstrap Send (%s) must precede other Collect (%s)", bootstrapSendAt, otherFirstCollectAt)
+}
+
+// TestRunnerCatalogLoop_BootstrapSkipsFirstTick: after the synchronous
+// bootstrap pass, the collector's ticker goroutine must NOT re-fire Collect
+// immediately — it should wait one full Interval. With a long Interval and a
+// short test window, exactly one Collect call is expected.
+func TestRunnerCatalogLoop_BootstrapSkipsFirstTick(t *testing.T) {
+	mockAgent, _ := setupMinimalAgent(t)
+
+	var (
+		mu           sync.Mutex
+		collectCalls int
+	)
+	bootstrap := queries.CatalogCollector{
+		Name:                  "bootstrap_inv",
+		Interval:              1 * time.Hour,
+		BootstrapBeforeOthers: true,
+		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+			mu.Lock()
+			collectCalls++
+			mu.Unlock()
+			return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+		},
+	}
+
+	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{bootstrap})
+	mockAgent.On("SendCatalogPayload", mock.Anything, "bootstrap_inv", mock.Anything).Return(nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), catalogStagger+300*time.Millisecond)
+	defer cancel()
+
+	go Runner(ctx, mockAgent)
+	<-ctx.Done()
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 1, collectCalls,
+		"bootstrap collector should Collect once (the bootstrap pass) and skip the ticker's first tick")
+}
+
+// TestRunnerCatalogLoop_BootstrapFailureDoesNotBlockOthers: a failing
+// bootstrap is logged-and-continued; non-bootstrap collectors still run.
+func TestRunnerCatalogLoop_BootstrapFailureDoesNotBlockOthers(t *testing.T) {
+	mockAgent, _ := setupMinimalAgent(t)
+
+	var (
+		mu             sync.Mutex
+		otherCollected bool
+	)
+	bootstrap := queries.CatalogCollector{
+		Name:                  "bootstrap_inv",
+		Interval:              1 * time.Hour,
+		BootstrapBeforeOthers: true,
+		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+			return nil, errors.New("bootstrap collect failed")
+		},
+	}
+	other := queries.CatalogCollector{
+		Name:     "other",
+		Interval: 20 * time.Millisecond,
+		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+			mu.Lock()
+			otherCollected = true
+			mu.Unlock()
+			return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+		},
+	}
+
+	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{bootstrap, other})
+	mockAgent.On("SendCatalogPayload", mock.Anything, "other", mock.Anything).Return(nil)
+	mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+		return p.ErrorType == "bootstrap_inv_error"
+	})).Return(nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), catalogStagger+300*time.Millisecond)
+	defer cancel()
+
+	go Runner(ctx, mockAgent)
+	<-ctx.Done()
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.True(t, otherCollected, "non-bootstrap collector must still run after bootstrap fails")
+}
+
 func TestIsRecoveryError(t *testing.T) {
 	tests := []struct {
 		name     string
