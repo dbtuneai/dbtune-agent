@@ -56,6 +56,19 @@ docker run \
     public.ecr.aws/dbtune/dbtune/agent:latest
 ```
 
+> [!NOTE]
+> If PostgreSQL also runs in Docker, `localhost` in the URL won't reach it. Join the same network, mount the Docker socket, and pass the PG container name:
+> ```bash
+> docker run --restart always \
+>     --network <pg-network> \
+>     -v /var/run/docker.sock:/var/run/docker.sock \
+>     -e DBT_DOCKER_CONTAINER_NAME=<pg-container-name> \
+>     -e DBT_POSTGRESQL_CONNECTION_URL="postgresql://user:password@<pg-container-name>:5432/database" \
+>     ...
+>     public.ecr.aws/dbtune/dbtune/agent:latest
+> ```
+> PG must be started with `-c shared_preload_libraries=pg_stat_statements`. Full example: [`templates/docker-compose.yml`](templates/docker-compose.yml).
+
 ### Binary
 You can use the one-liner below to fetch the latest binary for your system, from our [releases page](https://github.com/dbtuneai/dbtune-agent/releases).
 
