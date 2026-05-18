@@ -50,8 +50,5 @@ type PgStatUserIndexesConfig struct {
 
 func PgStatUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatUserIndexesConfig) CatalogCollector {
 	query := BuildPgStatUserIndexesQuery(cfg.CategoryLimit)
-	c := NewCollector[PgStatUserIndexesRow](pool, prepareCtx, PgStatUserIndexesName, PgStatUserIndexesInterval, query)
-	// More useful to have this information before pg_index volatile ticks.
-	c.BootstrapBeforeOthers = true
-	return c
+	return NewCollector[PgStatUserIndexesRow](pool, prepareCtx, PgStatUserIndexesName, PgStatUserIndexesInterval, query)
 }

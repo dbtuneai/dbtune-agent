@@ -53,12 +53,5 @@ ORDER BY a.attrelid, a.attnum
 `
 
 func PgAttributeCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	c := NewCollector[PgAttributeRow](pool, prepareCtx, PgAttributeName, PgAttributeInterval, pgAttributeQuery, WithSkipUnchanged())
-	// The platform's index diagnostic recompute INNER JOINs pg_attribute
-	// to translate indkey attnums to live column rows. Without this on
-	// the platform before the first pg_index volatile tick, the join
-	// drops every row and column_stats render empty until the next
-	// pg_attribute tick.
-	c.BootstrapBeforeOthers = true
-	return c
+	return NewCollector[PgAttributeRow](pool, prepareCtx, PgAttributeName, PgAttributeInterval, pgAttributeQuery, WithSkipUnchanged())
 }

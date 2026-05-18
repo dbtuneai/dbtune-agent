@@ -96,10 +96,10 @@ ORDER BY ps.schemaname, ps.tablename, ps.attname
 // buildPgStatsQueryBootstrap returns every pg_stats row for every user
 // table in one shot, with distribution payloads (most_common_*,
 // histogram_bounds, elem_count_histogram) always NULLed regardless of
-// includeTableData. The bootstrap pass exists to land the scalar inputs
-// (avg_width, n_distinct, null_frac, correlation) for every column
-// before any volatile consumer ticks; the heavy distributions are
-// reserved for the paginated backfill that follows.
+// includeTableData. The bootstrap pass emits the scalar inputs
+// (avg_width, n_distinct, null_frac, correlation) for every column up
+// front; the heavy distributions are deferred to the paginated
+// backfill that follows so the bootstrap payload stays bounded.
 func buildPgStatsQueryBootstrap() string {
 	return `SELECT` + buildPgStatsColumns(false) + `
 FROM pg_stats ps
@@ -244,14 +244,6 @@ func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatsConf
 	return CatalogCollector{
 		Name:     PgStatsName,
 		Interval: PgStatsInterval,
-		// Index diagnostic recompute LEFT JOINs pg_stats for the
-		// per-column width/n_distinct inputs to the bloat model.
-		// Bootstrapping lands a full scalar snapshot for every column
-		// before pg_index volatile ticks so bloat estimates aren't
-		// delayed by the paginated backfill cycle. Distribution
-		// payloads (gated by IncludeTableData) are deferred to the
-		// backfill phase to keep the bootstrap payload bounded.
-		BootstrapBeforeOthers: true,
 		Collect: func(ctx context.Context) (*CollectResult, error) {
 			ctx, err := prepareCtx(ctx)
 			if err != nil {

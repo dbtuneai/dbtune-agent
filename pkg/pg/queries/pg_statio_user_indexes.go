@@ -66,8 +66,6 @@ func PgStatioUserIndexesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg
 	return CatalogCollector{
 		Name:     PgStatioUserIndexesName,
 		Interval: PgStatioUserIndexesInterval,
-		// More useful to have this information before pg_index volatile ticks.
-		BootstrapBeforeOthers: true,
 		Collect: func(ctx context.Context) (*CollectResult, error) {
 			ctx, err := prepareCtx(ctx)
 			if err != nil {

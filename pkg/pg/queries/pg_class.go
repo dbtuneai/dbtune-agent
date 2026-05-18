@@ -134,13 +134,6 @@ func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgClassConf
 	return CatalogCollector{
 		Name:     PgClassName,
 		Interval: PgClassInterval,
-		// Index diagnostic recompute LEFT JOINs pg_class twice (for the
-		// index and its table) to source reltuples/relpages used by the
-		// bloat model. Bootstrapping the first batch lands the largest /
-		// most-active relations on the platform before pg_index volatile
-		// starts ticking, so bloat surfaces immediately for those rows
-		// rather than waiting for the rest of the backfill to roll in.
-		BootstrapBeforeOthers: true,
 		Collect: func(ctx context.Context) (*CollectResult, error) {
 			ctx, err := prepareCtx(ctx)
 			if err != nil {

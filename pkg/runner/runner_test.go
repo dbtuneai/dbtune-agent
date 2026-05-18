@@ -19,6 +19,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // MockAgentLooper implements utils.AgentLooper for testing
@@ -504,11 +505,21 @@ func setupMinimalAgent(t *testing.T) (*MockAgentLooper, *logrus.Logger) {
 	return m, logger
 }
 
-// TestRunnerCatalogLoop_BootstrapRunsBeforeOthers: a collector flagged
-// BootstrapBeforeOthers must finish its Collect+Send before any other
+// withBootstrapNames swaps the package-level bootstrap list for the
+// duration of a test. Returns a cleanup that restores the original.
+func withBootstrapNames(t *testing.T, names ...string) {
+	t.Helper()
+	orig := bootstrapCollectorNames
+	bootstrapCollectorNames = names
+	t.Cleanup(func() { bootstrapCollectorNames = orig })
+}
+
+// TestRunnerCatalogLoop_BootstrapRunsBeforeOthers: every bootstrap
+// collector's Collect+Send must finish before any non-bootstrap
 // collector's first Collect starts.
 func TestRunnerCatalogLoop_BootstrapRunsBeforeOthers(t *testing.T) {
 	mockAgent, _ := setupMinimalAgent(t)
+	withBootstrapNames(t, "bootstrap_inv")
 
 	type event struct {
 		name string
@@ -526,9 +537,8 @@ func TestRunnerCatalogLoop_BootstrapRunsBeforeOthers(t *testing.T) {
 	}
 
 	bootstrap := queries.CatalogCollector{
-		Name:                  "bootstrap_inv",
-		Interval:              1 * time.Hour, // long: don't interfere with the window
-		BootstrapBeforeOthers: true,
+		Name:     "bootstrap_inv",
+		Interval: 1 * time.Hour, // long: don't interfere with the window
 		Collect: func(_ context.Context) (*queries.CollectResult, error) {
 			record("bootstrap_inv", "collect")
 			time.Sleep(30 * time.Millisecond) // pretend a non-trivial query
@@ -584,15 +594,15 @@ func TestRunnerCatalogLoop_BootstrapRunsBeforeOthers(t *testing.T) {
 // short test window, exactly one Collect call is expected.
 func TestRunnerCatalogLoop_BootstrapSkipsFirstTick(t *testing.T) {
 	mockAgent, _ := setupMinimalAgent(t)
+	withBootstrapNames(t, "bootstrap_inv")
 
 	var (
 		mu           sync.Mutex
 		collectCalls int
 	)
 	bootstrap := queries.CatalogCollector{
-		Name:                  "bootstrap_inv",
-		Interval:              1 * time.Hour,
-		BootstrapBeforeOthers: true,
+		Name:     "bootstrap_inv",
+		Interval: 1 * time.Hour,
 		Collect: func(_ context.Context) (*queries.CollectResult, error) {
 			mu.Lock()
 			collectCalls++
@@ -621,15 +631,15 @@ func TestRunnerCatalogLoop_BootstrapSkipsFirstTick(t *testing.T) {
 // bootstrap is logged-and-continued; non-bootstrap collectors still run.
 func TestRunnerCatalogLoop_BootstrapFailureDoesNotBlockOthers(t *testing.T) {
 	mockAgent, _ := setupMinimalAgent(t)
+	withBootstrapNames(t, "bootstrap_inv")
 
 	var (
 		mu             sync.Mutex
 		otherCollected bool
 	)
 	bootstrap := queries.CatalogCollector{
-		Name:                  "bootstrap_inv",
-		Interval:              1 * time.Hour,
-		BootstrapBeforeOthers: true,
+		Name:     "bootstrap_inv",
+		Interval: 1 * time.Hour,
 		Collect: func(_ context.Context) (*queries.CollectResult, error) {
 			return nil, errors.New("bootstrap collect failed")
 		},
@@ -661,6 +671,89 @@ func TestRunnerCatalogLoop_BootstrapFailureDoesNotBlockOthers(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	assert.True(t, otherCollected, "non-bootstrap collector must still run after bootstrap fails")
+}
+
+// TestRunnerCatalogLoop_BootstrapRunsConcurrently: bootstrap collectors
+// fire in parallel goroutines staggered by catalogStagger, not strictly
+// sequentially. Each collector sleeps long enough that sequential
+// execution would be obviously slower than concurrent + stagger.
+func TestRunnerCatalogLoop_BootstrapRunsConcurrently(t *testing.T) {
+	mockAgent, _ := setupMinimalAgent(t)
+	withBootstrapNames(t, "boot_a", "boot_b", "boot_c")
+
+	// sleep > catalogStagger so the difference between concurrent
+	// (start-span ≈ (N-1)*catalogStagger) and sequential (start-span ≥
+	// (N-1)*sleep) is unambiguous. With N=3:
+	//   sequential start-span ≥ 2*sleep = 1000ms
+	//   concurrent start-span ≈ 2*catalogStagger = 400ms
+	const sleep = 500 * time.Millisecond
+
+	type observation struct {
+		name    string
+		startAt time.Time
+	}
+	var (
+		mu           sync.Mutex
+		observations []observation
+	)
+	makeCollector := func(name string) queries.CatalogCollector {
+		return queries.CatalogCollector{
+			Name:     name,
+			Interval: 1 * time.Hour,
+			Collect: func(_ context.Context) (*queries.CollectResult, error) {
+				mu.Lock()
+				observations = append(observations, observation{name: name, startAt: time.Now()})
+				mu.Unlock()
+				time.Sleep(sleep)
+				return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+			},
+		}
+	}
+
+	collectors := []queries.CatalogCollector{
+		makeCollector("boot_a"),
+		makeCollector("boot_b"),
+		makeCollector("boot_c"),
+	}
+	mockAgent.On("CatalogCollectors").Return(collectors)
+	for _, c := range collectors {
+		mockAgent.On("SendCatalogPayload", mock.Anything, c.Name, mock.Anything).Return(nil)
+	}
+
+	// Window covers concurrent bootstrap (sleep + 2*stagger ≈ 900ms)
+	// with margin; a sequential bootstrap would need 3*sleep = 1500ms
+	// just to start the last collector, so the test would still detect
+	// that mode of failure but via the start-span assertion rather than
+	// missing observations.
+	ctx, cancel := context.WithTimeout(context.Background(), sleep+3*catalogStagger+500*time.Millisecond)
+	defer cancel()
+
+	go Runner(ctx, mockAgent)
+	<-ctx.Done()
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	require.Len(t, observations, 3, "all three bootstrap collectors must have started")
+
+	// Bound: concurrent start-span ≈ 2*catalogStagger plus scheduler
+	// jitter, which is well under one ``sleep``. Sequential would push
+	// it to ≥ 2*sleep.
+	first := observations[0].startAt
+	last := observations[0].startAt
+	for _, o := range observations[1:] {
+		if o.startAt.Before(first) {
+			first = o.startAt
+		}
+		if o.startAt.After(last) {
+			last = o.startAt
+		}
+	}
+	span := last.Sub(first)
+	assert.Less(t, span, sleep,
+		"bootstrap collectors must run concurrently: spread between first/last start was %s (per-collector sleep = %s, expected ≈ %s)",
+		span, sleep, 2*catalogStagger)
 }
 
 func TestIsRecoveryError(t *testing.T) {
