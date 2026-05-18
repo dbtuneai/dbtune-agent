@@ -15,10 +15,6 @@ import (
 )
 
 // CatalogCollector defines a periodic catalog collection task.
-//
-// The runner decides which collectors get a synchronous bootstrap pass
-// before steady-state goroutines launch; see the bootstrap list in
-// runner.go. There is no per-collector flag.
 type CatalogCollector struct {
 	Name     string
 	Interval time.Duration

@@ -298,9 +298,10 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 			}
 			ticker := time.NewTicker(c.Interval)
 			defer ticker.Stop()
-			// skipFirst for already-bootstrapped collectors so we don't
-			// re-fire the same Collect+Send back-to-back.
-			runWithTicker(ctx, ticker, c.Name, logger, wasBootstrapped, func(ctx context.Context) error {
+			// Already-bootstrapped collectors must skip the immediate
+			// fire — bootstrap already ran their first Collect+Send.
+			skipFirst := wasBootstrapped
+			runWithTicker(ctx, ticker, c.Name, logger, skipFirst, func(ctx context.Context) error {
 				return collectAndSend(ctx, c)
 			})
 		}()

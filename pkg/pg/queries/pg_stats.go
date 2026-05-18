@@ -94,12 +94,10 @@ ORDER BY ps.schemaname, ps.tablename, ps.attname
 }
 
 // buildPgStatsQueryBootstrap returns every pg_stats row for every user
-// table in one shot, with distribution payloads (most_common_*,
-// histogram_bounds, elem_count_histogram) always NULLed regardless of
-// includeTableData. The bootstrap pass emits the scalar inputs
-// (avg_width, n_distinct, null_frac, correlation) for every column up
-// front; the heavy distributions are deferred to the paginated
-// backfill that follows so the bootstrap payload stays bounded.
+// table in one shot. Distribution payloads (most_common_*,
+// histogram_bounds, elem_count_histogram) are always NULLed regardless
+// of includeTableData to keep the payload bounded; the paginated
+// backfill that follows fills them in if includeTableData is set.
 func buildPgStatsQueryBootstrap() string {
 	return `SELECT` + buildPgStatsColumns(false) + `
 FROM pg_stats ps
@@ -234,9 +232,8 @@ func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatsConf
 		bootstrapDone  = false
 		backfillOffset = 0
 		// When IncludeTableData is false the bootstrap snapshot already
-		// carries everything the steady-state collector would send, so
-		// the paginated backfill is redundant. Skip it and move straight
-		// to delta after bootstrap.
+		// covers everything the backfill would send, so skip the backfill
+		// phase and move straight to delta.
 		backfillDone = !cfg.IncludeTableData
 		lastPoll     time.Time
 	)
