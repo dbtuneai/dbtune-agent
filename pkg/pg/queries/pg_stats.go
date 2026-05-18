@@ -93,6 +93,23 @@ ORDER BY ps.schemaname, ps.tablename, ps.attname
 `
 }
 
+// buildPgStatsQueryBootstrap returns every pg_stats row for every user
+// table in one shot, with distribution payloads (most_common_*,
+// histogram_bounds, elem_count_histogram) always NULLed regardless of
+// includeTableData. The bootstrap pass exists to land the scalar inputs
+// (avg_width, n_distinct, null_frac, correlation) for every column
+// before any volatile consumer ticks; the heavy distributions are
+// reserved for the paginated backfill that follows.
+func buildPgStatsQueryBootstrap() string {
+	return `SELECT` + buildPgStatsColumns(false) + `
+FROM pg_stats ps
+JOIN pg_stat_user_tables pst
+  ON ps.schemaname = pst.schemaname
+ AND ps.tablename  = pst.relname
+ORDER BY ps.schemaname, ps.tablename, ps.attname
+`
+}
+
 func buildPgStatsQueryDelta(includeTableData bool) string {
 	return `SELECT` + buildPgStatsColumns(includeTableData) + `
 FROM pg_stats ps
@@ -209,18 +226,32 @@ type PgStatsConfig struct {
 }
 
 func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatsConfig) CatalogCollector {
+	bootstrapQuery := buildPgStatsQueryBootstrap()
 	batchQuery := buildPgStatsQueryBatch(cfg.IncludeTableData)
 	deltaQuery := buildPgStatsQueryDelta(cfg.IncludeTableData)
 
 	var (
+		bootstrapDone  = false
 		backfillOffset = 0
-		backfillDone   = false
-		lastPoll       time.Time
+		// When IncludeTableData is false the bootstrap snapshot already
+		// carries everything the steady-state collector would send, so
+		// the paginated backfill is redundant. Skip it and move straight
+		// to delta after bootstrap.
+		backfillDone = !cfg.IncludeTableData
+		lastPoll     time.Time
 	)
 
 	return CatalogCollector{
 		Name:     PgStatsName,
 		Interval: PgStatsInterval,
+		// Index diagnostic recompute LEFT JOINs pg_stats for the
+		// per-column width/n_distinct inputs to the bloat model.
+		// Bootstrapping lands a full scalar snapshot for every column
+		// before pg_index volatile ticks so bloat estimates aren't
+		// delayed by the paginated backfill cycle. Distribution
+		// payloads (gated by IncludeTableData) are deferred to the
+		// backfill phase to keep the bootstrap payload bounded.
+		BootstrapBeforeOthers: true,
 		Collect: func(ctx context.Context) (*CollectResult, error) {
 			ctx, err := prepareCtx(ctx)
 			if err != nil {
@@ -230,7 +261,15 @@ func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatsConf
 			collectedAt := time.Now().UTC()
 			var statsRows []PgStatsRow
 
-			if !backfillDone {
+			switch {
+			case !bootstrapDone:
+				statsRows, err = collectPgStatsRows(pool, ctx, bootstrapQuery)
+				if err != nil {
+					return nil, err
+				}
+				bootstrapDone = true
+				lastPoll = collectedAt
+			case !backfillDone:
 				statsRows, err = collectPgStatsRows(pool, ctx, batchQuery, cfg.BackfillBatchSize, backfillOffset)
 				if err != nil {
 					return nil, err
@@ -241,7 +280,7 @@ func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatsConf
 				} else {
 					backfillOffset += cfg.BackfillBatchSize
 				}
-			} else {
+			default:
 				statsRows, err = collectPgStatsRows(pool, ctx, deltaQuery, lastPoll)
 				if err != nil {
 					return nil, err

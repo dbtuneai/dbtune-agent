@@ -72,5 +72,11 @@ type PgStatUserTablesConfig struct {
 
 func PgStatUserTablesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatUserTablesConfig) CatalogCollector {
 	query := BuildPgStatUserTablesQuery(cfg.CategoryLimit)
-	return NewCollector[PgStatUserTableRow](pool, prepareCtx, PgStatUserTablesName, PgStatUserTablesInterval, query)
+	c := NewCollector[PgStatUserTableRow](pool, prepareCtx, PgStatUserTablesName, PgStatUserTablesInterval, query)
+	// Index diagnostic recompute LEFT JOINs pg_stat_user_tables for the
+	// table-level scan rates feeding scan_share_percent. Bootstrapping
+	// avoids a one-tick window where new indexes render without their
+	// table-relative usage signal.
+	c.BootstrapBeforeOthers = true
+	return c
 }
