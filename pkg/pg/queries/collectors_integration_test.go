@@ -1460,82 +1460,137 @@ func TestPgType_ReturnsBuiltinAndUserTypes(t *testing.T) {
 	})
 }
 
-func TestPgStats_BackfillThenDelta(t *testing.T) {
+// pgStatsRedactedFieldsAllNull returns true when every column gated by
+// include_table_data is JSON null on every row. Only most_common_vals,
+// histogram_bounds, and most_common_elems are gated — freqs and
+// elem_count_histogram are emitted regardless because they don't carry
+// raw sample values. After JSON round-trip, nil json.RawMessage becomes
+// []byte("null"), so we accept both forms.
+func pgStatsRedactedFieldsAllNull(rows []PgStatsRow) bool {
+	const jsonNull = "null"
+	isNull := func(v json.RawMessage) bool {
+		return v == nil || string(v) == jsonNull
+	}
+	for _, row := range rows {
+		if !isNull(row.MostCommonVals) || !isNull(row.HistogramBounds) || !isNull(row.MostCommonElems) {
+			return false
+		}
+	}
+	return true
+}
+
+// pgStatsHasAnyRedactedField returns true when at least one row carries
+// a non-null value in one of the include_table_data-gated columns — the
+// steady-state contract when IncludeTableData is true and Postgres has
+// computed MCVs/histograms.
+func pgStatsHasAnyRedactedField(rows []PgStatsRow) bool {
+	const jsonNull = "null"
+	nonNull := func(v json.RawMessage) bool {
+		return v != nil && string(v) != jsonNull
+	}
+	for _, row := range rows {
+		if nonNull(row.MostCommonVals) || nonNull(row.HistogramBounds) || nonNull(row.MostCommonElems) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPgStats_BootstrapThenBackfillThenDelta_IncludeTableDataTrue(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
 		ctx := context.Background()
 
-		// Use batch size 1 to force pagination.
+		// Batch size 1 forces the backfill phase to span multiple ticks
+		// so we can tell bootstrap (one-shot, all tables) apart from
+		// backfill (per-batch, one table at a time).
 		c := PgStatsCollector(inst.pool, noopPrepareCtx, PgStatsConfig{BackfillBatchSize: 1, IncludeTableData: true})
 
-		// First call: backfill returns stats for 1 table.
+		// Tick 1 — bootstrap: full snapshot of every column, with all
+		// distribution payloads NULL regardless of IncludeTableData.
 		r1, err := c.Collect(ctx)
 		if err != nil {
-			t.Fatalf("first Collect() error: %v", err)
+			t.Fatalf("bootstrap Collect() error: %v", err)
 		}
 		if r1 == nil {
-			t.Fatal("first Collect() returned nil — expected pg_stats backfill data")
+			t.Fatal("bootstrap Collect() returned nil — expected full snapshot")
 		}
-
-		var p1 Payload[PgStatsRow]
-		if err := json.Unmarshal(r1.JSON, &p1); err != nil {
-			t.Fatalf("failed to parse first result: %v", err)
+		var pBootstrap Payload[PgStatsRow]
+		if err := json.Unmarshal(r1.JSON, &pBootstrap); err != nil {
+			t.Fatalf("failed to parse bootstrap result: %v", err)
 		}
-		if len(p1.Rows) == 0 {
-			t.Fatal("expected non-empty pg_stats rows")
+		if pBootstrap.CollectedAt.IsZero() {
+			t.Fatal("expected non-zero collected_at on bootstrap")
 		}
-		if p1.CollectedAt.IsZero() {
-			t.Fatal("expected non-zero collected_at on first backfill result")
+		if len(pBootstrap.Rows) == 0 {
+			t.Fatal("expected non-empty bootstrap rows")
 		}
-
-		// Verify rows have non-empty identifiers.
-		for _, row := range p1.Rows {
+		// Bootstrap must span more than one table — that's the whole
+		// point of bypassing pagination on the first tick.
+		bootstrapTables := map[string]struct{}{}
+		for _, row := range pBootstrap.Rows {
+			bootstrapTables[string(row.SchemaName)+"."+string(row.TableName)] = struct{}{}
 			if row.SchemaName == "" || row.TableName == "" || row.AttName == "" {
 				t.Fatalf("expected non-empty schemaname/tablename/attname, got %q/%q/%q",
 					row.SchemaName, row.TableName, row.AttName)
 			}
 		}
-
-		// Verify array columns are valid JSON when non-null.
-		for _, row := range p1.Rows {
-			for _, col := range []struct {
-				name string
-				val  json.RawMessage
-			}{
-				{"most_common_vals", row.MostCommonVals},
-				{"most_common_freqs", row.MostCommonFreqs},
-				{"histogram_bounds", row.HistogramBounds},
-				{"most_common_elems", row.MostCommonElems},
-				{"most_common_elem_freqs", row.MostCommonElemFreqs},
-				{"elem_count_histogram", row.ElemCountHistogram},
-			} {
-				if col.val != nil && !json.Valid(col.val) {
-					t.Fatalf("%s.%s.%s %s is not valid JSON: %s",
-						row.SchemaName, row.TableName, row.AttName, col.name, col.val)
-				}
-			}
+		if len(bootstrapTables) < 2 {
+			t.Fatalf("bootstrap snapshot must cover every user table at once; saw only %d distinct table(s)", len(bootstrapTables))
+		}
+		if !pgStatsRedactedFieldsAllNull(pBootstrap.Rows) {
+			t.Fatal("bootstrap rows must have all distribution payloads NULL — distributions are reserved for backfill")
 		}
 
-		// Drain backfill.
+		// Tick 2+ — backfill phase: pagination kicks in. With batch size
+		// 1 each tick returns rows for exactly one table, and (because
+		// IncludeTableData=true) at least one tick should carry a
+		// non-null distribution payload.
+		seenDistribution := false
+		drainedBackfill := false
 		for i := 0; i < 100; i++ {
 			r, err := c.Collect(ctx)
 			if err != nil {
 				t.Fatalf("backfill tick %d error: %v", i+2, err)
 			}
 			if r == nil {
+				// Pagination exhausted → backfillDone flipped, switched to delta
+				// which returns nil because nothing has been ANALYZE'd since
+				// bootstrap. Confirm by running another tick — also nil.
+				drainedBackfill = true
 				break
 			}
+			var p Payload[PgStatsRow]
+			if err := json.Unmarshal(r.JSON, &p); err != nil {
+				t.Fatalf("failed to parse backfill tick %d: %v", i+2, err)
+			}
+			batchTables := map[string]struct{}{}
+			for _, row := range p.Rows {
+				batchTables[string(row.SchemaName)+"."+string(row.TableName)] = struct{}{}
+			}
+			if len(batchTables) != 1 {
+				t.Fatalf("batch_size=1 tick must cover exactly one table, got %d", len(batchTables))
+			}
+			if pgStatsHasAnyRedactedField(p.Rows) {
+				seenDistribution = true
+			}
+		}
+		if !drainedBackfill {
+			t.Fatal("backfill never drained — expected nil within 100 ticks at batch_size=1")
+		}
+		if !seenDistribution {
+			t.Fatal("expected at least one backfill batch to carry non-null distributions when IncludeTableData=true")
 		}
 
-		// Delta with no ANALYZE → nil.
+		// Delta with no further ANALYZE → nil.
 		rDelta, err := c.Collect(ctx)
 		if err != nil {
 			t.Fatalf("delta Collect() error: %v", err)
 		}
 		if rDelta != nil {
-			t.Fatal("expected nil delta result before any ANALYZE")
+			t.Fatal("expected nil delta result before any post-bootstrap ANALYZE")
 		}
 
-		// ANALYZE triggers delta.
+		// ANALYZE → delta fires with current IncludeTableData setting.
 		_, _ = inst.admin.Exec(ctx, "ANALYZE test_users")
 		flushStats(ctx, inst)
 
@@ -1546,42 +1601,81 @@ func TestPgStats_BackfillThenDelta(t *testing.T) {
 		if rAfterAnalyze == nil {
 			t.Fatal("expected delta data after ANALYZE, got nil")
 		}
+		var pDelta Payload[PgStatsRow]
+		if err := json.Unmarshal(rAfterAnalyze.JSON, &pDelta); err != nil {
+			t.Fatalf("failed to parse delta result: %v", err)
+		}
+		// Delta honours the configured IncludeTableData=true.
+		if !pgStatsHasAnyRedactedField(pDelta.Rows) {
+			t.Fatal("expected delta to carry distributions when IncludeTableData=true")
+		}
 	})
 }
 
-func TestPgStats_RedactsWhenIncludeTableDataFalse(t *testing.T) {
+func TestPgStats_BootstrapThenDelta_IncludeTableDataFalse(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
-		c := PgStatsCollector(inst.pool, noopPrepareCtx, PgStatsConfig{BackfillBatchSize: PgStatsBackfillBatchSize})
 		ctx := context.Background()
 
-		r, err := c.Collect(ctx)
+		// IncludeTableData=false → bootstrap is the only "fill" phase;
+		// the paginated backfill is skipped because the bootstrap
+		// payload already carries everything the configured collector
+		// would otherwise send.
+		c := PgStatsCollector(inst.pool, noopPrepareCtx, PgStatsConfig{BackfillBatchSize: 1})
+
+		// Tick 1 — bootstrap: full snapshot, distributions NULL.
+		r1, err := c.Collect(ctx)
 		if err != nil {
-			t.Fatalf("Collect() error: %v", err)
+			t.Fatalf("bootstrap Collect() error: %v", err)
 		}
-		if r == nil {
-			t.Fatal("Collect() returned nil")
+		if r1 == nil {
+			t.Fatal("bootstrap Collect() returned nil")
+		}
+		var pBootstrap Payload[PgStatsRow]
+		if err := json.Unmarshal(r1.JSON, &pBootstrap); err != nil {
+			t.Fatalf("failed to parse bootstrap result: %v", err)
+		}
+		if pBootstrap.CollectedAt.IsZero() {
+			t.Fatal("expected non-zero collected_at on bootstrap")
+		}
+		bootstrapTables := map[string]struct{}{}
+		for _, row := range pBootstrap.Rows {
+			bootstrapTables[string(row.SchemaName)+"."+string(row.TableName)] = struct{}{}
+		}
+		if len(bootstrapTables) < 2 {
+			t.Fatalf("bootstrap must cover every user table at once; saw %d", len(bootstrapTables))
+		}
+		if !pgStatsRedactedFieldsAllNull(pBootstrap.Rows) {
+			t.Fatal("bootstrap rows must have all distributions NULL")
 		}
 
-		var payload Payload[PgStatsRow]
-		if err := json.Unmarshal(r.JSON, &payload); err != nil {
-			t.Fatalf("failed to parse JSON: %v", err)
+		// Tick 2 — backfill is skipped: collector moves straight to
+		// delta. With no ANALYZE since bootstrap, delta is nil.
+		r2, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("post-bootstrap Collect() error: %v", err)
+		}
+		if r2 != nil {
+			t.Fatal("expected nil immediately after bootstrap when IncludeTableData=false (delta, no ANALYZE)")
 		}
 
-		if payload.CollectedAt.IsZero() {
-			t.Fatal("expected non-zero collected_at")
+		// ANALYZE → delta fires; distributions still NULL because
+		// IncludeTableData=false propagates through to the delta query.
+		_, _ = inst.admin.Exec(ctx, "ANALYZE test_users")
+		flushStats(ctx, inst)
+
+		rAfterAnalyze, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("post-ANALYZE Collect() error: %v", err)
 		}
-		// After JSON round-trip, nil json.RawMessage becomes []byte("null").
-		const jsonNull = "null"
-		for _, row := range payload.Rows {
-			if row.MostCommonVals != nil && string(row.MostCommonVals) != jsonNull {
-				t.Fatalf("expected most_common_vals to be null when includeTableData=false, got %s", string(row.MostCommonVals))
-			}
-			if row.HistogramBounds != nil && string(row.HistogramBounds) != jsonNull {
-				t.Fatalf("expected histogram_bounds to be null when includeTableData=false, got %s", string(row.HistogramBounds))
-			}
-			if row.MostCommonElems != nil && string(row.MostCommonElems) != jsonNull {
-				t.Fatalf("expected most_common_elems to be null when includeTableData=false, got %s", string(row.MostCommonElems))
-			}
+		if rAfterAnalyze == nil {
+			t.Fatal("expected delta data after ANALYZE, got nil")
+		}
+		var pDelta Payload[PgStatsRow]
+		if err := json.Unmarshal(rAfterAnalyze.JSON, &pDelta); err != nil {
+			t.Fatalf("failed to parse delta result: %v", err)
+		}
+		if !pgStatsRedactedFieldsAllNull(pDelta.Rows) {
+			t.Fatal("delta distributions must stay NULL when IncludeTableData=false")
 		}
 	})
 }

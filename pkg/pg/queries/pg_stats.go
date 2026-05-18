@@ -93,6 +93,21 @@ ORDER BY ps.schemaname, ps.tablename, ps.attname
 `
 }
 
+// buildPgStatsQueryBootstrap returns every pg_stats row for every user
+// table in one shot. Distribution payloads (most_common_*,
+// histogram_bounds, elem_count_histogram) are always NULLed regardless
+// of includeTableData to keep the payload bounded; the paginated
+// backfill that follows fills them in if includeTableData is set.
+func buildPgStatsQueryBootstrap() string {
+	return `SELECT` + buildPgStatsColumns(false) + `
+FROM pg_stats ps
+JOIN pg_stat_user_tables pst
+  ON ps.schemaname = pst.schemaname
+ AND ps.tablename  = pst.relname
+ORDER BY ps.schemaname, ps.tablename, ps.attname
+`
+}
+
 func buildPgStatsQueryDelta(includeTableData bool) string {
 	return `SELECT` + buildPgStatsColumns(includeTableData) + `
 FROM pg_stats ps
@@ -209,13 +224,18 @@ type PgStatsConfig struct {
 }
 
 func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatsConfig) CatalogCollector {
+	bootstrapQuery := buildPgStatsQueryBootstrap()
 	batchQuery := buildPgStatsQueryBatch(cfg.IncludeTableData)
 	deltaQuery := buildPgStatsQueryDelta(cfg.IncludeTableData)
 
 	var (
+		bootstrapDone  = false
 		backfillOffset = 0
-		backfillDone   = false
-		lastPoll       time.Time
+		// When IncludeTableData is false the bootstrap snapshot already
+		// covers everything the backfill would send, so skip the backfill
+		// phase and move straight to delta.
+		backfillDone = !cfg.IncludeTableData
+		lastPoll     time.Time
 	)
 
 	return CatalogCollector{
@@ -230,7 +250,15 @@ func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatsConf
 			collectedAt := time.Now().UTC()
 			var statsRows []PgStatsRow
 
-			if !backfillDone {
+			switch {
+			case !bootstrapDone:
+				statsRows, err = collectPgStatsRows(pool, ctx, bootstrapQuery)
+				if err != nil {
+					return nil, err
+				}
+				bootstrapDone = true
+				lastPoll = collectedAt
+			case !backfillDone:
 				statsRows, err = collectPgStatsRows(pool, ctx, batchQuery, cfg.BackfillBatchSize, backfillOffset)
 				if err != nil {
 					return nil, err
@@ -241,7 +269,7 @@ func PgStatsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgStatsConf
 				} else {
 					backfillOffset += cfg.BackfillBatchSize
 				}
-			} else {
+			default:
 				statsRows, err = collectPgStatsRows(pool, ctx, deltaQuery, lastPoll)
 				if err != nil {
 					return nil, err

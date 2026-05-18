@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -18,6 +19,28 @@ import (
 // catalogStagger is the delay applied between catalog collector goroutines
 // at startup to avoid a thundering herd when all catalog queries fire at once.
 const catalogStagger = 200 * time.Millisecond
+
+// bootstrapCollectorNames lists the catalog collectors that run a
+// Collect+Send pass before any steady-state ticker goroutine starts.
+// Each one launches in its own goroutine with the same 200ms
+// inter-launch stagger used for steady-state collectors; the runner
+// blocks until all of them finish (or error) before starting the
+// regular tickers.
+//
+// The list lives here so the bootstrap surface is visible in one
+// place rather than scattered across individual collector files.
+//
+// Declared as var rather than a const slice so tests can swap it
+// out without exporting the symbol.
+var bootstrapCollectorNames = []string{
+	queries.PgIndexInventoryName,
+	queries.PgAttributeName,
+	queries.PgClassName,
+	queries.PgStatsName,
+	queries.PgStatUserTablesName,
+	queries.PgStatUserIndexesName,
+	queries.PgStatioUserIndexesName,
+}
 
 // isRecoveryError checks if an error indicates the system is in recovery/failover
 func isRecoveryError(err error) bool {
@@ -221,22 +244,49 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 		return adapter.SendCatalogPayload(ctx, c.Name, data.JSON)
 	}
 
-	// Bootstrap pass: collectors marked BootstrapBeforeOthers get one
-	// synchronous Collect+Send before any goroutine starts. Best-effort —
-	// a failure here is logged and the regular ticker loop will retry.
+	bootstrapSet := make(map[string]struct{}, len(bootstrapCollectorNames))
+	for _, n := range bootstrapCollectorNames {
+		bootstrapSet[n] = struct{}{}
+	}
+
+	// Bootstrap pass: collectors named in bootstrapCollectorNames each
+	// run a Collect+Send concurrently, launches staggered by
+	// catalogStagger to mirror the steady-state launch pattern. The
+	// runner waits for every bootstrap goroutine to finish before
+	// starting the steady-state tickers; a failed bootstrap is logged
+	// and the regular ticker loop retries on the next interval.
+	var (
+		bootstrapWg sync.WaitGroup
+		launchIdx   int
+	)
 	for _, c := range collectors {
-		if !c.BootstrapBeforeOthers {
+		if _, ok := bootstrapSet[c.Name]; !ok {
 			continue
 		}
-		logger.Debugf("bootstrapping %s before launching catalog goroutines", c.Name)
-		if err := collectAndSend(ctx, c); err != nil {
-			logger.Warnf("bootstrap %s failed (continuing): %v", c.Name, err)
-		}
+		bootstrapWg.Add(1)
+		delay := time.Duration(launchIdx) * catalogStagger
+		launchIdx++
+		go func(c queries.CatalogCollector, delay time.Duration) {
+			defer bootstrapWg.Done()
+			if delay > 0 {
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return
+				}
+			}
+			logger.Debugf("bootstrapping %s", c.Name)
+			if err := collectAndSend(ctx, c); err != nil {
+				logger.Warnf("bootstrap %s failed (continuing): %v", c.Name, err)
+			}
+		}(c, delay)
 	}
+	bootstrapWg.Wait()
 
 	for i, c := range collectors {
 		c := c
 		delay := time.Duration(i) * catalogStagger
+		_, wasBootstrapped := bootstrapSet[c.Name]
 		go func() {
 			if delay > 0 {
 				logger.Debugf("staggering %s by %s", c.Name, delay)
@@ -248,9 +298,10 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 			}
 			ticker := time.NewTicker(c.Interval)
 			defer ticker.Stop()
-			// skipFirst for already-bootstrapped collectors so we don't
-			// re-fire the same Collect+Send back-to-back.
-			runWithTicker(ctx, ticker, c.Name, logger, c.BootstrapBeforeOthers, func(ctx context.Context) error {
+			// Already-bootstrapped collectors must skip the immediate
+			// fire — bootstrap already ran their first Collect+Send.
+			skipFirst := wasBootstrapped
+			runWithTicker(ctx, ticker, c.Name, logger, skipFirst, func(ctx context.Context) error {
 				return collectAndSend(ctx, c)
 			})
 		}()

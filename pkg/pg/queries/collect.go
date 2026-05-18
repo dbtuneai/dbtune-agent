@@ -19,12 +19,6 @@ type CatalogCollector struct {
 	Name     string
 	Interval time.Duration
 	Collect  func(ctx context.Context) (*CollectResult, error)
-	// BootstrapBeforeOthers, when true, causes the runner to run this
-	// collector's first Collect+Send synchronously before any catalog
-	// goroutine starts. Used for definitional collectors (e.g.
-	// pg_index_inventory) whose rows are a join prerequisite for the
-	// faster volatile collectors that follow.
-	BootstrapBeforeOthers bool
 }
 
 // CollectResult holds both the typed payload and its pre-marshaled JSON bytes.
