@@ -6,6 +6,10 @@ postgresql:
   connection_url: postgresql://username:password@your-ip:5432/database
   service_name: postgresql-17 # (required) name of the service in case of restarts
 
+  # Set to true to allow the agent to restart the database during tuning.
+  # Defaults to false (monitoring/reload-only mode).
+  allow_restart: false
+
 # Use with docker flag to monitor a PostgreSQL container
 docker:
   container_name: dev-postgres
@@ -17,6 +21,7 @@ dbtune:
 
 guardrail_settings:
   memory_threshold: 90 # percentage of total memory.
+
 
 # Collector overrides — uncomment to customize individual collectors.
 # All collectors are enabled by default. Use `enabled: false` to disable.
