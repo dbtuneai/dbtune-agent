@@ -285,43 +285,72 @@ func zeroPtr[T ~int64 | ~float64](val *T, exists bool) *T {
 	return val
 }
 
-func calculateStatementDeltas(prev, curr map[string]PgStatStatementsRow, diffLimit int) ([]PgStatStatementsDelta, int) {
-	diffs := make([]PgStatStatementsDelta, 0, len(curr))
-	totalDiffs := 0
+// selectTopByRecentActivity ranks curr rows by the avg exec time of their
+// delta vs prev (the same metric the standalone delta sort used) and keeps
+// the top `limit`. For each kept row, emits a paired delta when it has a
+// positive (calls, total_exec_time) diff. `totalDiffs` is the pre-cap count
+// of rows with a positive diff — preserved as `delta_count` for the server.
+//
+// Rows with no positive diff (new rows, idle rows, first tick) sort to the
+// end with key 0 and fill any remaining slots in stable input order.
+func selectTopByRecentActivity(
+	curr []PgStatStatementsRow,
+	prev map[string]PgStatStatementsRow,
+	limit int,
+) (rows []PgStatStatementsRow, deltas []PgStatStatementsDelta, totalDiffs int) {
+	type ranked struct {
+		row     PgStatStatementsRow
+		delta   *PgStatStatementsDelta
+		sortKey float64
+		idx     int
+	}
 
-	for key, currRow := range curr {
-		prevRow, exists := prev[key]
+	all := make([]ranked, 0, len(curr))
+	for i, currRow := range curr {
+		entry := ranked{row: currRow, idx: i}
 
-		callsDiff := ptrDiff(zeroPtr(prevRow.Calls, exists), currRow.Calls)
-		execTimeDiff := ptrDiff(zeroPtr(prevRow.TotalExecTime, exists), currRow.TotalExecTime)
+		if prev != nil {
+			prevRow, exists := prev[compositeKey(&currRow)]
+			callsDiff := ptrDiff(zeroPtr(prevRow.Calls, exists), currRow.Calls)
+			execDiff := ptrDiff(zeroPtr(prevRow.TotalExecTime, exists), currRow.TotalExecTime)
 
-		if callsDiff == nil || *callsDiff <= 0 ||
-			execTimeDiff == nil || *execTimeDiff <= 0 {
-			continue
+			if callsDiff != nil && *callsDiff > 0 &&
+				execDiff != nil && *execDiff > 0 {
+				totalDiffs++
+				entry.delta = &PgStatStatementsDelta{
+					UserID:        currRow.UserID,
+					DbID:          currRow.DbID,
+					QueryID:       currRow.QueryID,
+					Calls:         callsDiff,
+					TotalExecTime: execDiff,
+				}
+				entry.sortKey = float64(*execDiff) / float64(*callsDiff)
+			}
 		}
 
-		totalDiffs++
-
-		diffs = append(diffs, PgStatStatementsDelta{
-			UserID:        currRow.UserID,
-			DbID:          currRow.DbID,
-			QueryID:       currRow.QueryID,
-			Calls:         callsDiff,
-			TotalExecTime: execTimeDiff,
-		})
+		all = append(all, entry)
 	}
 
-	sort.Slice(diffs, func(i, j int) bool {
-		avgI := float64(*diffs[i].TotalExecTime) / float64(*diffs[i].Calls)
-		avgJ := float64(*diffs[j].TotalExecTime) / float64(*diffs[j].Calls)
-		return avgI > avgJ
+	sort.SliceStable(all, func(i, j int) bool {
+		if all[i].sortKey != all[j].sortKey {
+			return all[i].sortKey > all[j].sortKey
+		}
+		return all[i].idx < all[j].idx
 	})
 
-	if len(diffs) > diffLimit {
-		diffs = diffs[:diffLimit]
+	if limit > 0 && len(all) > limit {
+		all = all[:limit]
 	}
 
-	return diffs, totalDiffs
+	rows = make([]PgStatStatementsRow, 0, len(all))
+	deltas = make([]PgStatStatementsDelta, 0, len(all))
+	for _, entry := range all {
+		rows = append(rows, entry.row)
+		if entry.delta != nil {
+			deltas = append(deltas, *entry.delta)
+		}
+	}
+	return rows, deltas, totalDiffs
 }
 
 func calculateAvgRuntime(prev, curr map[string]PgStatStatementsRow) float64 {
@@ -430,17 +459,23 @@ func PgStatStatementsCollector(
 
 			currSnapshot := toSnapshot(rows)
 
+			// Rank curr rows by recent activity (avg exec time of the
+			// delta vs prev) and cap to DiffLimit. Deltas are emitted only
+			// for kept rows. The full snapshot is retained as prevSnapshot
+			// so the next tick's delta math sees every row.
+			outRows, outDeltas, totalDiffs := selectTopByRecentActivity(
+				rows, prevSnapshot, cfg.DiffLimit,
+			)
+
 			payload := &PgStatStatementsPayload{
 				CollectedAt: collectedAt,
-				Rows:        rows,
+				Rows:        outRows,
 			}
 
 			if prevSnapshot != nil {
-				deltas, deltaCount := calculateStatementDeltas(prevSnapshot, currSnapshot, cfg.DiffLimit)
-				avgRuntime := calculateAvgRuntime(prevSnapshot, currSnapshot)
-				payload.Deltas = deltas
-				payload.DeltaCount = deltaCount
-				payload.AverageQueryRuntime = avgRuntime
+				payload.Deltas = outDeltas
+				payload.DeltaCount = totalDiffs
+				payload.AverageQueryRuntime = calculateAvgRuntime(prevSnapshot, currSnapshot)
 			}
 
 			prevSnapshot = currSnapshot
