@@ -8,7 +8,7 @@ import (
 func ptrOf[T any](v T) *T { return &v }
 
 // mkRow builds a minimal PgStatStatementsRow with the fields needed by
-// selectTopByRecentActivity / calculateAvgRuntime: queryid/userid/dbid for
+// buildPayloadParts / calculateAvgRuntime: queryid/userid/dbid for
 // composite-key matching, and calls/total_exec_time for the delta math.
 func mkRow(queryID int64, calls int64, totalExecTime float64) PgStatStatementsRow {
 	return PgStatStatementsRow{
@@ -21,11 +21,15 @@ func mkRow(queryID int64, calls int64, totalExecTime float64) PgStatStatementsRo
 }
 
 func snapshotOf(rows []PgStatStatementsRow) map[string]PgStatStatementsRow {
-	return toSnapshot(rows)
+	m := make(map[string]PgStatStatementsRow, len(rows))
+	for _, r := range rows {
+		m[compositeKey(&r)] = r
+	}
+	return m
 }
 
 // Three behaviours covered:
-//   1. selectTopByRecentActivity caps rows AND deltas to the same limit.
+//   1. buildPayloadParts caps rows AND deltas to the same limit.
 //   2. Every emitted delta has a matching row in the emitted rows slice
 //      (i.e. rows is a strict superset, by composite key, of deltas).
 //   3. The avg-query-runtime reported by the payload is computed over the
@@ -49,7 +53,7 @@ func TestSelectTopByRecentActivity_CapsRowsAndDeltas(t *testing.T) {
 	}
 
 	const limit = 2
-	rows, deltas, totalDiffs := selectTopByRecentActivity(curr, prev, limit)
+	rows, deltas, totalDiffs, _, _ := buildPayloadParts(curr, prev, limit)
 
 	if len(rows) != limit {
 		t.Fatalf("len(rows) = %d, want %d", len(rows), limit)
@@ -84,7 +88,7 @@ func TestSelectTopByRecentActivity_EveryDeltaHasMatchingRow(t *testing.T) {
 		mkRow(5, 10, 100.0), // no diff
 	}
 
-	rows, deltas, _ := selectTopByRecentActivity(curr, prev, 3)
+	rows, deltas, _, _, _ := buildPayloadParts(curr, prev, 3)
 
 	rowIDs := map[int64]struct{}{}
 	for _, r := range rows {
@@ -98,10 +102,8 @@ func TestSelectTopByRecentActivity_EveryDeltaHasMatchingRow(t *testing.T) {
 	}
 }
 
-// The collector computes AverageQueryRuntime via calculateAvgRuntime over
-// the full prev/curr snapshots — not over the post-cap selection — so the
-// reported AQR reflects every query the database executed, even when the
-// rows/deltas payload is trimmed.
+// The AQR returned by buildPayloadParts must reflect every positive-diff
+// query in the snapshot, not just the queries kept after the row/delta cap.
 func TestAverageQueryRuntime_IncludesAllQueriesNotJustCapped(t *testing.T) {
 	prev := snapshotOf([]PgStatStatementsRow{
 		mkRow(1, 0, 0.0),
@@ -109,25 +111,22 @@ func TestAverageQueryRuntime_IncludesAllQueriesNotJustCapped(t *testing.T) {
 		mkRow(3, 0, 0.0),
 	})
 	// Total across ALL three queries: 30 calls, 600 ms  =>  AQR = 20.0
-	currRows := []PgStatStatementsRow{
+	curr := []PgStatStatementsRow{
 		mkRow(1, 10, 100.0),
 		mkRow(2, 10, 200.0),
 		mkRow(3, 10, 300.0),
 	}
-	currSnapshot := snapshotOf(currRows)
 
 	// Cap aggressively — only 1 query survives the row/delta cap.
-	rows, _, _ := selectTopByRecentActivity(currRows, prev, 1)
+	rows, _, _, avgRuntime, _ := buildPayloadParts(curr, prev, 1)
 	if len(rows) != 1 {
 		t.Fatalf("precondition: expected cap to leave 1 row, got %d", len(rows))
 	}
 
-	// AQR still uses the full snapshot, independent of the cap.
-	got := calculateAvgRuntime(prev, currSnapshot)
 	const want = 20.0
-	if got != want {
-		t.Fatalf("AverageQueryRuntime = %f, want %f (AQR must use full snapshot, not capped rows)",
-			got, want)
+	if avgRuntime != want {
+		t.Fatalf("avgRuntime = %f, want %f (AQR must use full snapshot, not capped rows)",
+			avgRuntime, want)
 	}
 }
 
