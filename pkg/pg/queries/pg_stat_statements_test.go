@@ -5,6 +5,132 @@ import (
 	"testing"
 )
 
+func ptrOf[T any](v T) *T { return &v }
+
+// mkRow builds a minimal PgStatStatementsRow with the fields needed by
+// selectTopByRecentActivity / calculateAvgRuntime: queryid/userid/dbid for
+// composite-key matching, and calls/total_exec_time for the delta math.
+func mkRow(queryID int64, calls int64, totalExecTime float64) PgStatStatementsRow {
+	return PgStatStatementsRow{
+		QueryID:       ptrOf(Bigint(queryID)),
+		UserID:        ptrOf(Oid(1)),
+		DbID:          ptrOf(Oid(1)),
+		Calls:         ptrOf(Bigint(calls)),
+		TotalExecTime: ptrOf(DoublePrecision(totalExecTime)),
+	}
+}
+
+func snapshotOf(rows []PgStatStatementsRow) map[string]PgStatStatementsRow {
+	return toSnapshot(rows)
+}
+
+// Three behaviours covered:
+//   1. selectTopByRecentActivity caps rows AND deltas to the same limit.
+//   2. Every emitted delta has a matching row in the emitted rows slice
+//      (i.e. rows is a strict superset, by composite key, of deltas).
+//   3. The avg-query-runtime reported by the payload is computed over the
+//      FULL snapshot — every query the agent saw — not just the queries
+//      that made it past the cap.
+
+func TestSelectTopByRecentActivity_CapsRowsAndDeltas(t *testing.T) {
+	prev := snapshotOf([]PgStatStatementsRow{
+		mkRow(1, 10, 100.0),
+		mkRow(2, 10, 100.0),
+		mkRow(3, 10, 100.0),
+		mkRow(4, 10, 100.0),
+		mkRow(5, 10, 100.0),
+	})
+	curr := []PgStatStatementsRow{
+		mkRow(1, 20, 110.0),  // delta avg   1
+		mkRow(2, 20, 300.0),  // delta avg  20
+		mkRow(3, 20, 200.0),  // delta avg  10
+		mkRow(4, 20, 1100.0), // delta avg 100   <- top
+		mkRow(5, 20, 600.0),  // delta avg  50   <- 2nd
+	}
+
+	const limit = 2
+	rows, deltas, totalDiffs := selectTopByRecentActivity(curr, prev, limit)
+
+	if len(rows) != limit {
+		t.Fatalf("len(rows) = %d, want %d", len(rows), limit)
+	}
+	if len(deltas) != limit {
+		t.Fatalf("len(deltas) = %d, want %d", len(deltas), limit)
+	}
+	if totalDiffs != 5 {
+		t.Fatalf("totalDiffs = %d, want 5 (pre-cap count of positive diffs)", totalDiffs)
+	}
+	// Highest-avg-exec-time deltas survive the cap.
+	if int64(*rows[0].QueryID) != 4 || int64(*rows[1].QueryID) != 5 {
+		t.Fatalf("expected top-2 rows = [4, 5], got [%d, %d]",
+			*rows[0].QueryID, *rows[1].QueryID)
+	}
+}
+
+func TestSelectTopByRecentActivity_EveryDeltaHasMatchingRow(t *testing.T) {
+	// Mix of positive-diff rows and unchanged rows; cap below total.
+	prev := snapshotOf([]PgStatStatementsRow{
+		mkRow(1, 10, 100.0),
+		mkRow(2, 10, 100.0),
+		mkRow(3, 10, 100.0),
+		mkRow(4, 10, 100.0),
+		mkRow(5, 10, 100.0),
+	})
+	curr := []PgStatStatementsRow{
+		mkRow(1, 20, 300.0), // delta
+		mkRow(2, 20, 200.0), // delta
+		mkRow(3, 20, 110.0), // delta
+		mkRow(4, 10, 100.0), // no diff
+		mkRow(5, 10, 100.0), // no diff
+	}
+
+	rows, deltas, _ := selectTopByRecentActivity(curr, prev, 3)
+
+	rowIDs := map[int64]struct{}{}
+	for _, r := range rows {
+		rowIDs[int64(*r.QueryID)] = struct{}{}
+	}
+	for i, d := range deltas {
+		if _, ok := rowIDs[int64(*d.QueryID)]; !ok {
+			t.Fatalf("deltas[%d] queryid=%d has no matching row in rows (rowIDs=%v)",
+				i, *d.QueryID, rowIDs)
+		}
+	}
+}
+
+// The collector computes AverageQueryRuntime via calculateAvgRuntime over
+// the full prev/curr snapshots — not over the post-cap selection — so the
+// reported AQR reflects every query the database executed, even when the
+// rows/deltas payload is trimmed.
+func TestAverageQueryRuntime_IncludesAllQueriesNotJustCapped(t *testing.T) {
+	prev := snapshotOf([]PgStatStatementsRow{
+		mkRow(1, 0, 0.0),
+		mkRow(2, 0, 0.0),
+		mkRow(3, 0, 0.0),
+	})
+	// Total across ALL three queries: 30 calls, 600 ms  =>  AQR = 20.0
+	currRows := []PgStatStatementsRow{
+		mkRow(1, 10, 100.0),
+		mkRow(2, 10, 200.0),
+		mkRow(3, 10, 300.0),
+	}
+	currSnapshot := snapshotOf(currRows)
+
+	// Cap aggressively — only 1 query survives the row/delta cap.
+	rows, _, _ := selectTopByRecentActivity(currRows, prev, 1)
+	if len(rows) != 1 {
+		t.Fatalf("precondition: expected cap to leave 1 row, got %d", len(rows))
+	}
+
+	// AQR still uses the full snapshot, independent of the cap.
+	got := calculateAvgRuntime(prev, currSnapshot)
+	const want = 20.0
+	if got != want {
+		t.Fatalf("AverageQueryRuntime = %f, want %f (AQR must use full snapshot, not capped rows)",
+			got, want)
+	}
+}
+
 // Tests for buildPgStatStatementsQuery cover the per-extension-version column
 // gating documented above the function. The historical bug was that the
 // agent gated on the PostgreSQL server major version (>=17 -> use
