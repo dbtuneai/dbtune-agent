@@ -236,6 +236,14 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposed
 		}
 	}
 
+	// If any of the parameters being applied would require a restart but the
+	// agent is not allowed to restart, bail before pushing changes to Aiven.
+	if restartRequired && !agent.IsRestartAllowed() {
+		return &agent.RestartNotAllowedError{
+			Message: "restart is not allowed in the agent",
+		}
+	}
+
 	if len(pgSettings) > 0 {
 		userConfig["pg"] = pgSettings
 	}
@@ -257,11 +265,6 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposed
 	}
 
 	if restartRequired {
-		if !agent.IsRestartAllowed() {
-			return &agent.RestartNotAllowedError{
-				Message: "restart is not allowed in the agent",
-			}
-		}
 		adapter.Logger().Info("Restart was required, checking if Aiven PostgreSQL service has restarted")
 		err := adapter.waitForServiceState(service.ServiceStateTypeRunning)
 		if err != nil {

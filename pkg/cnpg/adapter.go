@@ -10,7 +10,6 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/kubernetes"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
@@ -232,10 +231,18 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 	logger.Infof("Applying %d changed parameters to cluster", len(parametersMap))
 
 	// Check if any of the CHANGED parameters require restart
-	requiresRestart, restartRequiredParams, err := adapter.CheckRestartRequired(ctx, parametersMap)
+	paramNames := make([]string, 0, len(parametersMap))
+	for name := range parametersMap {
+		paramNames = append(paramNames, name)
+	}
+	restartRequiredParams, err := pg.RestartRequiredParams(adapter.PGDriver, ctx, paramNames)
+	requiresRestart := len(restartRequiredParams) > 0
 	if err != nil {
 		logger.Warnf("Failed to check restart requirement: %v. Will trigger restart to be safe.", err)
 		requiresRestart = proposedConfig.KnobApplication == "restart"
+	}
+	for _, name := range restartRequiredParams {
+		logger.Infof("Parameter '%s' requires restart (context=postmaster)", name)
 	}
 
 	if proposedConfig.KnobApplication == "reload" && requiresRestart {
@@ -256,6 +263,13 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 
 	if requiresRestart {
 		logger.Info("Configuration changes include restart-required parameters")
+		// Bail before patching the CRD if a restart would be required but the
+		// agent is not allowed to restart.
+		if !agent.IsRestartAllowed() {
+			return &agent.RestartNotAllowedError{
+				Message: "restart is not allowed in the agent",
+			}
+		}
 	} else {
 		logger.Info("Configuration changes only include reload parameters (no restart needed)")
 	}
@@ -281,11 +295,6 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 	}
 
 	if requiresRestart {
-		if !agent.IsRestartAllowed() {
-			return &agent.RestartNotAllowedError{
-				Message: "restart is not allowed in the agent",
-			}
-		}
 		// Trigger rolling restart for restart-required parameters
 		err = kubernetes.TriggerCNPGRollingRestart(ctx, adapter.K8sClient, clusterName, logger)
 		if err != nil {
@@ -691,45 +700,4 @@ func (adapter *CNPGAdapter) GetCurrentConfig(ctx context.Context) (map[string]st
 	}
 
 	return config, nil
-}
-
-// CheckRestartRequired checks if any of the changed parameters require database restart.
-// Returns:
-//   - bool: true if any parameter requires restart
-//   - []string: list of parameter names that require restart
-//   - error: any error encountered
-func (adapter *CNPGAdapter) CheckRestartRequired(ctx context.Context, changedParams map[string]string) (bool, []string, error) {
-	if len(changedParams) == 0 {
-		return false, nil, nil
-	}
-
-	// Build list of changed parameter names for query
-	paramNames := make([]string, 0, len(changedParams))
-	for name := range changedParams {
-		paramNames = append(paramNames, name)
-	}
-
-	// Query which of the changed parameters require restart
-	// Uses centralized prefix utility to avoid pg_stat_statements pollution
-	query := `SELECT name FROM pg_settings WHERE name = ANY($1) AND context = 'postmaster'`
-	rows, err := utils.QueryWithPrefix(adapter.PGDriver, ctx, query, paramNames)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to query restart-required parameters: %w", err)
-	}
-	defer rows.Close()
-
-	// Collect all restart-required parameter names
-	restartParams := make([]string, 0)
-	logger := adapter.Logger()
-	for rows.Next() {
-		var paramName string
-		if err := rows.Scan(&paramName); err != nil {
-			logger.Errorf("failed to scan restart parameter: %v", err)
-			continue
-		}
-		logger.Infof("Parameter '%s' requires restart (context=postmaster)", paramName)
-		restartParams = append(restartParams, paramName)
-	}
-
-	return len(restartParams) > 0, restartParams, nil
 }

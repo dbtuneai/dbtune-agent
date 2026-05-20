@@ -80,6 +80,16 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 }
 
 func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
+	// If the backend told us this is a restart-application but the agent is not
+	// allowed to restart, bail before pushing parameter changes to Azure.
+	// Per-knob `shouldRestart` is still re-checked in the loop below for the
+	// dynamic case where KnobApplication != "restart".
+	if proposedConfig.KnobApplication == "restart" && !agent.IsRestartAllowed() {
+		return &agent.RestartNotAllowedError{
+			Message: "restart is not allowed in the agent",
+		}
+	}
+
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
 		return err

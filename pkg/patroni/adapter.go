@@ -305,6 +305,44 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 		return nil
 	}
 
+	// Determine whether this application will require a PostgreSQL restart,
+	// before mutating anything. If a restart is required but the agent is not
+	// allowed to restart, bail out without applying any configuration.
+	needsRestart := false
+	switch proposedConfig.KnobApplication {
+	case "restart":
+		needsRestart = true
+		logger.Info("Backend requested restart (KnobApplication='restart')")
+	case "reload":
+		needsRestart = false
+		logger.Info("Backend disabled restarts (KnobApplication='reload') - will only reload config")
+	default:
+		// NOTE(eddie): Unlikely
+		// Not explicitly specified - check dynamically using pg_settings
+		paramNames := make([]string, len(parsedKnobs))
+		for i, knob := range parsedKnobs {
+			paramNames[i] = knob.Name
+		}
+		logger.Infof("Checking if any of %d parameters require restart: %v", len(paramNames), paramNames)
+		restartParams, err := pg.RestartRequiredParams(adapter.PGDriver, dbCtx, paramNames)
+		switch {
+		case err != nil:
+			logger.Errorf("Failed to check for restart-required parameters: %v", err)
+			// Continue without restart check if query fails
+		case len(restartParams) > 0:
+			needsRestart = true
+			logger.Infof("Detected %d parameters that require PostgreSQL restart (context='postmaster'): %v", len(restartParams), restartParams)
+		default:
+			logger.Info("No restart-required parameters detected")
+		}
+	}
+
+	if needsRestart && !agent.IsRestartAllowed() {
+		return &agent.RestartNotAllowedError{
+			Message: "restart is not allowed in the agent",
+		}
+	}
+
 	// Step 1: Clear postgresql.auto.conf by resetting each parameter that will be changed
 	// This ensures no local postgresql.auto.conf settings override Patroni DCS settings
 	logger.Info("Clearing postgresql.auto.conf by resetting parameters...")
@@ -383,54 +421,9 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 
 	logger.Info("Configuration successfully applied via Patroni REST API")
 
-	// Step 4: Check if any parameters require PostgreSQL restart and handle restart if needed
-	// Respect backend's KnobApplication setting:
-	// - "restart" = Allow restarts
-	// - "reload" = NO restarts (reload only, even if params require restart)
-	// - other = Check dynamically if restart is needed
-
-	needsRestart := false
-
-	switch proposedConfig.KnobApplication {
-	case "restart":
-		// Explicitly flagged as restart by backend
-		needsRestart = true
-		logger.Info("Backend requested restart (KnobApplication='restart')")
-	case "reload":
-		// Backend explicitly disabled restarts - respect it
-		needsRestart = false
-		logger.Info("Backend disabled restarts (KnobApplication='reload') - will only reload config")
-	default:
-		// NOTE(eddie): Unlikely
-		// Not explicitly specified - check dynamically using pg_settings
-		paramNames := make([]string, len(parsedKnobs))
-		for i, knob := range parsedKnobs {
-			paramNames[i] = knob.Name
-		}
-
-		logger.Infof("Checking if any of %d parameters require restart: %v", len(paramNames), paramNames)
-
-		// Check if any parameter requires restart (context='postmaster')
-		restartRequired, err := adapter.requiresPostgreSQLRestart(dbCtx, paramNames)
-		switch {
-		case err != nil:
-			logger.Errorf("Failed to check for restart-required parameters: %v", err)
-			// Continue without restart check if query fails
-		case restartRequired:
-			needsRestart = true
-			logger.Info("Detected parameters that require PostgreSQL restart (context='postmaster')")
-		default:
-			logger.Info("No restart-required parameters detected")
-		}
-	}
-
-	// If restart is needed, trigger PostgreSQL restart via Patroni API
+	// Step 4: If restart is needed, trigger PostgreSQL restart via Patroni API.
+	// IsRestartAllowed was already verified above, before any mutations.
 	if needsRestart {
-		if !agent.IsRestartAllowed() {
-			return &agent.RestartNotAllowedError{
-				Message: "restart is not allowed in the agent",
-			}
-		}
 		logger.Info("Configuration requires restart, triggering PostgreSQL restart via Patroni API...")
 
 		// Mark that we're entering an intentional restart window
@@ -518,30 +511,6 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 	}
 
 	return nil
-}
-
-// requiresPostgreSQLRestart checks if any of the parameters being applied require a PostgreSQL restart
-// by querying pg_settings to see if context='postmaster' for those parameters
-func (adapter *PatroniAdapter) requiresPostgreSQLRestart(ctx context.Context, parameterNames []string) (bool, error) {
-	if len(parameterNames) == 0 {
-		return false, nil
-	}
-
-	// Query pg_settings to check if any parameter has context='postmaster'
-	// context='postmaster' means the parameter requires a server restart
-	query := `SELECT 1 FROM pg_settings WHERE name = ANY($1) AND context = 'postmaster' LIMIT 1`
-
-	rows, err := utils.QueryWithPrefix(adapter.PGDriver, ctx, query, parameterNames)
-	if err != nil {
-		return false, fmt.Errorf("failed to query pg_settings for restart-required parameters: %w", err)
-	}
-	defer rows.Close()
-
-	hasRows := rows.Next()
-	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("error iterating pg_settings results: %w", err)
-	}
-	return hasRows, nil
 }
 
 // triggerPostgreSQLRestart triggers a PostgreSQL restart for all cluster nodes

@@ -283,6 +283,14 @@ func ApplyConfig(
 		return nil
 	}
 
+	// If the parameter group would be set to pending-reboot but the agent is
+	// not allowed to restart, bail before modifying the parameter group.
+	if applyMethod == rdsTypes.ApplyMethodPendingReboot && !agent.IsRestartAllowed() {
+		return &agent.RestartNotAllowedError{
+			Message: "restart is not allowed in the agent",
+		}
+	}
+
 	// Modify parameter group
 	args := &rds.ModifyDBParameterGroupInput{
 		DBParameterGroupName: aws.String(parameterGroupName),
@@ -302,13 +310,9 @@ func ApplyConfig(
 		return fmt.Errorf("error waiting for parameter group changes to be processed: %w", err)
 	}
 
-	// If restart is required and specified
+	// If restart is required and specified. IsRestartAllowed was already
+	// verified above, before modifying the parameter group.
 	if applyMethod == rdsTypes.ApplyMethodPendingReboot {
-		if !agent.IsRestartAllowed() {
-			return &agent.RestartNotAllowedError{
-				Message: "restart is not allowed in the agent",
-			}
-		}
 		args := &rds.RebootDBInstanceInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
 		_, err = clients.RDSClient.RebootDBInstance(ctx, args)
 		if err != nil {

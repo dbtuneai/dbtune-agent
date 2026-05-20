@@ -240,6 +240,13 @@ func (d *DockerContainerAdapter) GetActiveConfig(ctx context.Context) (agent.Con
 func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	d.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
+	// Bail before mutating postgresql.auto.conf if a restart is required but not allowed.
+	if proposedConfig.KnobApplication == "restart" && !agent.IsRestartAllowed() {
+		return &agent.RestartNotAllowedError{
+			Message: "restart is not allowed in the agent",
+		}
+	}
+
 	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
 	if err != nil {
 		return err
@@ -253,11 +260,6 @@ func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig
 	}
 
 	if proposedConfig.KnobApplication == "restart" {
-		if !agent.IsRestartAllowed() {
-			return &agent.RestartNotAllowedError{
-				Message: "restart is not allowed in the agent",
-			}
-		}
 		// Restart the service
 		d.Logger().Warn("Restarting service")
 

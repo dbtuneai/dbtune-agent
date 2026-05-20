@@ -193,3 +193,33 @@ func CheckPGStatStatements(pgPool *pgxpool.Pool) error {
 	_, err := utils.ExecWithPrefix(pgPool, context.Background(), CheckPGStatStatementsQuery)
 	return err
 }
+
+const restartRequiredParamsQuery = `SELECT name FROM pg_settings WHERE name = ANY($1) AND context = 'postmaster'`
+
+// RestartRequiredParams returns the subset of the supplied parameter names
+// whose value cannot be changed without restarting PostgreSQL (i.e.
+// pg_settings.context = 'postmaster').
+func RestartRequiredParams(pgPool *pgxpool.Pool, ctx context.Context, parameterNames []string) ([]string, error) {
+	if len(parameterNames) == 0 {
+		return nil, nil
+	}
+
+	rows, err := utils.QueryWithPrefix(pgPool, ctx, restartRequiredParamsQuery, parameterNames)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query pg_settings for restart-required parameters: %w", err)
+	}
+	defer rows.Close()
+
+	var restartParams []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("failed to scan restart-required parameter name: %w", err)
+		}
+		restartParams = append(restartParams, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating pg_settings results: %w", err)
+	}
+	return restartParams, nil
+}
