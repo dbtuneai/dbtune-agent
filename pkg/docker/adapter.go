@@ -251,19 +251,8 @@ func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig
 	for _, k := range parsedKnobs {
 		paramNames = append(paramNames, k.Name)
 	}
-	restartRequiredParams, err := pg.RestartRequiredParams(d.PGDriver, ctx, paramNames)
-	if err != nil {
-		return fmt.Errorf("failed to validate which parameters require restart: %w", err)
-	}
-	requiresRestart := len(restartRequiredParams) > 0
-
-	if requiresRestart && !agent.IsRestartAllowed() {
-		return &agent.RestartNotAllowedError{
-			Message: fmt.Sprintf("restart is not allowed in the agent, but %d parameter(s) require restart: %v", len(restartRequiredParams), restartRequiredParams),
-		}
-	}
-	if requiresRestart && proposedConfig.KnobApplication == agent.KnobApplicationReload {
-		return fmt.Errorf("refusing to apply: KnobApplication=reload but %d parameter(s) require restart: %v", len(restartRequiredParams), restartRequiredParams)
+	if _, err := pg.ValidateRestartPolicy(d.PGDriver, ctx, paramNames, proposedConfig.KnobApplication); err != nil {
+		return err
 	}
 
 	for _, knob := range parsedKnobs {

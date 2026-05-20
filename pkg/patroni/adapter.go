@@ -305,28 +305,17 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 		return nil
 	}
 
-	// Validate against the running PostgreSQL: which of the proposed knobs
-	// require a restart? Patroni's PATCH /config only marks postmaster-context
-	// changes as pending_restart and does not auto-restart, so if we apply
-	// without an explicit POST /restart the cluster sits in pending_restart
-	// forever. Check before any mutation so we never half-apply.
+	// Validate against the running PostgreSQL before any mutation. Patroni's
+	// PATCH /config only marks postmaster-context changes as pending_restart
+	// and does not auto-restart, so without this check a reload-mode apply
+	// would leave the cluster in pending_restart indefinitely.
 	paramNames := make([]string, 0, len(parsedKnobs))
 	for _, k := range parsedKnobs {
 		paramNames = append(paramNames, k.Name)
 	}
-	restartRequiredParams, err := pg.RestartRequiredParams(adapter.PGDriver, dbCtx, paramNames)
+	needsRestart, err := pg.ValidateRestartPolicy(adapter.PGDriver, dbCtx, paramNames, proposedConfig.KnobApplication)
 	if err != nil {
-		return fmt.Errorf("failed to validate which parameters require restart: %w", err)
-	}
-	needsRestart := len(restartRequiredParams) > 0
-
-	if needsRestart && !agent.IsRestartAllowed() {
-		return &agent.RestartNotAllowedError{
-			Message: fmt.Sprintf("restart is not allowed in the agent, but %d parameter(s) require restart: %v", len(restartRequiredParams), restartRequiredParams),
-		}
-	}
-	if needsRestart && proposedConfig.KnobApplication == agent.KnobApplicationReload {
-		return fmt.Errorf("refusing to apply: KnobApplication=reload but %d parameter(s) require restart: %v", len(restartRequiredParams), restartRequiredParams)
+		return err
 	}
 
 	// Step 1: Clear postgresql.auto.conf by resetting each parameter that will be changed

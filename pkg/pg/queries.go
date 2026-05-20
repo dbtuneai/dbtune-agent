@@ -196,6 +196,41 @@ func CheckPGStatStatements(pgPool *pgxpool.Pool) error {
 
 const restartRequiredParamsQuery = `SELECT name FROM pg_settings WHERE name = ANY($1) AND context = 'postmaster'`
 
+// ValidateRestartPolicy queries which of the supplied parameter names would
+// require a PostgreSQL restart and enforces the agent's apply policy:
+//
+//   - if at least one requires a restart but agent.IsRestartAllowed is false,
+//     a *agent.RestartNotAllowedError is returned;
+//   - if at least one requires a restart but KnobApplication=reload, the apply
+//     is refused with a plain error to prevent partial application.
+//
+// The boolean result reports whether any of the parameters require a restart
+// (used by callers to decide whether to perform one). On a policy violation
+// the boolean is still true so the caller can log accurately if it wishes.
+func ValidateRestartPolicy(
+	pgPool *pgxpool.Pool,
+	ctx context.Context,
+	parameterNames []string,
+	knobApp agent.KnobApplication,
+) (bool, error) {
+	restartRequired, err := RestartRequiredParams(pgPool, ctx, parameterNames)
+	if err != nil {
+		return false, fmt.Errorf("failed to validate which parameters require restart: %w", err)
+	}
+	if len(restartRequired) == 0 {
+		return false, nil
+	}
+	if !agent.IsRestartAllowed() {
+		return true, &agent.RestartNotAllowedError{
+			Message: fmt.Sprintf("restart is not allowed in the agent, but %d parameter(s) require restart: %v", len(restartRequired), restartRequired),
+		}
+	}
+	if knobApp == agent.KnobApplicationReload {
+		return true, fmt.Errorf("refusing to apply: KnobApplication=reload but %d parameter(s) require restart: %v", len(restartRequired), restartRequired)
+	}
+	return true, nil
+}
+
 // RestartRequiredParams returns the subset of the supplied parameter names
 // whose value cannot be changed without restarting PostgreSQL (i.e.
 // pg_settings.context = 'postmaster').

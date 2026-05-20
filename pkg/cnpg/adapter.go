@@ -238,26 +238,12 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 	for name := range parametersMap {
 		paramNames = append(paramNames, name)
 	}
-	restartRequiredParams, err := pg.RestartRequiredParams(adapter.PGDriver, ctx, paramNames)
+	requiresRestart, err := pg.ValidateRestartPolicy(adapter.PGDriver, ctx, paramNames, proposedConfig.KnobApplication)
 	if err != nil {
-		return fmt.Errorf("failed to check which parameters require restart: %w", err)
+		return err
 	}
-	for _, name := range restartRequiredParams {
-		logger.Infof("Parameter '%s' requires restart (context=postmaster)", name)
-	}
-	requiresRestart := len(restartRequiredParams) > 0
-
-	if proposedConfig.KnobApplication == agent.KnobApplicationReload && requiresRestart {
-		return fmt.Errorf("refusing to apply configuration: KnobApplication=reload but %d parameter(s) require restart and CNPG would trigger one anyway: %v", len(restartRequiredParams), restartRequiredParams)
-	}
-
 	if requiresRestart {
 		logger.Info("Configuration changes include restart-required parameters")
-		if !agent.IsRestartAllowed() {
-			return &agent.RestartNotAllowedError{
-				Message: "restart is not allowed in the agent",
-			}
-		}
 	} else {
 		logger.Info("Configuration changes only include reload parameters (no restart needed)")
 	}

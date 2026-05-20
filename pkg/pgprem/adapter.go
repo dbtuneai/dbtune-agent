@@ -148,29 +148,18 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 		return err
 	}
 
-	// Validate against the running PostgreSQL: which of the proposed knobs
-	// require a restart? This must happen before any mutation so we never
-	// half-apply (write to postgresql.auto.conf without the matching restart).
+	// Validate against the running PostgreSQL before mutating
+	// postgresql.auto.conf, so we never half-apply.
 	paramNames := make([]string, 0, len(parsedKnobs))
 	for _, k := range parsedKnobs {
 		paramNames = append(paramNames, k.Name)
 	}
-	restartRequiredParams, err := pg.RestartRequiredParams(adapter.pgDriver, ctx, paramNames)
+	requiresRestart, err := pg.ValidateRestartPolicy(adapter.pgDriver, ctx, paramNames, proposedConfig.KnobApplication)
 	if err != nil {
-		return fmt.Errorf("failed to validate which parameters require restart: %w", err)
-	}
-	requiresRestart := len(restartRequiredParams) > 0
-
-	if requiresRestart && !agent.IsRestartAllowed() {
-		return &agent.RestartNotAllowedError{
-			Message: fmt.Sprintf("restart is not allowed in the agent, but %d parameter(s) require restart: %v", len(restartRequiredParams), restartRequiredParams),
-		}
-	}
-	if requiresRestart && proposedConfig.KnobApplication == agent.KnobApplicationReload {
-		return fmt.Errorf("refusing to apply: KnobApplication=reload but %d parameter(s) require restart: %v", len(restartRequiredParams), restartRequiredParams)
+		return err
 	}
 	if requiresRestart && adapter.pgConfig.ServiceName == "" {
-		return fmt.Errorf("service name not configured, refusing to apply: %d parameter(s) require restart: %v", len(restartRequiredParams), restartRequiredParams)
+		return fmt.Errorf("service name not configured, refusing to apply: a restart is required to take effect")
 	}
 
 	for _, knob := range parsedKnobs {
