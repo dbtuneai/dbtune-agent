@@ -460,7 +460,7 @@ func getInitialServiceLevelParameters(client *aivenclient.Client, projectName st
 func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	// Main differences from the generic pg.GetActiveConfig:
 	// * We inject `shared_buffers_percentage` from the Aiven API.
-	//   Until we modify it, Aiven returns nothing — so we fall back to a known default of 20%.
+	//   Until we modify it, Aiven returns nothing, so we fall back to a known default of 20%.
 	// * `work_mem` is set through the Aiven API in MB, but pg_settings reports it in kB.
 	//   We convert kB→MB and override the unit/context so the value round-trips correctly.
 	logger := adapter.Logger()

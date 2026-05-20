@@ -305,38 +305,10 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 		return nil
 	}
 
-	// Determine whether this application will require a PostgreSQL restart,
-	// before mutating anything. If a restart is required but the agent is not
-	// allowed to restart, bail out without applying any configuration.
-	needsRestart := false
-	switch proposedConfig.KnobApplication {
-	case "restart":
-		needsRestart = true
-		logger.Info("Backend requested restart (KnobApplication='restart')")
-	case "reload":
-		needsRestart = false
-		logger.Info("Backend disabled restarts (KnobApplication='reload') - will only reload config")
-	default:
-		// NOTE(eddie): Unlikely
-		// Not explicitly specified - check dynamically using pg_settings
-		paramNames := make([]string, len(parsedKnobs))
-		for i, knob := range parsedKnobs {
-			paramNames[i] = knob.Name
-		}
-		logger.Infof("Checking if any of %d parameters require restart: %v", len(paramNames), paramNames)
-		restartParams, err := pg.RestartRequiredParams(adapter.PGDriver, dbCtx, paramNames)
-		switch {
-		case err != nil:
-			logger.Errorf("Failed to check for restart-required parameters: %v", err)
-			// Continue without restart check if query fails
-		case len(restartParams) > 0:
-			needsRestart = true
-			logger.Infof("Detected %d parameters that require PostgreSQL restart (context='postmaster'): %v", len(restartParams), restartParams)
-		default:
-			logger.Info("No restart-required parameters detected")
-		}
-	}
-
+	// Patroni's PATCH /config only marks postmaster-context changes as
+	// pending_restart and does not auto-restart, so the KnobApplication signal
+	// is authoritative: a restart only happens if we explicitly POST /restart.
+	needsRestart := proposedConfig.KnobApplication == "restart"
 	if needsRestart && !agent.IsRestartAllowed() {
 		return &agent.RestartNotAllowedError{
 			Message: "restart is not allowed in the agent",
@@ -678,9 +650,9 @@ func (adapter *PatroniAdapter) GetActiveConfig(ctx context.Context) (agent.Confi
 		return nil, err
 	}
 
-	// Filter out Patroni-managed parameters to prevent false "unexpected config change" alerts
-	// These parameters are managed by Patroni (e.g., during failover) and should not trigger
-	// backend notifications about configuration drift
+	// Filter out Patroni-managed parameters to prevent false "unexpected config change"
+	// alerts. These are managed by Patroni (e.g., during failover) and should not be
+	// reported as configuration drift.
 	filteredConfig := make(agent.ConfigArraySchema, 0, len(config))
 	for _, param := range config {
 		// Type assert to PGConfigRow to access the Name field

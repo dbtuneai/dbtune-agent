@@ -80,10 +80,9 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 }
 
 func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
-	// If the backend told us this is a restart-application but the agent is not
-	// allowed to restart, bail before pushing parameter changes to Azure.
-	// Per-knob `shouldRestart` is still re-checked in the loop below for the
-	// dynamic case where KnobApplication != "restart".
+	// Bail before pushing parameter changes to Azure if a restart is required
+	// but not allowed. Per-knob `shouldRestart` is still re-checked in the loop
+	// below for the dynamic case where KnobApplication != "restart".
 	if proposedConfig.KnobApplication == "restart" && !agent.IsRestartAllowed() {
 		return &agent.RestartNotAllowedError{
 			Message: "restart is not allowed in the agent",
@@ -108,9 +107,8 @@ func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig
 		if err != nil {
 			return err
 		}
-		// we have to apply the parameters one by one, in principle each of these
-		// updates could fail, if one does we bail out early and let the backend
-		// realise that the wrong config has been applied and go back to the baseline
+		// Apply parameters one by one; if one fails we bail out early so the
+		// wrong config can be detected and reverted to baseline.
 		shouldRestart, err := ApplyParameter(ctx, adapter.Logger(), paramsClient, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, knobConfig)
 		if err != nil {
 			return err

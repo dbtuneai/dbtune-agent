@@ -191,9 +191,9 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 	parametersMap := make(map[string]string)
 	skippedUnchanged := 0
 	for _, knob := range parsedKnobs {
-		// Skip CNPG-managed parameters that should not be modified by tuning
-		// CRITICAL: Backend sends these (e.g., shared_preload_libraries="")
-		// which would break the cluster by removing pg_stat_statements!
+		// Skip CNPG-managed parameters that must not be modified by tuning.
+		// CRITICAL: these can arrive set to values (e.g. shared_preload_libraries="")
+		// that would break the cluster by removing pg_stat_statements.
 		if IsCNPGManagedParameter(knob.Name) {
 			logger.Warnf("Skipping CNPG-managed parameter: %s (value: %s)", knob.Name, knob.SettingValue)
 			continue
@@ -230,41 +230,29 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 
 	logger.Infof("Applying %d changed parameters to cluster", len(parametersMap))
 
-	// Check if any of the CHANGED parameters require restart
+	// CNPG auto-restarts whenever a postmaster-context parameter changes in
+	// spec.postgresql.parameters. There is no way to ask it for a reload-only
+	// apply, so we must look up which of the changed params would force a
+	// restart before patching, and refuse to partially apply.
 	paramNames := make([]string, 0, len(parametersMap))
 	for name := range parametersMap {
 		paramNames = append(paramNames, name)
 	}
 	restartRequiredParams, err := pg.RestartRequiredParams(adapter.PGDriver, ctx, paramNames)
-	requiresRestart := len(restartRequiredParams) > 0
 	if err != nil {
-		logger.Warnf("Failed to check restart requirement: %v. Will trigger restart to be safe.", err)
-		requiresRestart = proposedConfig.KnobApplication == "restart"
+		return fmt.Errorf("failed to check which parameters require restart: %w", err)
 	}
 	for _, name := range restartRequiredParams {
 		logger.Infof("Parameter '%s' requires restart (context=postmaster)", name)
 	}
+	requiresRestart := len(restartRequiredParams) > 0
 
 	if proposedConfig.KnobApplication == "reload" && requiresRestart {
-		logger.Warnf("Reload-only mode: skipping %d restart-required parameters", len(restartRequiredParams))
-		for _, param := range restartRequiredParams {
-			logger.Warnf("Skipping restart-required parameter: %s (value: %s)", param, parametersMap[param])
-			delete(parametersMap, param)
-		}
-
-		if len(parametersMap) == 0 {
-			logger.Warn("No reload-able parameters to apply after filtering out restart-required ones")
-			return nil
-		}
-
-		logger.Infof("Will apply %d reload-only parameters", len(parametersMap))
-		requiresRestart = false
+		return fmt.Errorf("refusing to apply configuration: KnobApplication=reload but %d parameter(s) require restart and CNPG would trigger one anyway: %v", len(restartRequiredParams), restartRequiredParams)
 	}
 
 	if requiresRestart {
 		logger.Info("Configuration changes include restart-required parameters")
-		// Bail before patching the CRD if a restart would be required but the
-		// agent is not allowed to restart.
 		if !agent.IsRestartAllowed() {
 			return &agent.RestartNotAllowedError{
 				Message: "restart is not allowed in the agent",

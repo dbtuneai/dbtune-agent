@@ -264,9 +264,8 @@ func ApplyConfig(
 	case "reload":
 		applyMethod = rdsTypes.ApplyMethodImmediate
 	case "":
-		// TODO(eddie): We should make this more explicit somehow.
-		// This happens when nothing is sent from the backend about this.
-		// We should send an explicit string instead of leaving it blank.
+		// TODO(eddie): Treat blank KnobApplication as an explicit value upstream
+		// so we don't silently fall through to immediate apply here.
 		applyMethod = rdsTypes.ApplyMethodImmediate
 	default:
 		return fmt.Errorf("unknown knob application: %s", proposedConfig.KnobApplication)

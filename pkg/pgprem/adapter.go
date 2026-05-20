@@ -197,9 +197,8 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(_ context.Context, proposed
 			return err
 		}
 	case "":
-		// TODO(eddie): We should make this more explicit somehow.
-		// This happens when nothing is sent from the backend about this.
-		// We should send an explicit string instead of leaving it blank.
+		// TODO(eddie): Treat blank KnobApplication as an explicit value upstream
+		// so we don't silently fall through to reload here.
 		err := pg.ReloadConfig(adapter.pgDriver)
 		if err != nil {
 			return err
