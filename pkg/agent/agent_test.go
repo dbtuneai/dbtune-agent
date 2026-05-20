@@ -234,7 +234,7 @@ func TestCommonAgent_GetProposedConfig_Succeeds(t *testing.T) {
 		assert.Equal(t, "work_mem", config.Config[1].Name)
 		assert.Equal(t, "max_connections", config.Config[2].Name)
 		assert.Equal(t, []string{"shared_buffers"}, config.KnobsOverrides)
-		assert.Equal(t, "restart", config.KnobApplication)
+		assert.Equal(t, KnobApplicationRestart, config.KnobApplication)
 
 		transport.ActionWasCalled(t, "/api/v1/agent/configurations", http.MethodGet)
 	}

@@ -308,7 +308,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 	// Patroni's PATCH /config only marks postmaster-context changes as
 	// pending_restart and does not auto-restart, so the KnobApplication signal
 	// is authoritative: a restart only happens if we explicitly POST /restart.
-	needsRestart := proposedConfig.KnobApplication == "restart"
+	needsRestart := proposedConfig.KnobApplication == agent.KnobApplicationRestart
 	if needsRestart && !agent.IsRestartAllowed() {
 		return &agent.RestartNotAllowedError{
 			Message: "restart is not allowed in the agent",

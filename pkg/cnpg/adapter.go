@@ -247,7 +247,7 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 	}
 	requiresRestart := len(restartRequiredParams) > 0
 
-	if proposedConfig.KnobApplication == "reload" && requiresRestart {
+	if proposedConfig.KnobApplication == agent.KnobApplicationReload && requiresRestart {
 		return fmt.Errorf("refusing to apply configuration: KnobApplication=reload but %d parameter(s) require restart and CNPG would trigger one anyway: %v", len(restartRequiredParams), restartRequiredParams)
 	}
 

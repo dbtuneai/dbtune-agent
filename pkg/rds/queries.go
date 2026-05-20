@@ -259,16 +259,10 @@ func ApplyConfig(
 	// Prepare parameters for modification
 	var applyMethod rdsTypes.ApplyMethod
 	switch proposedConfig.KnobApplication {
-	case "restart":
+	case agent.KnobApplicationRestart:
 		applyMethod = rdsTypes.ApplyMethodPendingReboot
-	case "reload":
+	case agent.KnobApplicationReload:
 		applyMethod = rdsTypes.ApplyMethodImmediate
-	case "":
-		// TODO(eddie): Treat blank KnobApplication as an explicit value upstream
-		// so we don't silently fall through to immediate apply here.
-		applyMethod = rdsTypes.ApplyMethodImmediate
-	default:
-		return fmt.Errorf("unknown knob application: %s", proposedConfig.KnobApplication)
 	}
 
 	modifiedParameters, err := modifiedParametersToApply(proposedConfig, applyMethod)

@@ -143,7 +143,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (a
 func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	adapter.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
-	if proposedConfig.KnobApplication == "restart" {
+	if proposedConfig.KnobApplication == agent.KnobApplicationRestart {
 		// If service name is missing, skip
 		if adapter.pgConfig.ServiceName == "" {
 			return fmt.Errorf("service name not configured, skipping restarting and applying configuration")
@@ -169,7 +169,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(_ context.Context, proposed
 	}
 
 	switch proposedConfig.KnobApplication {
-	case "restart":
+	case agent.KnobApplicationRestart:
 		// Restart the service
 		adapter.Logger().Warn("Restarting service")
 		// Execute systemctl restart command if it fails try executing it with sudo
@@ -190,15 +190,8 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(_ context.Context, proposed
 		if err != nil {
 			return fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)
 		}
-	case "reload":
+	case agent.KnobApplicationReload:
 		// Reload database when everything is applied
-		err := pg.ReloadConfig(adapter.pgDriver)
-		if err != nil {
-			return err
-		}
-	case "":
-		// TODO(eddie): Treat blank KnobApplication as an explicit value upstream
-		// so we don't silently fall through to reload here.
 		err := pg.ReloadConfig(adapter.pgDriver)
 		if err != nil {
 			return err
