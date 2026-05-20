@@ -79,6 +79,13 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 	return &adpt, nil
 }
 
+// ApplyConfig applies the proposed configuration to the Azure Flex server.
+//
+// We cannot validate trivially against the Azure API which parameters require
+// a restart, so we rely on the KnobApplication signal provided. If after
+// applying we observe a per-parameter restart-required hint that contradicts
+// a KnobApplication=reload signal, we return restart_not_allowed once the
+// full configuration has been pushed; we do not roll back.
 func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	// Bail before pushing parameter changes to Azure if a restart is required but not allowed.
 	if proposedConfig.KnobApplication == agent.KnobApplicationRestart && !agent.IsRestartAllowed() {
@@ -99,6 +106,7 @@ func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig
 
 	paramsClient := clientFactory.NewConfigurationsClient()
 
+	anyShouldRestart := false
 	for _, knob := range proposedConfig.KnobsOverrides {
 		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
 		adapter.Logger().Infof("Applying Knob: %s, %v\n", knob, knobConfig.Setting)
@@ -111,39 +119,47 @@ func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig
 		if err != nil {
 			return err
 		}
-		if proposedConfig.KnobApplication == agent.KnobApplicationRestart && shouldRestart {
-			if !agent.IsRestartAllowed() {
-				return &agent.RestartNotAllowedError{
-					Message: "restart is not allowed in the agent",
-				}
-			}
-			// Restart the service
-			adapter.Logger().Warn("Restarting service")
-			restartResp, err := clientFactory.NewServersClient().BeginRestart(ctx, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, nil)
-			if err != nil {
-				return err
-			}
+		if shouldRestart {
+			anyShouldRestart = true
+		}
+	}
 
-			// wait for restart to complete
-			for !(restartResp.Done()) {
-				// if the network is flakey, Poll will just sit for ages, this timeout
-				// stops that from happening. Since it is a polling loop it will retry
-				// anyway. Obviously it could be bad if it retries indefinitely
-				// We are basically assuming that at some point we will get a response
-				timeoutCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-				defer cancel()
-				resp, err := restartResp.Poll(timeoutCtx)
-				if err != nil {
-					fmt.Printf("Error: %v", err)
-				} else {
-					adapter.Logger().Infof("RestartPoller status: %s", resp.Status)
-				}
-			}
+	// All parameters have been pushed. If KnobApplication=reload but Azure
+	// flagged at least one knob as restart-required, the intent and reality
+	// have diverged: surface restart_not_allowed without restarting.
+	if proposedConfig.KnobApplication == agent.KnobApplicationReload && anyShouldRestart {
+		return &agent.RestartNotAllowedError{
+			Message: "at least one parameter requires a restart but KnobApplication=reload",
+		}
+	}
 
-			_, err = restartResp.Result(ctx)
+	if proposedConfig.KnobApplication == agent.KnobApplicationRestart && anyShouldRestart {
+		// Restart the service
+		adapter.Logger().Warn("Restarting service")
+		restartResp, err := clientFactory.NewServersClient().BeginRestart(ctx, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, nil)
+		if err != nil {
+			return err
+		}
+
+		// wait for restart to complete
+		for !(restartResp.Done()) {
+			// if the network is flakey, Poll will just sit for ages, this timeout
+			// stops that from happening. Since it is a polling loop it will retry
+			// anyway. Obviously it could be bad if it retries indefinitely
+			// We are basically assuming that at some point we will get a response
+			timeoutCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+			defer cancel()
+			resp, err := restartResp.Poll(timeoutCtx)
 			if err != nil {
-				return err
+				fmt.Printf("Error: %v", err)
+			} else {
+				adapter.Logger().Infof("RestartPoller status: %s", resp.Status)
 			}
+		}
+
+		_, err = restartResp.Result(ctx)
+		if err != nil {
+			return err
 		}
 	}
 

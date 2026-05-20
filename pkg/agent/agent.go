@@ -112,9 +112,9 @@ func (p PGConfigRow) GetSettingValue() (string, error) {
 	}
 }
 
-// KnobApplication is the apply mode the backend selects for a proposed
-// configuration. Only the values declared as constants below are valid; any
-// other value fails JSON decoding so adapters never see an unknown mode.
+// KnobApplication is the apply mode for a proposed configuration. Only the
+// values declared as constants below are valid; any other value fails JSON
+// decoding so adapters never see an unknown mode.
 type KnobApplication string
 
 const (

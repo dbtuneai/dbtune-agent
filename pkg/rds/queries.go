@@ -246,6 +246,14 @@ func FetchAWSConfig(
 	}
 }
 
+// ApplyConfig applies the proposed configuration to the RDS instance.
+//
+// We cannot validate trivially against the RDS API which parameters require
+// a restart, so we rely on the KnobApplication signal provided to choose
+// between ApplyMethodImmediate and ApplyMethodPendingReboot. If the chosen
+// method mismatches the actual parameter (e.g. immediate apply on a static
+// parameter), AWS surfaces an error from ModifyDBParameterGroup which is
+// returned as-is; we do not attempt a recovery write.
 func ApplyConfig(
 	proposedConfig *agent.ProposedConfigResponse,
 	clients *AWSClients,

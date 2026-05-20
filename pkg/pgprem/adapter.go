@@ -140,25 +140,37 @@ func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (a
 	return pg.GetActiveConfig(adapter.pgDriver, ctx)
 }
 
-func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	adapter.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
-
-	if proposedConfig.KnobApplication == agent.KnobApplicationRestart {
-		// If service name is missing, skip
-		if adapter.pgConfig.ServiceName == "" {
-			return fmt.Errorf("service name not configured, skipping restarting and applying configuration")
-		}
-		// Bail before mutating postgresql.auto.conf if we won't be able to restart.
-		if !agent.IsRestartAllowed() {
-			return &agent.RestartNotAllowedError{
-				Message: "restart is not allowed in the agent",
-			}
-		}
-	}
 
 	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
 	if err != nil {
 		return err
+	}
+
+	// Validate against the running PostgreSQL: which of the proposed knobs
+	// require a restart? This must happen before any mutation so we never
+	// half-apply (write to postgresql.auto.conf without the matching restart).
+	paramNames := make([]string, 0, len(parsedKnobs))
+	for _, k := range parsedKnobs {
+		paramNames = append(paramNames, k.Name)
+	}
+	restartRequiredParams, err := pg.RestartRequiredParams(adapter.pgDriver, ctx, paramNames)
+	if err != nil {
+		return fmt.Errorf("failed to validate which parameters require restart: %w", err)
+	}
+	requiresRestart := len(restartRequiredParams) > 0
+
+	if requiresRestart && !agent.IsRestartAllowed() {
+		return &agent.RestartNotAllowedError{
+			Message: fmt.Sprintf("restart is not allowed in the agent, but %d parameter(s) require restart: %v", len(restartRequiredParams), restartRequiredParams),
+		}
+	}
+	if requiresRestart && proposedConfig.KnobApplication == agent.KnobApplicationReload {
+		return fmt.Errorf("refusing to apply: KnobApplication=reload but %d parameter(s) require restart: %v", len(restartRequiredParams), restartRequiredParams)
+	}
+	if requiresRestart && adapter.pgConfig.ServiceName == "" {
+		return fmt.Errorf("service name not configured, refusing to apply: %d parameter(s) require restart: %v", len(restartRequiredParams), restartRequiredParams)
 	}
 
 	for _, knob := range parsedKnobs {

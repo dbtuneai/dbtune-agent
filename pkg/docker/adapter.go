@@ -240,16 +240,30 @@ func (d *DockerContainerAdapter) GetActiveConfig(ctx context.Context) (agent.Con
 func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	d.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
-	// Bail before mutating postgresql.auto.conf if a restart is required but not allowed.
-	if proposedConfig.KnobApplication == agent.KnobApplicationRestart && !agent.IsRestartAllowed() {
-		return &agent.RestartNotAllowedError{
-			Message: "restart is not allowed in the agent",
-		}
-	}
-
 	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
 	if err != nil {
 		return err
+	}
+
+	// Validate against the running PostgreSQL before mutating
+	// postgresql.auto.conf, so we never half-apply.
+	paramNames := make([]string, 0, len(parsedKnobs))
+	for _, k := range parsedKnobs {
+		paramNames = append(paramNames, k.Name)
+	}
+	restartRequiredParams, err := pg.RestartRequiredParams(d.PGDriver, ctx, paramNames)
+	if err != nil {
+		return fmt.Errorf("failed to validate which parameters require restart: %w", err)
+	}
+	requiresRestart := len(restartRequiredParams) > 0
+
+	if requiresRestart && !agent.IsRestartAllowed() {
+		return &agent.RestartNotAllowedError{
+			Message: fmt.Sprintf("restart is not allowed in the agent, but %d parameter(s) require restart: %v", len(restartRequiredParams), restartRequiredParams),
+		}
+	}
+	if requiresRestart && proposedConfig.KnobApplication == agent.KnobApplicationReload {
+		return fmt.Errorf("refusing to apply: KnobApplication=reload but %d parameter(s) require restart: %v", len(restartRequiredParams), restartRequiredParams)
 	}
 
 	for _, knob := range parsedKnobs {

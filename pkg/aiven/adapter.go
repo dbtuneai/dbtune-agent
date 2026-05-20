@@ -243,6 +243,11 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposed
 			Message: "restart is not allowed in the agent",
 		}
 	}
+	// Refuse to partially apply: KnobApplication=reload but Aiven would
+	// auto-restart for at least one of the proposed knobs.
+	if restartRequired && proposedConfig.KnobApplication == agent.KnobApplicationReload {
+		return fmt.Errorf("refusing to apply: KnobApplication=reload but at least one parameter would force an Aiven service restart")
+	}
 
 	if len(pgSettings) > 0 {
 		userConfig["pg"] = pgSettings

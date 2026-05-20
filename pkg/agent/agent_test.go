@@ -280,9 +280,9 @@ func TestProposedConfigResponse_UnmarshalJSON_RejectsInvalidKnobApplication(t *t
 
 func TestProposedConfigResponse_UnmarshalJSON_RejectsMissingKnobApplication(t *testing.T) {
 	// An omitted field leaves KnobApplication at its zero value ("") and
-	// UnmarshalJSON is not invoked. We rely on the backend always sending the
-	// field, but document the current behavior so it's an explicit choice
-	// rather than an oversight: an omitted field decodes successfully to "".
+	// UnmarshalJSON is not invoked. We rely on the field always being sent,
+	// but document the current behavior so it's an explicit choice rather
+	// than an oversight: an omitted field decodes successfully to "".
 	payload := `{"config":[],"knobs_overrides":[]}`
 	var resp ProposedConfigResponse
 	err := json.Unmarshal([]byte(payload), &resp)
