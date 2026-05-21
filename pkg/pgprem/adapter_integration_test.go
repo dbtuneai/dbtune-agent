@@ -185,7 +185,9 @@ func TestIntegration_Pgprem_ApplyConfig_Reload_NonRestartParam(t *testing.T) {
 	require.NoError(t, adapter.ApplyConfig(context.Background(), proposed))
 
 	assert.Equal(t, "8192", autoConfSetting(t, pool, "work_mem"))
-	assert.Equal(t, "8192", livePGSetting(t, pool, "work_mem"))
+	require.Eventually(t, func() bool {
+		return livePGSetting(t, pool, "work_mem") == "8192"
+	}, 3*time.Second, 20*time.Millisecond)
 }
 
 // TestIntegration_Pgprem_ApplyConfig_Restart_NotAllowed locks in the
@@ -288,7 +290,11 @@ func TestIntegration_Pgprem_ApplyConfig_Reload_NoServiceName(t *testing.T) {
 	}
 
 	require.NoError(t, adapter.ApplyConfig(context.Background(), proposed))
-	assert.Equal(t, "16384", livePGSetting(t, pool, "work_mem"))
+	// pg_reload_conf() only signals the postmaster; the new value becomes
+	// visible via pg_settings asynchronously, so poll instead of asserting once.
+	require.Eventually(t, func() bool {
+		return livePGSetting(t, pool, "work_mem") == "16384"
+	}, 3*time.Second, 20*time.Millisecond)
 }
 
 // TestIntegration_Pgprem_ApplyConfig_ReloadOnlyParams_WithRestartIntent
@@ -313,7 +319,9 @@ func TestIntegration_Pgprem_ApplyConfig_ReloadOnlyParams_WithRestartIntent(t *te
 	}
 
 	require.NoError(t, adapter.ApplyConfig(context.Background(), proposed))
-	assert.Equal(t, "8192", livePGSetting(t, pool, "work_mem"))
+	require.Eventually(t, func() bool {
+		return livePGSetting(t, pool, "work_mem") == "8192"
+	}, 3*time.Second, 20*time.Millisecond)
 }
 
 // TestIntegration_Pgprem_ApplyConfig_Restart_AttemptsSystemctl exercises the
