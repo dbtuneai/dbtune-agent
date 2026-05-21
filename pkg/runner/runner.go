@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -177,34 +176,34 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 			if err != nil {
 				return err
 			}
+
+			var applyErr agent.ApplyConfigError
 			if proposedConfig != nil {
-				err := adapter.ApplyConfig(ctx, proposedConfig)
-				if err != nil {
-					errorType := "config_apply_error"
-					var restartErr *agent.RestartNotAllowedError
-					if errors.As(err, &restartErr) {
-						errorType = "restart_not_allowed"
-					}
+				applyErr = adapter.ApplyConfig(ctx, proposedConfig)
+				if applyErr != nil {
 					errorPayload := agent.ErrorPayload{
-						ErrorMessage: "Failed to apply configuration: " + err.Error(),
-						ErrorType:    errorType,
+						ErrorMessage: "Failed to apply configuration: " + applyErr.Error(),
+						ErrorType:    applyErr.ErrorType(),
 						Timestamp:    time.Now().UTC().Format(time.RFC3339),
 					}
 					if sendErr := adapter.SendError(ctx, errorPayload); sendErr != nil {
 						logger.Errorf("failed to send error report: %v", sendErr)
 					}
-					return err
-				}
-
-				// Re-fetch config after applying proposed config
-				// This ensures we send the newly applied config
-				config, err = adapter.GetActiveConfig(ctx)
-				if err != nil {
-					return err
+				} else {
+					// Re-fetch so we report the newly applied state.
+					config, err = adapter.GetActiveConfig(ctx)
+					if err != nil {
+						return err
+					}
 				}
 			}
 
-			return adapter.SendActiveConfig(ctx, config)
+			// Always report the active config to keep the platform's view of
+			// "what's running" in sync, even when the apply above failed.
+			if err := adapter.SendActiveConfig(ctx, config); err != nil {
+				return err
+			}
+			return applyErr
 		})
 	})
 

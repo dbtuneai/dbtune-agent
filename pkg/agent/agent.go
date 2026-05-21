@@ -180,7 +180,7 @@ type AgentLooper interface {
 	// ApplyConfig applies the configuration to the PostgresSQL server
 	// The configuration is applied with the appropriate method, either with a
 	// restart or a reload operation
-	ApplyConfig(ctx context.Context, knobs *ProposedConfigResponse) error
+	ApplyConfig(ctx context.Context, knobs *ProposedConfigResponse) ApplyConfigError
 
 	// Guardrails is responsible for triggering a signal to the DBtune server
 	// that something is heading towards a failure.
@@ -214,13 +214,41 @@ type AgentPayload struct {
 	AllowRestart   bool   `json:"allow_restart"`
 }
 
+// TypedError is implemented by errors that map to a specific ErrorPayload.ErrorType.
+type TypedError interface {
+	error
+	ErrorType() string
+}
+
+// ApplyConfigError is the closed set of errors AgentLooper.ApplyConfig is
+// allowed to return. The unexported marker method means only types declared in
+// this package can satisfy it, so adding a new ApplyConfig failure mode is a
+// deliberate change here (and an automatic compile error at every call site
+// that hasn't been updated). Current variants: *ConfigApplyError (generic),
+// *RestartNotAllowedError (restart required but not permitted).
+type ApplyConfigError interface {
+	TypedError
+	isApplyConfigError()
+}
+
 type RestartNotAllowedError struct {
 	Message string
 }
 
-func (e *RestartNotAllowedError) Error() string {
-	return e.Message
+func (e *RestartNotAllowedError) Error() string     { return e.Message }
+func (e *RestartNotAllowedError) ErrorType() string { return "restart_not_allowed" }
+func (*RestartNotAllowedError) isApplyConfigError() {}
+
+// ConfigApplyError is the default classification for failures inside ApplyConfig
+// that don't have a more specific variant (driver errors, IO, validation).
+type ConfigApplyError struct {
+	Err error
 }
+
+func (e *ConfigApplyError) Error() string     { return e.Err.Error() }
+func (e *ConfigApplyError) Unwrap() error     { return e.Err }
+func (e *ConfigApplyError) ErrorType() string { return "config_apply_error" }
+func (*ConfigApplyError) isApplyConfigError() {}
 
 func IsRestartAllowed() bool {
 	return viper.GetBool("postgresql.allow_restart")

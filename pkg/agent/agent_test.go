@@ -278,6 +278,32 @@ func TestProposedConfigResponse_UnmarshalJSON_RejectsInvalidKnobApplication(t *t
 	assert.Error(t, err, "decoding should fail before an adapter ever sees the response")
 }
 
+// Compile-time guarantees: every ApplyConfigError variant must carry its
+// own ErrorType so the runner can ship it upstream without a fallback table.
+// These assignments fail to compile if a future change drops the interface,
+// and the t.Run cases pin the wire-level error_type strings the platform
+// dispatches on (see back-ends/cloud/backend/agent/utils.py:AGENT_ERROR_TYPES).
+var (
+	_ ApplyConfigError = (*ConfigApplyError)(nil)
+	_ ApplyConfigError = (*RestartNotAllowedError)(nil)
+)
+
+func TestApplyConfigError_ErrorTypes(t *testing.T) {
+	t.Run("ConfigApplyError", func(t *testing.T) {
+		inner := errors.New("driver failure")
+		e := &ConfigApplyError{Err: inner}
+		assert.Equal(t, "config_apply_error", e.ErrorType())
+		assert.Equal(t, "driver failure", e.Error())
+		assert.ErrorIs(t, e, inner, "ConfigApplyError must unwrap to its cause")
+	})
+
+	t.Run("RestartNotAllowedError", func(t *testing.T) {
+		e := &RestartNotAllowedError{Message: "restart required but allow_restart=false"}
+		assert.Equal(t, "restart_not_allowed", e.ErrorType())
+		assert.Equal(t, "restart required but allow_restart=false", e.Error())
+	})
+}
+
 func TestProposedConfigResponse_UnmarshalJSON_RejectsMissingKnobApplication(t *testing.T) {
 	// An omitted field leaves KnobApplication at its zero value ("") and
 	// UnmarshalJSON is not invoked. We rely on the field always being sent,

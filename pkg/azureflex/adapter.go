@@ -86,7 +86,7 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 // applying we observe a per-parameter restart-required hint that contradicts
 // a KnobApplication=reload signal, we return restart_not_allowed once the
 // full configuration has been pushed; we do not roll back.
-func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
 	// Bail before pushing parameter changes to Azure if a restart is required but not allowed.
 	if proposedConfig.KnobApplication == agent.KnobApplicationRestart && !agent.IsRestartAllowed() {
 		return &agent.RestartNotAllowedError{
@@ -96,12 +96,12 @@ func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig
 
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
-		return err
+		return &agent.ConfigApplyError{Err: err}
 	}
 
 	clientFactory, err := armpostgresqlflexibleservers.NewClientFactory(adapter.AzureFlexConfig.SubscriptionID, cred, nil)
 	if err != nil {
-		return err
+		return &agent.ConfigApplyError{Err: err}
 	}
 
 	paramsClient := clientFactory.NewConfigurationsClient()
@@ -111,13 +111,13 @@ func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig
 		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
 		adapter.Logger().Infof("Applying Knob: %s, %v\n", knob, knobConfig.Setting)
 		if err != nil {
-			return err
+			return &agent.ConfigApplyError{Err: err}
 		}
 		// Apply parameters one by one; if one fails we bail out early so the
 		// wrong config can be detected and reverted to baseline.
 		shouldRestart, err := ApplyParameter(ctx, adapter.Logger(), paramsClient, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, knobConfig)
 		if err != nil {
-			return err
+			return &agent.ConfigApplyError{Err: err}
 		}
 		if shouldRestart {
 			anyShouldRestart = true
@@ -138,7 +138,7 @@ func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig
 		adapter.Logger().Warn("Restarting service")
 		restartResp, err := clientFactory.NewServersClient().BeginRestart(ctx, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, nil)
 		if err != nil {
-			return err
+			return &agent.ConfigApplyError{Err: err}
 		}
 
 		// wait for restart to complete
@@ -159,7 +159,7 @@ func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig
 
 		_, err = restartResp.Result(ctx)
 		if err != nil {
-			return err
+			return &agent.ConfigApplyError{Err: err}
 		}
 	}
 
