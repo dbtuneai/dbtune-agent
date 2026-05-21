@@ -251,7 +251,8 @@ func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig
 	for _, k := range parsedKnobs {
 		paramNames = append(paramNames, k.Name)
 	}
-	if _, err := pg.ValidateRestartPolicy(d.PGDriver, ctx, paramNames, proposedConfig.KnobApplication); err != nil {
+	requiresRestart, err := pg.ValidateRestartPolicy(d.PGDriver, ctx, paramNames, proposedConfig.KnobApplication)
+	if err != nil {
 		return err
 	}
 
@@ -262,7 +263,7 @@ func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig
 		}
 	}
 
-	if proposedConfig.KnobApplication == agent.KnobApplicationRestart {
+	if requiresRestart {
 		// Restart the service
 		d.Logger().Warn("Restarting service")
 

@@ -169,8 +169,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 		}
 	}
 
-	switch proposedConfig.KnobApplication {
-	case agent.KnobApplicationRestart:
+	if requiresRestart {
 		// Restart the service
 		adapter.Logger().Warn("Restarting service")
 		// Execute systemctl restart command if it fails try executing it with sudo
@@ -191,8 +190,10 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 		if err != nil {
 			return fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)
 		}
-	case agent.KnobApplicationReload:
-		// Reload database when everything is applied
+	} else {
+		// Reload database when everything is applied. KnobApplication=restart
+		// with no postmaster-context params falls through here too: the intent
+		// is treated as a hint, and we avoid a needless restart.
 		err := pg.ReloadConfig(adapter.pgDriver)
 		if err != nil {
 			return err
