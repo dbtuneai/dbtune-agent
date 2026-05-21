@@ -190,7 +190,6 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 						logger.Errorf("failed to send error report: %v", sendErr)
 					}
 				} else {
-					// Re-fetch so we report the newly applied state.
 					config, err = adapter.GetActiveConfig(ctx)
 					if err != nil {
 						return err
@@ -198,8 +197,8 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 				}
 			}
 
-			// Always report the active config to keep the platform's view of
-			// "what's running" in sync, even when the apply above failed.
+			// Send active config even on apply failure so the platform's view
+			// of what's running stays in sync.
 			if err := adapter.SendActiveConfig(ctx, config); err != nil {
 				return err
 			}

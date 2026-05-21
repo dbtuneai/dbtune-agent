@@ -326,13 +326,10 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 	mockAgent.AssertExpectations(t)
 }
 
-// TestRunnerApplyConfigFailure_SendsTypedErrorAndActiveConfig covers the
-// contract that, when ApplyConfig fails, the runner:
-//   - reports the failure with the error_type carried by the ApplyConfigError
-//     variant itself (no string lookup in the runner);
-//   - still ships the active config so the platform's view of "what's
-//     running" stays in sync with reality.
-func TestRunnerApplyConfigFailure_SendsTypedErrorAndActiveConfig(t *testing.T) {
+// On ApplyConfig failure: SendError carries the variant's error_type, and
+// SendActiveConfig still fires so the platform's view of running state stays
+// in sync.
+func TestRunnerApplyConfigFailure_SendsErrorAndActiveConfig(t *testing.T) {
 	cases := []struct {
 		name              string
 		applyErr          agent.ApplyConfigError
@@ -370,7 +367,6 @@ func TestRunnerApplyConfigFailure_SendsTypedErrorAndActiveConfig(t *testing.T) {
 				return p.ErrorType == tc.expectedErrorType &&
 					strings.HasPrefix(p.ErrorMessage, "Failed to apply configuration: ")
 			})).Return(nil)
-			// The key assertion: active config is still sent even though apply failed.
 			mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)

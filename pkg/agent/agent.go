@@ -214,20 +214,12 @@ type AgentPayload struct {
 	AllowRestart   bool   `json:"allow_restart"`
 }
 
-// TypedError is implemented by errors that map to a specific ErrorPayload.ErrorType.
-type TypedError interface {
+// ApplyConfigError is the closed set of errors AgentLooper.ApplyConfig may
+// return. The unexported marker keeps the set closed to this package.
+// ErrorType() is the wire string the platform dispatches on.
+type ApplyConfigError interface {
 	error
 	ErrorType() string
-}
-
-// ApplyConfigError is the closed set of errors AgentLooper.ApplyConfig is
-// allowed to return. The unexported marker method means only types declared in
-// this package can satisfy it, so adding a new ApplyConfig failure mode is a
-// deliberate change here (and an automatic compile error at every call site
-// that hasn't been updated). Current variants: *ConfigApplyError (generic),
-// *RestartNotAllowedError (restart required but not permitted).
-type ApplyConfigError interface {
-	TypedError
 	isApplyConfigError()
 }
 
@@ -239,8 +231,8 @@ func (e *RestartNotAllowedError) Error() string     { return e.Message }
 func (e *RestartNotAllowedError) ErrorType() string { return "restart_not_allowed" }
 func (*RestartNotAllowedError) isApplyConfigError() {}
 
-// ConfigApplyError is the default classification for failures inside ApplyConfig
-// that don't have a more specific variant (driver errors, IO, validation).
+// ConfigApplyError is the fallback variant for ApplyConfig failures with no
+// more specific classification.
 type ConfigApplyError struct {
 	Err error
 }

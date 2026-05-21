@@ -192,8 +192,7 @@ func TestIntegration_Docker_ApplyConfig_Reload_NonRestartParam(t *testing.T) {
 
 	assert.Equal(t, "8192", autoConfSetting(t, pool, "work_mem"),
 		"ALTER SYSTEM should have written work_mem to postgresql.auto.conf")
-	// pg_reload_conf() only signals the postmaster; new values become visible
-	// via pg_settings asynchronously, so poll instead of asserting once.
+	// pg_reload_conf is async: poll for the new live value.
 	require.Eventually(t, func() bool {
 		return livePGSetting(t, pool, "work_mem") == "8192"
 	}, 3*time.Second, 20*time.Millisecond,

@@ -278,11 +278,7 @@ func TestProposedConfigResponse_UnmarshalJSON_RejectsInvalidKnobApplication(t *t
 	assert.Error(t, err, "decoding should fail before an adapter ever sees the response")
 }
 
-// Compile-time guarantees: every ApplyConfigError variant must carry its
-// own ErrorType so the runner can ship it upstream without a fallback table.
-// These assignments fail to compile if a future change drops the interface,
-// and the t.Run cases pin the wire-level error_type strings the platform
-// dispatches on (see back-ends/cloud/backend/agent/utils.py:AGENT_ERROR_TYPES).
+// Compile-time check: both variants satisfy ApplyConfigError.
 var (
 	_ ApplyConfigError = (*ConfigApplyError)(nil)
 	_ ApplyConfigError = (*RestartNotAllowedError)(nil)
@@ -294,7 +290,7 @@ func TestApplyConfigError_ErrorTypes(t *testing.T) {
 		e := &ConfigApplyError{Err: inner}
 		assert.Equal(t, "config_apply_error", e.ErrorType())
 		assert.Equal(t, "driver failure", e.Error())
-		assert.ErrorIs(t, e, inner, "ConfigApplyError must unwrap to its cause")
+		assert.ErrorIs(t, e, inner)
 	})
 
 	t.Run("RestartNotAllowedError", func(t *testing.T) {

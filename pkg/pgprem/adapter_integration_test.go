@@ -290,8 +290,7 @@ func TestIntegration_Pgprem_ApplyConfig_Reload_NoServiceName(t *testing.T) {
 	}
 
 	require.NoError(t, adapter.ApplyConfig(context.Background(), proposed))
-	// pg_reload_conf() only signals the postmaster; the new value becomes
-	// visible via pg_settings asynchronously, so poll instead of asserting once.
+	// pg_reload_conf is async: poll for the new live value.
 	require.Eventually(t, func() bool {
 		return livePGSetting(t, pool, "work_mem") == "16384"
 	}, 3*time.Second, 20*time.Millisecond)
