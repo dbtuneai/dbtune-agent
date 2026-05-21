@@ -246,6 +246,14 @@ func FetchAWSConfig(
 	}
 }
 
+// ApplyConfig applies the proposed configuration to the RDS instance.
+//
+// We cannot validate trivially against the RDS API which parameters require
+// a restart, so we rely on the KnobApplication signal provided to choose
+// between ApplyMethodImmediate and ApplyMethodPendingReboot. If the chosen
+// method mismatches the actual parameter (e.g. immediate apply on a static
+// parameter), AWS surfaces an error from ModifyDBParameterGroup which is
+// returned as-is; we do not attempt a recovery write.
 func ApplyConfig(
 	proposedConfig *agent.ProposedConfigResponse,
 	clients *AWSClients,
@@ -259,17 +267,10 @@ func ApplyConfig(
 	// Prepare parameters for modification
 	var applyMethod rdsTypes.ApplyMethod
 	switch proposedConfig.KnobApplication {
-	case "restart":
+	case agent.KnobApplicationRestart:
 		applyMethod = rdsTypes.ApplyMethodPendingReboot
-	case "reload":
+	case agent.KnobApplicationReload:
 		applyMethod = rdsTypes.ApplyMethodImmediate
-	case "":
-		// TODO(eddie): We should make this more explicit somehow.
-		// This happens when nothing is sent from the backend about this.
-		// We should send an explicit string instead of leaving it blank.
-		applyMethod = rdsTypes.ApplyMethodImmediate
-	default:
-		return fmt.Errorf("unknown knob application: %s", proposedConfig.KnobApplication)
 	}
 
 	modifiedParameters, err := modifiedParametersToApply(proposedConfig, applyMethod)
@@ -281,6 +282,14 @@ func ApplyConfig(
 	if len(modifiedParameters) == 0 {
 		logger.Info("No parameter changes were required")
 		return nil
+	}
+
+	// If the parameter group would be set to pending-reboot but the agent is
+	// not allowed to restart, bail before modifying the parameter group.
+	if applyMethod == rdsTypes.ApplyMethodPendingReboot && !agent.IsRestartAllowed() {
+		return &agent.RestartNotAllowedError{
+			Message: "restart is not allowed in the agent",
+		}
 	}
 
 	// Modify parameter group
@@ -302,13 +311,9 @@ func ApplyConfig(
 		return fmt.Errorf("error waiting for parameter group changes to be processed: %w", err)
 	}
 
-	// If restart is required and specified
+	// If restart is required and specified. IsRestartAllowed was already
+	// verified above, before modifying the parameter group.
 	if applyMethod == rdsTypes.ApplyMethodPendingReboot {
-		if !agent.IsRestartAllowed() {
-			return &agent.RestartNotAllowedError{
-				Message: "restart is not allowed in the agent",
-			}
-		}
 		args := &rds.RebootDBInstanceInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
 		_, err = clients.RDSClient.RebootDBInstance(ctx, args)
 		if err != nil {

@@ -236,6 +236,19 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposed
 		}
 	}
 
+	// If any of the parameters being applied would require a restart but the
+	// agent is not allowed to restart, bail before pushing changes to Aiven.
+	if restartRequired && !agent.IsRestartAllowed() {
+		return &agent.RestartNotAllowedError{
+			Message: "restart is not allowed in the agent",
+		}
+	}
+	// Refuse to partially apply: KnobApplication=reload but Aiven would
+	// auto-restart for at least one of the proposed knobs.
+	if restartRequired && proposedConfig.KnobApplication == agent.KnobApplicationReload {
+		return fmt.Errorf("refusing to apply: KnobApplication=reload but at least one parameter would force an Aiven service restart")
+	}
+
 	if len(pgSettings) > 0 {
 		userConfig["pg"] = pgSettings
 	}
@@ -257,11 +270,6 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposed
 	}
 
 	if restartRequired {
-		if !agent.IsRestartAllowed() {
-			return &agent.RestartNotAllowedError{
-				Message: "restart is not allowed in the agent",
-			}
-		}
 		adapter.Logger().Info("Restart was required, checking if Aiven PostgreSQL service has restarted")
 		err := adapter.waitForServiceState(service.ServiceStateTypeRunning)
 		if err != nil {
@@ -457,7 +465,7 @@ func getInitialServiceLevelParameters(client *aivenclient.Client, projectName st
 func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
 	// Main differences from the generic pg.GetActiveConfig:
 	// * We inject `shared_buffers_percentage` from the Aiven API.
-	//   Until we modify it, Aiven returns nothing — so we fall back to a known default of 20%.
+	//   Until we modify it, Aiven returns nothing, so we fall back to a known default of 20%.
 	// * `work_mem` is set through the Aiven API in MB, but pg_settings reports it in kB.
 	//   We convert kB→MB and override the unit/context so the value round-trips correctly.
 	logger := adapter.Logger()

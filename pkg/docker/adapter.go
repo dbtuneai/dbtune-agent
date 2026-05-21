@@ -245,6 +245,17 @@ func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig
 		return err
 	}
 
+	// Validate against the running PostgreSQL before mutating
+	// postgresql.auto.conf, so we never half-apply.
+	paramNames := make([]string, 0, len(parsedKnobs))
+	for _, k := range parsedKnobs {
+		paramNames = append(paramNames, k.Name)
+	}
+	requiresRestart, err := pg.ValidateRestartPolicy(d.PGDriver, ctx, paramNames, proposedConfig.KnobApplication)
+	if err != nil {
+		return err
+	}
+
 	for _, knob := range parsedKnobs {
 		err := pg.AlterSystem(d.PGDriver, knob.Name, knob.SettingValue)
 		if err != nil {
@@ -252,12 +263,7 @@ func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig
 		}
 	}
 
-	if proposedConfig.KnobApplication == "restart" {
-		if !agent.IsRestartAllowed() {
-			return &agent.RestartNotAllowedError{
-				Message: "restart is not allowed in the agent",
-			}
-		}
+	if requiresRestart {
 		// Restart the service
 		d.Logger().Warn("Restarting service")
 

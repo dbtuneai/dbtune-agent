@@ -96,8 +96,20 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 	return c, nil
 }
 
+// ApplyConfig applies the proposed configuration to the CloudSQL instance.
+//
+// We cannot validate trivially against the CloudSQL API which parameters
+// require a restart, so we rely on the KnobApplication signal provided.
+// CloudSQL's flag API does not surface a per-flag restart-required hint
+// post-application, so no mismatch detection is possible here.
 func (adapter *CloudSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	adapter.Logger().Infof("Applying config")
+
+	if proposedConfig.KnobApplication == agent.KnobApplicationRestart && !agent.IsRestartAllowed() {
+		return &agent.RestartNotAllowedError{
+			Message: "restart is not allowed in the agent",
+		}
+	}
 
 	flags := []*sqladmin.DatabaseFlags{}
 

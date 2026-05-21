@@ -140,19 +140,26 @@ func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (a
 	return pg.GetActiveConfig(adapter.pgDriver, ctx)
 }
 
-func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
 	adapter.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
-
-	if proposedConfig.KnobApplication == "restart" {
-		// If service name is missing, skip
-		if adapter.pgConfig.ServiceName == "" {
-			return fmt.Errorf("service name not configured, skipping restarting and applying configuration")
-		}
-	}
 
 	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
 	if err != nil {
 		return err
+	}
+
+	// Validate against the running PostgreSQL before mutating
+	// postgresql.auto.conf, so we never half-apply.
+	paramNames := make([]string, 0, len(parsedKnobs))
+	for _, k := range parsedKnobs {
+		paramNames = append(paramNames, k.Name)
+	}
+	requiresRestart, err := pg.ValidateRestartPolicy(adapter.pgDriver, ctx, paramNames, proposedConfig.KnobApplication)
+	if err != nil {
+		return err
+	}
+	if requiresRestart && adapter.pgConfig.ServiceName == "" {
+		return fmt.Errorf("service name not configured, refusing to apply: a restart is required to take effect")
 	}
 
 	for _, knob := range parsedKnobs {
@@ -162,13 +169,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(_ context.Context, proposed
 		}
 	}
 
-	switch proposedConfig.KnobApplication {
-	case "restart":
-		if !agent.IsRestartAllowed() {
-			return &agent.RestartNotAllowedError{
-				Message: "restart is not allowed in the agent",
-			}
-		}
+	if requiresRestart {
 		// Restart the service
 		adapter.Logger().Warn("Restarting service")
 		// Execute systemctl restart command if it fails try executing it with sudo
@@ -189,16 +190,10 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(_ context.Context, proposed
 		if err != nil {
 			return fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)
 		}
-	case "reload":
-		// Reload database when everything is applied
-		err := pg.ReloadConfig(adapter.pgDriver)
-		if err != nil {
-			return err
-		}
-	case "":
-		// TODO(eddie): We should make this more explicit somehow.
-		// This happens when nothing is sent from the backend about this.
-		// We should send an explicit string instead of leaving it blank.
+	} else {
+		// Reload database when everything is applied. KnobApplication=restart
+		// with no postmaster-context params falls through here too: the intent
+		// is treated as a hint, and we avoid a needless restart.
 		err := pg.ReloadConfig(adapter.pgDriver)
 		if err != nil {
 			return err

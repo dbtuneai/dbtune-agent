@@ -112,10 +112,34 @@ func (p PGConfigRow) GetSettingValue() (string, error) {
 	}
 }
 
+// KnobApplication is the apply mode for a proposed configuration. Only the
+// values declared as constants below are valid; any other value fails JSON
+// decoding so adapters never see an unknown mode.
+type KnobApplication string
+
+const (
+	KnobApplicationRestart KnobApplication = "restart"
+	KnobApplicationReload  KnobApplication = "reload"
+)
+
+func (k *KnobApplication) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	switch KnobApplication(s) {
+	case KnobApplicationRestart, KnobApplicationReload:
+		*k = KnobApplication(s)
+		return nil
+	default:
+		return fmt.Errorf("invalid knob_application %q (expected %q or %q)", s, KnobApplicationRestart, KnobApplicationReload)
+	}
+}
+
 type ProposedConfigResponse struct {
-	Config          []PGConfigRow `json:"config"`
-	KnobsOverrides  []string      `json:"knobs_overrides"`
-	KnobApplication string        `json:"knob_application"`
+	Config          []PGConfigRow   `json:"config"`
+	KnobsOverrides  []string        `json:"knobs_overrides"`
+	KnobApplication KnobApplication `json:"knob_application"`
 }
 
 type AgentLooper interface {
