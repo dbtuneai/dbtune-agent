@@ -237,12 +237,12 @@ func (d *DockerContainerAdapter) GetActiveConfig(ctx context.Context) (agent.Con
 	return pg.GetActiveConfig(d.PGDriver, ctx)
 }
 
-func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
+func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
 	d.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
 	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
 	if err != nil {
-		return err
+		return &agent.ConfigApplyError{Err: err}
 	}
 
 	// Validate against the running PostgreSQL before mutating
@@ -253,13 +253,13 @@ func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig
 	}
 	requiresRestart, err := pg.ValidateRestartPolicy(d.PGDriver, ctx, paramNames, proposedConfig.KnobApplication)
 	if err != nil {
-		return err
+		return &agent.ConfigApplyError{Err: err}
 	}
 
 	for _, knob := range parsedKnobs {
 		err := pg.AlterSystem(d.PGDriver, knob.Name, knob.SettingValue)
 		if err != nil {
-			return fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)}
 		}
 	}
 
@@ -270,18 +270,18 @@ func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig
 		// Execute docker restart command
 		err := d.dockerClient.ContainerRestart(ctx, d.Config.ContainerName, container.StopOptions{})
 		if err != nil {
-			return fmt.Errorf("failed to restart PostgreSQL service: %w", err)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to restart PostgreSQL service: %w", err)}
 		}
 
 		err = pg.WaitPostgresReady(d.PGDriver)
 		if err != nil {
-			return fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)}
 		}
 	} else {
 		// Reload database when everything is applied
 		err := pg.ReloadConfig(d.PGDriver)
 		if err != nil {
-			return err
+			return &agent.ConfigApplyError{Err: err}
 		}
 	}
 

@@ -201,7 +201,7 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]met
 }
 
 // ApplyConfig applies configuration changes to the Aiven PostgreSQL service
-func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
 	adapter.Logger().Infof("Applying config")
 
 	// List of knobs to be applied
@@ -213,14 +213,14 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposed
 	for _, knob := range proposedConfig.KnobsOverrides {
 		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
 		if err != nil {
-			return fmt.Errorf("failed to find recommended knob: %w", err)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to find recommended knob: %w", err)}
 		}
 
 		adapter.Logger().Debugf("Knob config: %+v", knobConfig)
 
 		knobModifiability, ok := aivenModifiableParams[knobConfig.Name]
 		if !ok {
-			return fmt.Errorf("parameter %s has unknown modifiability status on Aiven. Skipping on applying the configuration", knobConfig.Name)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("parameter %s has unknown modifiability status on Aiven. Skipping on applying the configuration", knobConfig.Name)}
 		}
 		switch knobModifiability.ModifyLevel {
 		case ModifyUserPGConfig:
@@ -232,7 +232,7 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposed
 				restartRequired = true
 			}
 		case NoModify:
-			return fmt.Errorf("parameter %s can not be modified on Aiven. Skipping on applying the configuration", knobConfig.Name)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("parameter %s can not be modified on Aiven. Skipping on applying the configuration", knobConfig.Name)}
 		}
 	}
 
@@ -246,7 +246,7 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposed
 	// Refuse to partially apply: KnobApplication=reload but Aiven would
 	// auto-restart for at least one of the proposed knobs.
 	if restartRequired && proposedConfig.KnobApplication == agent.KnobApplicationReload {
-		return fmt.Errorf("refusing to apply: KnobApplication=reload but at least one parameter would force an Aiven service restart")
+		return &agent.ConfigApplyError{Err: fmt.Errorf("refusing to apply: KnobApplication=reload but at least one parameter would force an Aiven service restart")}
 	}
 
 	if len(pgSettings) > 0 {
@@ -263,7 +263,7 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposed
 			&service.ServiceUpdateIn{UserConfig: &userConfig, Powered: boolPtr(true)},
 		)
 		if err != nil {
-			return fmt.Errorf("failed to update PostgreSQL parameters: %w", err)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to update PostgreSQL parameters: %w", err)}
 		}
 	} else {
 		adapter.Logger().Warnf("ApplyConfig was called with no changes to apply")
@@ -273,7 +273,7 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposed
 		adapter.Logger().Info("Restart was required, checking if Aiven PostgreSQL service has restarted")
 		err := adapter.waitForServiceState(service.ServiceStateTypeRunning)
 		if err != nil {
-			return err
+			return &agent.ConfigApplyError{Err: err}
 		}
 	}
 

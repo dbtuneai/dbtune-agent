@@ -137,7 +137,7 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 	return adapter, nil
 }
 
-func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
 	// https://cloudnative-pg.io/documentation/1.27/postgresql_conf/#changing-configuration
 	logger := adapter.Logger()
 
@@ -151,7 +151,7 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 		if errors.As(err, &failoverErr) {
 			logger.Warnf("[FAILOVER_RECOVERY] Failover check BLOCKED config application: %s", failoverErr.Message)
 			// Return error to block this config application
-			return failoverErr
+			return &agent.ConfigApplyError{Err: failoverErr}
 		}
 		// Other error checking failover status - log but continue
 		logger.Warnf("Failed to check for failover: %v", err)
@@ -162,14 +162,14 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 	// Get cluster name from pod's CNPG cluster label
 	clusterName, err := adapter.getClusterName(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get cluster name: %w", err)
+		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to get cluster name: %w", err)}
 	}
 	logger.Infof("Applying configuration to CNPG cluster: %s (knob_application: %s)", clusterName, proposedConfig.KnobApplication)
 
 	// Parse and validate all knobs upfront
 	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
 	if err != nil {
-		return fmt.Errorf("failed to parse knob configurations: %w", err)
+		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to parse knob configurations: %w", err)}
 	}
 
 	if len(parsedKnobs) == 0 {
@@ -182,7 +182,7 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 	logger.Info("Fetching current configuration from database for comparison")
 	currentConfig, err := adapter.GetCurrentConfig(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get current config for comparison: %w", err)
+		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to get current config for comparison: %w", err)}
 	}
 	logger.Infof("Successfully retrieved %d current parameter values", len(currentConfig))
 
@@ -240,7 +240,7 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 	}
 	requiresRestart, err := pg.ValidateRestartPolicy(adapter.PGDriver, ctx, paramNames, proposedConfig.KnobApplication)
 	if err != nil {
-		return err
+		return &agent.ConfigApplyError{Err: err}
 	}
 	if requiresRestart {
 		logger.Info("Configuration changes include restart-required parameters")
@@ -265,14 +265,14 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 		Logger:         logger,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to apply configuration patch: %w", err)
+		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to apply configuration patch: %w", err)}
 	}
 
 	if requiresRestart {
 		// Trigger rolling restart for restart-required parameters
 		err = kubernetes.TriggerCNPGRollingRestart(ctx, adapter.K8sClient, clusterName, logger)
 		if err != nil {
-			return fmt.Errorf("failed to trigger rolling restart: %w", err)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to trigger rolling restart: %w", err)}
 		}
 
 		// Wait for cluster to become healthy
@@ -285,13 +285,13 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 			logger,
 		)
 		if err != nil {
-			return fmt.Errorf("cluster did not become healthy after rolling restart: %w", err)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("cluster did not become healthy after rolling restart: %w", err)}
 		}
 
 		// Re-discover the current primary pod (may have changed during restart)
 		newPrimaryPod, err := adapter.K8sClient.FindCNPGPrimaryPod(ctx, clusterName)
 		if err != nil {
-			return fmt.Errorf("failed to find primary pod after restart: %w", err)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to find primary pod after restart: %w", err)}
 		}
 		if newPrimaryPod != adapter.Config.PodName {
 			logger.Infof("Primary pod changed from %s to %s after rolling restart", adapter.Config.PodName, newPrimaryPod)
@@ -302,7 +302,7 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 		logger.Info("Waiting for PostgreSQL to accept connections...")
 		err = pg.WaitPostgresReady(adapter.PGDriver)
 		if err != nil {
-			return fmt.Errorf("PostgreSQL did not become ready after restart: %w", err)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("PostgreSQL did not become ready after restart: %w", err)}
 		}
 		logger.Info("PostgreSQL is accepting connections - configuration applied")
 	} else {
@@ -313,17 +313,17 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 		logger.Info("Waiting for PostgreSQL to accept connections after reload...")
 		err = pg.WaitPostgresReady(adapter.PGDriver)
 		if err != nil {
-			return fmt.Errorf("PostgreSQL did not become ready after config reload: %w", err)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("PostgreSQL did not become ready after config reload: %w", err)}
 		}
 
 		// Verify pod is still ready
 		podClient := adapter.K8sClient.PodClient(adapter.Config.PodName)
 		ready, err := podClient.IsPodReady(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to verify pod status after config reload: %w", err)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to verify pod status after config reload: %w", err)}
 		}
 		if !ready {
-			return fmt.Errorf("pod became not ready after config reload")
+			return &agent.ConfigApplyError{Err: fmt.Errorf("pod became not ready after config reload")}
 		}
 		logger.Info("Configuration reload completed successfully - PostgreSQL is healthy")
 	}

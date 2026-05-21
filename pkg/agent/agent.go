@@ -180,7 +180,7 @@ type AgentLooper interface {
 	// ApplyConfig applies the configuration to the PostgresSQL server
 	// The configuration is applied with the appropriate method, either with a
 	// restart or a reload operation
-	ApplyConfig(ctx context.Context, knobs *ProposedConfigResponse) error
+	ApplyConfig(ctx context.Context, knobs *ProposedConfigResponse) ApplyConfigError
 
 	// Guardrails is responsible for triggering a signal to the DBtune server
 	// that something is heading towards a failure.
@@ -214,13 +214,33 @@ type AgentPayload struct {
 	AllowRestart   bool   `json:"allow_restart"`
 }
 
+// ApplyConfigError is the closed set of errors AgentLooper.ApplyConfig may
+// return. The unexported marker keeps the set closed to this package.
+// ErrorType() is the wire string the platform dispatches on.
+type ApplyConfigError interface {
+	error
+	ErrorType() string
+	isApplyConfigError()
+}
+
 type RestartNotAllowedError struct {
 	Message string
 }
 
-func (e *RestartNotAllowedError) Error() string {
-	return e.Message
+func (e *RestartNotAllowedError) Error() string     { return e.Message }
+func (e *RestartNotAllowedError) ErrorType() string { return "restart_not_allowed" }
+func (*RestartNotAllowedError) isApplyConfigError() {}
+
+// ConfigApplyError is the fallback variant for ApplyConfig failures with no
+// more specific classification.
+type ConfigApplyError struct {
+	Err error
 }
+
+func (e *ConfigApplyError) Error() string     { return e.Err.Error() }
+func (e *ConfigApplyError) Unwrap() error     { return e.Err }
+func (e *ConfigApplyError) ErrorType() string { return "config_apply_error" }
+func (*ConfigApplyError) isApplyConfigError() {}
 
 func IsRestartAllowed() bool {
 	return viper.GetBool("postgresql.allow_restart")

@@ -167,7 +167,7 @@ func (adapter *RDSAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArr
 	return pg.GetActiveConfig(adapter.PGDriver, ctx)
 }
 
-func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
 	// If the last applied config is less than 1 minute ago, return
 	if adapter.State.LastAppliedConfig.Add(1 * time.Minute).After(time.Now()) {
 		adapter.Logger().Info("Last applied config is less than 1 minute ago, skipping")
@@ -183,7 +183,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		ctx,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to apply config: %w", err)
+		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to apply config: %w", err)}
 	}
 
 	// TODO(eddie): validate if this below comment is the case or
@@ -198,7 +198,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 	adapter.Logger().Info("Waiting for PostgreSQL to come back online...")
 	err = pg.WaitPostgresReady(adapter.PGDriver)
 	if err != nil {
-		return fmt.Errorf("error waiting for PostgreSQL to come back online: %w", err)
+		return &agent.ConfigApplyError{Err: fmt.Errorf("error waiting for PostgreSQL to come back online: %w", err)}
 	}
 
 	adapter.State.LastAppliedConfig = time.Now()

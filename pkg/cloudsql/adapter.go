@@ -102,7 +102,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 // require a restart, so we rely on the KnobApplication signal provided.
 // CloudSQL's flag API does not surface a per-flag restart-required hint
 // post-application, so no mismatch detection is possible here.
-func (adapter *CloudSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *CloudSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
 	adapter.Logger().Infof("Applying config")
 
 	if proposedConfig.KnobApplication == agent.KnobApplicationRestart && !agent.IsRestartAllowed() {
@@ -116,11 +116,11 @@ func (adapter *CloudSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *a
 	for _, knob := range proposedConfig.KnobsOverrides {
 		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
 		if err != nil {
-			return fmt.Errorf("failed to find recommended knob: %w", err)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to find recommended knob: %w", err)}
 		}
 		fmtValue, err := knobConfig.GetSettingValue()
 		if err != nil {
-			return fmt.Errorf("failed to get setting value: %w", err)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to get setting value: %w", err)}
 		}
 
 		param := &sqladmin.DatabaseFlags{
@@ -133,12 +133,12 @@ func (adapter *CloudSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *a
 
 	err := adapter.CloudSQLAdminClient.ApplyFlags(adapter.CloudSQLConfig.ProjectID, adapter.CloudSQLConfig.DatabaseName, flags)
 	if err != nil {
-		return err
+		return &agent.ConfigApplyError{Err: err}
 	}
 
 	err = pg.WaitPostgresReady(adapter.PGDriver)
 	if err != nil {
-		return fmt.Errorf("Error waiting for PostgreSQL to come back online: %w", err)
+		return &agent.ConfigApplyError{Err: fmt.Errorf("Error waiting for PostgreSQL to come back online: %w", err)}
 	}
 	return nil
 }

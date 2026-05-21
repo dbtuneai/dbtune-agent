@@ -75,9 +75,13 @@ func (m *MockAgentLooper) GetProposedConfig(ctx context.Context) (*agent.Propose
 	return args.Get(0).(*agent.ProposedConfigResponse), args.Error(1)
 }
 
-func (m *MockAgentLooper) ApplyConfig(ctx context.Context, config *agent.ProposedConfigResponse) error {
+func (m *MockAgentLooper) ApplyConfig(ctx context.Context, config *agent.ProposedConfigResponse) agent.ApplyConfigError {
 	args := m.Called(ctx, config)
-	return args.Error(0)
+	v := args.Get(0)
+	if v == nil {
+		return nil
+	}
+	return v.(agent.ApplyConfigError)
 }
 
 func (m *MockAgentLooper) Guardrails(ctx context.Context) *guardrails.Signal {
@@ -322,6 +326,63 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 	mockAgent.AssertExpectations(t)
 }
 
+// On ApplyConfig failure: SendError carries the variant's error_type, and
+// SendActiveConfig still fires so the platform's view of running state stays
+// in sync.
+func TestRunnerApplyConfigFailure_SendsErrorAndActiveConfig(t *testing.T) {
+	cases := []struct {
+		name              string
+		applyErr          agent.ApplyConfigError
+		expectedErrorType string
+	}{
+		{
+			name:              "config_apply_error",
+			applyErr:          &agent.ConfigApplyError{Err: errors.New("driver blew up")},
+			expectedErrorType: "config_apply_error",
+		},
+		{
+			name:              "restart_not_allowed",
+			applyErr:          &agent.RestartNotAllowedError{Message: "restart required but allow_restart=false"},
+			expectedErrorType: "restart_not_allowed",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockAgent := new(MockAgentLooper)
+			logger := logrus.New()
+			mockRecommendation := &agent.ProposedConfigResponse{}
+
+			mockAgent.On("Logger").Return(logger)
+			mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
+			mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
+			mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
+			mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
+			mockAgent.On("Guardrails", mock.Anything).Return(nil)
+			mockAgent.expectNoCatalogCollectors()
+			mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+			mockAgent.On("GetProposedConfig", mock.Anything).Return(mockRecommendation, nil)
+			mockAgent.On("ApplyConfig", mock.Anything, mockRecommendation).Return(tc.applyErr)
+			mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+				return p.ErrorType == tc.expectedErrorType &&
+					strings.HasPrefix(p.ErrorMessage, "Failed to apply configuration: ")
+			})).Return(nil)
+			mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+			go Runner(ctx, mockAgent)
+			<-ctx.Done()
+			time.Sleep(50 * time.Millisecond)
+
+			mockAgent.AssertCalled(t, "SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+				return p.ErrorType == tc.expectedErrorType
+			}))
+			mockAgent.AssertCalled(t, "SendActiveConfig", mock.Anything, mock.Anything)
+		})
+	}
+}
+
 // stubAgentLooper  is required because the existing MockAgent stubs way too much for
 // what we are testing here. It embeds CommonAgent (for real HTTP implementations) and provides
 // minimal stubs for the adapter-specific methods not implemented by CommonAgent.
@@ -339,7 +400,7 @@ func (s *stubAgentLooper) GetActiveConfig(_ context.Context) (agent.ConfigArrayS
 	return agent.ConfigArraySchema{}, nil
 }
 
-func (s *stubAgentLooper) ApplyConfig(_ context.Context, _ *agent.ProposedConfigResponse) error {
+func (s *stubAgentLooper) ApplyConfig(_ context.Context, _ *agent.ProposedConfigResponse) agent.ApplyConfigError {
 	return nil
 }
 

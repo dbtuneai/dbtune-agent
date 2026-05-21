@@ -140,12 +140,12 @@ func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (a
 	return pg.GetActiveConfig(adapter.pgDriver, ctx)
 }
 
-func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) error {
+func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
 	adapter.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
 	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
 	if err != nil {
-		return err
+		return &agent.ConfigApplyError{Err: err}
 	}
 
 	// Validate against the running PostgreSQL before mutating
@@ -156,16 +156,16 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 	}
 	requiresRestart, err := pg.ValidateRestartPolicy(adapter.pgDriver, ctx, paramNames, proposedConfig.KnobApplication)
 	if err != nil {
-		return err
+		return &agent.ConfigApplyError{Err: err}
 	}
 	if requiresRestart && adapter.pgConfig.ServiceName == "" {
-		return fmt.Errorf("service name not configured, refusing to apply: a restart is required to take effect")
+		return &agent.ConfigApplyError{Err: fmt.Errorf("service name not configured, refusing to apply: a restart is required to take effect")}
 	}
 
 	for _, knob := range parsedKnobs {
 		err = pg.AlterSystem(adapter.pgDriver, knob.Name, knob.SettingValue)
 		if err != nil {
-			return fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)}
 		}
 	}
 
@@ -179,7 +179,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 
 			sudoCmd := exec.Command("sudo", "systemctl", "restart", adapter.pgConfig.ServiceName) //nolint:gosec // ServiceName is from trusted config
 			if sudoErr := sudoCmd.Run(); sudoErr != nil {
-				return fmt.Errorf("failed to restart PostgreSQL service with sudo: %w", sudoErr)
+				return &agent.ConfigApplyError{Err: fmt.Errorf("failed to restart PostgreSQL service with sudo: %w", sudoErr)}
 			}
 			adapter.Logger().Warn("Service restarted using sudo.")
 		} else {
@@ -188,7 +188,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 
 		err := pg.WaitPostgresReady(adapter.pgDriver)
 		if err != nil {
-			return fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)
+			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)}
 		}
 	} else {
 		// Reload database when everything is applied. KnobApplication=restart
@@ -196,7 +196,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 		// is treated as a hint, and we avoid a needless restart.
 		err := pg.ReloadConfig(adapter.pgDriver)
 		if err != nil {
-			return err
+			return &agent.ConfigApplyError{Err: err}
 		}
 	}
 	return nil
