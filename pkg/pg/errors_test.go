@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"testing"
@@ -105,6 +106,13 @@ func TestIsConnectionError(t *testing.T) {
 			err:  fmt.Errorf("outer: %w", &os.SyscallError{Syscall: "write", Err: errors.New("broken pipe")}),
 			want: true,
 		},
+
+		// --- EOF mid-operation (server restart/crash dropped the connection) ---
+		{name: "io.ErrUnexpectedEOF", err: io.ErrUnexpectedEOF, want: true},
+		{name: "wrapped io.ErrUnexpectedEOF", err: fmt.Errorf("collect: %w", io.ErrUnexpectedEOF), want: true},
+		{name: "io.EOF", err: io.EOF, want: true},
+		{name: "unexpected EOF string", err: errors.New("failed to collect pg_stat_progress_analyze: unexpected EOF"), want: true},
+		{name: "conn closed string", err: errors.New("write tcp: conn closed"), want: true},
 
 		// --- String-based fallbacks ---
 		{name: "connection refused string", err: errors.New("dial tcp: connection refused"), want: true},
