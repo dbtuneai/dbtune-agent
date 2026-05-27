@@ -111,7 +111,6 @@ func TestIsConnectionError(t *testing.T) {
 		{name: "io.ErrUnexpectedEOF", err: io.ErrUnexpectedEOF, want: true},
 		{name: "wrapped io.ErrUnexpectedEOF", err: fmt.Errorf("collect: %w", io.ErrUnexpectedEOF), want: true},
 		{name: "io.EOF", err: io.EOF, want: true},
-		{name: "unexpected EOF string", err: errors.New("failed to collect pg_stat_progress_analyze: unexpected EOF"), want: true},
 		{name: "conn closed string", err: errors.New("write tcp: conn closed"), want: true},
 
 		// --- String-based fallbacks ---

@@ -79,7 +79,5 @@ func IsConnectionError(err error) bool {
 		strings.Contains(msg, "no such host") ||
 		strings.Contains(msg, "i/o timeout") ||
 		strings.Contains(msg, "connection timed out") ||
-		strings.Contains(msg, "unexpected eof") ||
-		strings.Contains(msg, "conn closed") ||
-		strings.Contains(msg, "connection closed")
+		strings.Contains(msg, "conn closed")
 }
