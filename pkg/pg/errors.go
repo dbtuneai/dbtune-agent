@@ -2,6 +2,7 @@ package pg
 
 import (
 	"errors"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -65,6 +66,11 @@ func IsConnectionError(err error) bool {
 		return true
 	}
 
+	// Connection dropped mid-query (server restart/crash) surfaces as EOF.
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+		return true
+	}
+
 	// Fallback: check error message for common connection failure strings.
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "connection refused") ||
@@ -72,5 +78,6 @@ func IsConnectionError(err error) bool {
 		strings.Contains(msg, "broken pipe") ||
 		strings.Contains(msg, "no such host") ||
 		strings.Contains(msg, "i/o timeout") ||
-		strings.Contains(msg, "connection timed out")
+		strings.Contains(msg, "connection timed out") ||
+		strings.Contains(msg, "conn closed")
 }

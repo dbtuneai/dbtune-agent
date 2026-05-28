@@ -16,6 +16,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/hashicorp/go-retryablehttp"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -874,4 +875,30 @@ func TestHandleCollectorError_NonRecoveryReportsAndReturns(t *testing.T) {
 
 	assert.Error(t, err, "non-recovery errors must propagate")
 	m.AssertCalled(t, "SendError", mock.Anything, mock.Anything)
+}
+
+// Connection-level failures happen routinely during a database restart. They
+// must be suppressed like recovery errors — otherwise every catalog collector
+// fires a "<collector>_error" report that the backend cannot classify (A001).
+func TestHandleCollectorError_ConnectionErrorSuppressed(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"admin shutdown 57P01", &pgconn.PgError{Code: "57P01", Message: "terminating connection due to administrator command"}},
+		{"cannot connect now 57P03", &pgconn.PgError{Code: "57P03", Message: "the database system is shutting down"}},
+		{"connection refused", errors.New("failed to connect to `host=db`: dial error: connection refused")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := new(MockAgentLooper)
+			m.On("Logger").Return(logrus.New())
+
+			err := handleCollectorError(context.Background(), m, "catalog_view", tt.err)
+
+			assert.NoError(t, err, "connection errors must be suppressed during restart")
+			m.AssertNotCalled(t, "SendError", mock.Anything, mock.Anything)
+		})
+	}
 }

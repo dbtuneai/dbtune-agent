@@ -52,11 +52,11 @@ func isRecoveryError(err error) bool {
 }
 
 // handleCollectorError handles errors from catalog collector Collect calls.
-// Recovery errors are suppressed (debug logged, nil returned).
+// Recovery and connection errors are suppressed (debug logged, nil returned).
 // Other errors are reported via SendError and returned.
 func handleCollectorError(ctx context.Context, adapter agent.AgentLooper, name string, err error) error {
-	if isRecoveryError(err) {
-		adapter.Logger().Debugf("Skipping %s during recovery: %v", name, err)
+	if isRecoveryError(err) || pg.IsConnectionError(err) {
+		adapter.Logger().Debugf("Skipping %s during recovery/restart: %v", name, err)
 		return nil
 	}
 	_ = adapter.SendError(ctx, agent.ErrorPayload{
@@ -89,8 +89,9 @@ func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger
 
 // withHealthGate wraps a function with health gate check and error reporting.
 // If the gate is closed (database unreachable), fn is skipped. If fn returns
-// an error, the gate inspects it for connection-level failures. Recovery errors
-// are suppressed (returned as nil) to avoid noisy logging in runWithTicker.
+// an error, the gate inspects it for connection-level failures. Recovery and
+// connection errors are suppressed (returned as nil) to avoid noisy logging
+// in runWithTicker.
 func withHealthGate(hg *agent.HealthGate, logger *logrus.Logger, fn func() error) error {
 	if hg.IsClosed() {
 		logger.Debugf("Skipping, health gate closed")
@@ -99,8 +100,8 @@ func withHealthGate(hg *agent.HealthGate, logger *logrus.Logger, fn func() error
 	err := fn()
 	if err != nil {
 		hg.ReportError(err)
-		if isRecoveryError(err) {
-			logger.Debugf("Skipping during recovery: %v", err)
+		if isRecoveryError(err) || pg.IsConnectionError(err) {
+			logger.Debugf("Skipping during recovery/restart: %v", err)
 			return nil
 		}
 	}
@@ -232,8 +233,13 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	collectors := adapter.CatalogCollectors()
 
 	collectAndSend := func(ctx context.Context, c queries.CatalogCollector) error {
+		if hg.IsClosed() {
+			logger.Debugf("Skipping catalog collector %s, health gate closed", c.Name)
+			return nil
+		}
 		data, err := c.Collect(ctx)
 		if err != nil {
+			hg.ReportError(err)
 			return handleCollectorError(ctx, adapter, c.Name, err)
 		}
 		if data == nil {
