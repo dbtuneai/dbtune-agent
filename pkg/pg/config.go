@@ -13,10 +13,32 @@ const (
 	DEFAULT_CONFIG_KEY = "postgresql"
 )
 
+// RestartScriptPath is the fixed location of the optional operator-provided
+// restart script. When UseRestartCommand is true, the agent executes this
+// script directly (no shell interpolation) instead of `systemctl restart`.
+//
+// Contract: the script MUST signal success with exit code 0 and failure with
+// any non-zero exit code. Output written to stdout/stderr is treated as
+// diagnostic only (logged on failure) and does not affect the success/failure
+// decision — many tools write to stderr during normal operation.
+//
+// Minimal example (/opt/dbtune-agent/restart.sh):
+//
+//	#!/bin/bash
+//	# Must exit 0 on success, non-zero on failure.
+//	set -eo pipefail
+//	# Assumes PGDATA points to the data folder of postgres.
+//	exec gosu postgres pg_ctl restart -D "$PGDATA" -m fast -w -t 600
+//
+// The file must be executable (chmod +x). Adjust the data directory (-D) and
+// the user running pg_ctl to match your deployment.
+const RestartScriptPath = "/opt/dbtune-agent/restart.sh"
+
 type Config struct {
-	ConnectionURL string `mapstructure:"connection_url" validate:"required"`
-	ServiceName   string `mapstructure:"service_name"` // TODO(eddie): Should be moved under pgprem, as it doesn't apply to all other PG providers
-	AllowRestart  bool   `mapstructure:"allow_restart"`
+	ConnectionURL     string `mapstructure:"connection_url" validate:"required"`
+	ServiceName       string `mapstructure:"service_name"` // TODO(eddie): Should be moved under pgprem, as it doesn't apply to all other PG providers
+	UseRestartCommand bool   `mapstructure:"use_restart_command"`
+	AllowRestart      bool   `mapstructure:"allow_restart"`
 }
 
 func ConfigFromViper(key *string) (Config, error) {
@@ -42,6 +64,7 @@ func ConfigFromViper(key *string) (Config, error) {
 
 	_ = dbtuneConfig.BindEnv("connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
 	_ = dbtuneConfig.BindEnv("service_name", "DBT_POSTGRESQL_SERVICE_NAME")
+	_ = dbtuneConfig.BindEnv("use_restart_command", "DBT_POSTGRESQL_USE_RESTART_COMMAND")
 	_ = dbtuneConfig.BindEnv("allow_restart", "DBT_POSTGRESQL_ALLOW_RESTART")
 
 	// Also bind on the global viper so dotted lookups like
@@ -53,6 +76,7 @@ func ConfigFromViper(key *string) (Config, error) {
 	_ = viper.BindEnv("postgresql.allow_restart", "DBT_POSTGRESQL_ALLOW_RESTART")
 
 	dbtuneConfig.SetDefault("allow_restart", false)
+	dbtuneConfig.SetDefault("use_restart_command", false)
 
 	var pgConfig Config
 
