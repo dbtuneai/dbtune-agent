@@ -32,6 +32,10 @@ type DBInfo struct {
 	// ServerlessMaxACUs is set for Aurora Serverless v2 instances (db.serverless).
 	// 1 ACU = 2 GiB memory. Nil for non-serverless instances.
 	ServerlessMaxACUs *float64
+	// ParameterGroupName is the instance-level DB parameter group currently
+	// attached to the instance, discovered via DescribeDBInstances. Empty if
+	// the instance reports no parameter groups (should not happen for RDS/Aurora).
+	ParameterGroupName string
 }
 
 func FetchDBInfo(
@@ -47,6 +51,11 @@ func FetchDBInfo(
 	instanceClass := rdsInstanceInfo.DBInstanceClass
 	instanceType := strings.TrimPrefix(*instanceClass, "db.")
 
+	parameterGroupName := ""
+	if len(rdsInstanceInfo.DBParameterGroups) > 0 {
+		parameterGroupName = aws.ToString(rdsInstanceInfo.DBParameterGroups[0].DBParameterGroupName)
+	}
+
 	// Aurora Serverless v2 uses "db.serverless" which is not a valid EC2 instance type.
 	// Fetch capacity from the cluster instead: 1 ACU = 2 GiB memory.
 	if instanceType == "serverless" {
@@ -56,8 +65,9 @@ func FetchDBInfo(
 			return DBInfo{}, fmt.Errorf("failed to fetch Aurora Serverless capacity: %w", err)
 		}
 		return DBInfo{
-			DBInstance:        *rdsInstanceInfo,
-			ServerlessMaxACUs: maxACUs,
+			DBInstance:         *rdsInstanceInfo,
+			ServerlessMaxACUs:  maxACUs,
+			ParameterGroupName: parameterGroupName,
 		}, nil
 	}
 
@@ -70,6 +80,7 @@ func FetchDBInfo(
 		DBInstance:          *rdsInstanceInfo,
 		EC2InstanceType:     ec2types.InstanceType(instanceType),
 		EC2InstanceTypeInfo: *ec2InstanceTypeInfo,
+		ParameterGroupName:  parameterGroupName,
 	}
 	return dbInfo, nil
 }

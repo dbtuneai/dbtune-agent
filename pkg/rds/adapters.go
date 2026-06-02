@@ -95,6 +95,7 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 		PGDriver:          dbpool,
 		PGVersion:         PGVersion,
 	}
+	adapter.Logger().Infof("using parameter group %q for instance %q", dbInfo.ParameterGroupName, config.RDSDatabaseIdentifier)
 	return adapter, nil
 }
 
@@ -124,6 +125,13 @@ func (adapter *RDSAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatVal
 	)
 	if err != nil {
 		return nil, err
+	}
+	if adapter.State.DBInfo != nil && adapter.State.DBInfo.ParameterGroupName != dbInfo.ParameterGroupName {
+		adapter.Logger().Infof(
+			"parameter group changed: %q -> %q",
+			adapter.State.DBInfo.ParameterGroupName,
+			dbInfo.ParameterGroupName,
+		)
 	}
 	adapter.State.DBInfo = &dbInfo
 	adapter.State.LastDBInfoCheck = time.Now()
