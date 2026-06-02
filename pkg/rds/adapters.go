@@ -192,6 +192,10 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return nil
 	}
 
+	if err := defaultParameterGroupError(adapter.State.DBInfo); err != nil {
+		return err
+	}
+
 	err := ApplyConfig(
 		proposedConfig,
 		&adapter.AWSClients,

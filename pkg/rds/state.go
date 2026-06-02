@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/metrics"
 
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -152,6 +153,20 @@ func (info *DBInfo) ResourceID() (string, error) {
 		return "", fmt.Errorf("DBI resource ID (ARN) not available")
 	}
 	return *info.DBInstance.DbiResourceId, nil
+}
+
+// defaultParameterGroupError returns a typed ApplyConfigError if the instance's
+// attached parameter group is an AWS-managed default.* group (which cannot be
+// modified). Returns nil otherwise, including when dbInfo is nil or the group
+// name is empty.
+func defaultParameterGroupError(dbInfo *DBInfo) *agent.DefaultParameterGroupError {
+	if dbInfo == nil {
+		return nil
+	}
+	if !strings.HasPrefix(dbInfo.ParameterGroupName, "default.") {
+		return nil
+	}
+	return &agent.DefaultParameterGroupError{ParameterGroupName: dbInfo.ParameterGroupName}
 }
 
 func (info *DBInfo) ParameterGroupStatus(name string) *rdsTypes.DBParameterGroupStatus {
