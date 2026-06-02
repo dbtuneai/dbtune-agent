@@ -19,7 +19,6 @@ type Config struct {
 	AWSSecretAccessKey    string `mapstructure:"AWS_SECRET_ACCESS_KEY"`
 	AWSRegion             string `mapstructure:"AWS_REGION" validate:"required"`
 	RDSDatabaseIdentifier string `mapstructure:"RDS_DATABASE_IDENTIFIER" validate:"required"`
-	RDSParameterGroupName string `mapstructure:"RDS_PARAMETER_GROUP_NAME" validate:"required"`
 }
 
 func ConfigFromViper(keyValue string) (Config, error) {
@@ -34,7 +33,6 @@ func ConfigFromViper(keyValue string) (Config, error) {
 	_ = dbtuneConfig.BindEnv("AWS_ACCESS_KEY_ID", "DBT_AWS_ACCESS_KEY_ID")
 	_ = dbtuneConfig.BindEnv("AWS_SECRET_ACCESS_KEY", "DBT_AWS_SECRET_ACCESS_KEY")
 	_ = dbtuneConfig.BindEnv("AWS_REGION", "DBT_AWS_REGION")
-	_ = dbtuneConfig.BindEnv("RDS_PARAMETER_GROUP_NAME", "DBT_RDS_PARAMETER_GROUP_NAME")
 	_ = dbtuneConfig.BindEnv("RDS_DATABASE_IDENTIFIER", "DBT_RDS_DATABASE_IDENTIFIER")
 
 	// Bind also global environment variables as fallback for AWS credentials
@@ -60,9 +58,6 @@ func ConfigFromViper(keyValue string) (Config, error) {
 	}
 	if rdsConfig.RDSDatabaseIdentifier == "" {
 		return Config{}, fmt.Errorf("RDS_DATABASE_IDENTIFIER is required")
-	}
-	if rdsConfig.RDSParameterGroupName == "" {
-		return Config{}, fmt.Errorf("RDS_PARAMETER_GROUP_NAME is required")
 	}
 
 	return rdsConfig, nil
@@ -91,7 +86,6 @@ func DetectConfigFromConfigFile() DetectedConfig {
 
 func DetectConfigFromEnv() bool {
 	envKeysToDetect := []string{
-		"DBT_RDS_PARAMETER_GROUP_NAME",
 		"DBT_RDS_DATABASE_IDENTIFIER",
 		"DBT_AWS_ACCESS_KEY_ID",
 		"DBT_AWS_SECRET_ACCESS_KEY",
