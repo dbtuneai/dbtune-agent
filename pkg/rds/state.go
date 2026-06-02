@@ -36,6 +36,10 @@ type DBInfo struct {
 	// attached to the instance, discovered via DescribeDBInstances. Empty if
 	// the instance reports no parameter groups (should not happen for RDS/Aurora).
 	ParameterGroupName string
+	// ClusterParameterGroupName is the cluster-level DB parameter group for
+	// Aurora and Multi-AZ DB clusters, discovered via DescribeDBClusters.
+	// Empty for single-instance RDS (no DBClusterIdentifier on the instance).
+	ClusterParameterGroupName string
 }
 
 func FetchDBInfo(
@@ -56,18 +60,31 @@ func FetchDBInfo(
 		parameterGroupName = aws.ToString(rdsInstanceInfo.DBParameterGroups[0].DBParameterGroupName)
 	}
 
+	var cluster *auroraClusterInfo
+	if rdsInstanceInfo.DBClusterIdentifier != nil {
+		clusterID := aws.ToString(rdsInstanceInfo.DBClusterIdentifier)
+		cluster, err = fetchAuroraClusterInfo(clusterID, clients, ctx)
+		if err != nil {
+			return DBInfo{}, fmt.Errorf("failed to fetch DB cluster info: %w", err)
+		}
+	}
+
+	clusterParameterGroupName := ""
+	if cluster != nil {
+		clusterParameterGroupName = cluster.ParameterGroupName
+	}
+
 	// Aurora Serverless v2 uses "db.serverless" which is not a valid EC2 instance type.
 	// Fetch capacity from the cluster instead: 1 ACU = 2 GiB memory.
 	if instanceType == "serverless" {
-		clusterID := aws.ToString(rdsInstanceInfo.DBClusterIdentifier)
-		maxACUs, err := fetchAuroraServerlessMaxACUs(clusterID, clients, ctx)
-		if err != nil {
-			return DBInfo{}, fmt.Errorf("failed to fetch Aurora Serverless capacity: %w", err)
+		if cluster == nil || cluster.MaxACUs == nil {
+			return DBInfo{}, fmt.Errorf("ServerlessV2ScalingConfiguration not available for cluster %s", aws.ToString(rdsInstanceInfo.DBClusterIdentifier))
 		}
 		return DBInfo{
-			DBInstance:         *rdsInstanceInfo,
-			ServerlessMaxACUs:  maxACUs,
-			ParameterGroupName: parameterGroupName,
+			DBInstance:                *rdsInstanceInfo,
+			ServerlessMaxACUs:         cluster.MaxACUs,
+			ParameterGroupName:        parameterGroupName,
+			ClusterParameterGroupName: clusterParameterGroupName,
 		}, nil
 	}
 
@@ -77,10 +94,11 @@ func FetchDBInfo(
 	}
 
 	dbInfo := DBInfo{
-		DBInstance:          *rdsInstanceInfo,
-		EC2InstanceType:     ec2types.InstanceType(instanceType),
-		EC2InstanceTypeInfo: *ec2InstanceTypeInfo,
-		ParameterGroupName:  parameterGroupName,
+		DBInstance:                *rdsInstanceInfo,
+		EC2InstanceType:           ec2types.InstanceType(instanceType),
+		EC2InstanceTypeInfo:       *ec2InstanceTypeInfo,
+		ParameterGroupName:        parameterGroupName,
+		ClusterParameterGroupName: clusterParameterGroupName,
 	}
 	return dbInfo, nil
 }
@@ -195,11 +213,18 @@ func fetchRDSDBInstance(
 	return &dbInstance, nil
 }
 
-func fetchAuroraServerlessMaxACUs(
+// auroraClusterInfo holds the fields read from DescribeDBClusters that the
+// agent cares about. MaxACUs is nil for non-Serverless-v2 clusters.
+type auroraClusterInfo struct {
+	MaxACUs            *float64
+	ParameterGroupName string
+}
+
+func fetchAuroraClusterInfo(
 	clusterIdentifier string,
 	clients *AWSClients,
 	ctx context.Context,
-) (*float64, error) {
+) (*auroraClusterInfo, error) {
 	input := &rds.DescribeDBClustersInput{
 		DBClusterIdentifier: aws.String(clusterIdentifier),
 	}
@@ -210,11 +235,14 @@ func fetchAuroraServerlessMaxACUs(
 	if len(result.DBClusters) == 0 {
 		return nil, fmt.Errorf("cluster not found: %s", clusterIdentifier)
 	}
-	scaling := result.DBClusters[0].ServerlessV2ScalingConfiguration
-	if scaling == nil || scaling.MaxCapacity == nil {
-		return nil, fmt.Errorf("ServerlessV2ScalingConfiguration not available for cluster %s", clusterIdentifier)
+	cluster := result.DBClusters[0]
+	info := &auroraClusterInfo{
+		ParameterGroupName: aws.ToString(cluster.DBClusterParameterGroup),
 	}
-	return scaling.MaxCapacity, nil
+	if scaling := cluster.ServerlessV2ScalingConfiguration; scaling != nil {
+		info.MaxACUs = scaling.MaxCapacity
+	}
+	return info, nil
 }
 
 func fetchEC2InstanceTypeInfo(

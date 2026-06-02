@@ -95,7 +95,10 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 		PGDriver:          dbpool,
 		PGVersion:         PGVersion,
 	}
-	adapter.Logger().Infof("using parameter group %q for instance %q", dbInfo.ParameterGroupName, config.RDSDatabaseIdentifier)
+	adapter.Logger().Infof("detected parameter group %q for instance %q", dbInfo.ParameterGroupName, config.RDSDatabaseIdentifier)
+	if dbInfo.ClusterParameterGroupName != "" {
+		adapter.Logger().Infof("detected cluster parameter group %q", dbInfo.ClusterParameterGroupName)
+	}
 	return adapter, nil
 }
 
@@ -131,6 +134,13 @@ func (adapter *RDSAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatVal
 			"parameter group changed: %q -> %q",
 			adapter.State.DBInfo.ParameterGroupName,
 			dbInfo.ParameterGroupName,
+		)
+	}
+	if adapter.State.DBInfo != nil && adapter.State.DBInfo.ClusterParameterGroupName != dbInfo.ClusterParameterGroupName {
+		adapter.Logger().Infof(
+			"cluster parameter group changed: %q -> %q",
+			adapter.State.DBInfo.ClusterParameterGroupName,
+			dbInfo.ClusterParameterGroupName,
 		)
 	}
 	adapter.State.DBInfo = &dbInfo
