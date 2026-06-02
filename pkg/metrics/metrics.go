@@ -254,6 +254,10 @@ var (
 	NodeOSPlatform    = MetricDef{Key: "system_info_platform", Type: String}
 	NodeOSPlatformVer = MetricDef{Key: "system_info_platform_version", Type: String}
 
+	// AWS RDS / Aurora
+	AWSRDSParameterGroup        = MetricDef{Key: "aws_rds_parameter_group", Type: String}
+	AWSRDSClusterParameterGroup = MetricDef{Key: "aws_rds_cluster_parameter_group", Type: String}
+
 	// PG
 	// The PG stats are fetched from pg_stat_statements (https://www.postgresql.org/docs/current/pgstatstatements.html)
 	// as well as a number of native pg stats views.    (https://www.postgresql.org/docs/current/monitoring-stats.html)

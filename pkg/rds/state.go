@@ -204,6 +204,17 @@ func (info *DBInfo) TryIntoFlatValuesSlice() ([]metrics.FlatValue, error) {
 		flat_metrics = append(flat_metrics, diskTypeMetric)
 	}
 
+	if info.ParameterGroupName != "" {
+		if v, err := metrics.AWSRDSParameterGroup.AsFlatValue(info.ParameterGroupName); err == nil {
+			flat_metrics = append(flat_metrics, v)
+		}
+	}
+	if info.ClusterParameterGroupName != "" {
+		if v, err := metrics.AWSRDSClusterParameterGroup.AsFlatValue(info.ClusterParameterGroupName); err == nil {
+			flat_metrics = append(flat_metrics, v)
+		}
+	}
+
 	return flat_metrics, nil
 }
 

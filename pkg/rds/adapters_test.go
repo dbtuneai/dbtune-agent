@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,6 +30,44 @@ func TestDefaultParameterGroupError(t *testing.T) {
 		// only the "default." prefix triggers; names that merely contain it do not.
 		assert.Nil(t, defaultParameterGroupError(&DBInfo{ParameterGroupName: "my-default.postgres15"}))
 	})
+}
+
+func TestDBInfo_TryIntoFlatValuesSlice_IncludesParameterGroups(t *testing.T) {
+	t.Run("instance only", func(t *testing.T) {
+		info := &DBInfo{ParameterGroupName: "my-pg"}
+		flats, err := info.TryIntoFlatValuesSlice()
+		require.NoError(t, err)
+		keys := flatKeys(flats)
+		assert.Contains(t, keys, "aws_rds_parameter_group")
+		assert.NotContains(t, keys, "aws_rds_cluster_parameter_group")
+	})
+	t.Run("instance and cluster", func(t *testing.T) {
+		info := &DBInfo{
+			ParameterGroupName:        "my-pg",
+			ClusterParameterGroupName: "my-cluster-pg",
+		}
+		flats, err := info.TryIntoFlatValuesSlice()
+		require.NoError(t, err)
+		keys := flatKeys(flats)
+		assert.Contains(t, keys, "aws_rds_parameter_group")
+		assert.Contains(t, keys, "aws_rds_cluster_parameter_group")
+	})
+	t.Run("neither when empty", func(t *testing.T) {
+		info := &DBInfo{}
+		flats, err := info.TryIntoFlatValuesSlice()
+		require.NoError(t, err)
+		keys := flatKeys(flats)
+		assert.NotContains(t, keys, "aws_rds_parameter_group")
+		assert.NotContains(t, keys, "aws_rds_cluster_parameter_group")
+	})
+}
+
+func flatKeys(fs []metrics.FlatValue) []string {
+	keys := make([]string, 0, len(fs))
+	for _, f := range fs {
+		keys = append(keys, f.Key)
+	}
+	return keys
 }
 
 func TestRDSAdapter_ApplyConfig_RefusesDefaultParameterGroup(t *testing.T) {
