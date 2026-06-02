@@ -117,34 +117,26 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 	return rdsAdapter, nil
 }
 
-func (adapter *RDSAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
-	adapter.Logger().Info("Collecting system info")
-
-	// Refreshes self
+func (adapter *RDSAdapter) refreshDBInfo(ctx context.Context) error {
 	dbInfo, err := FetchDBInfo(
 		adapter.Config.RDSDatabaseIdentifier,
 		&adapter.AWSClients,
 		ctx,
 	)
 	if err != nil {
-		return nil, err
-	}
-	if adapter.State.DBInfo != nil && adapter.State.DBInfo.ParameterGroupName != dbInfo.ParameterGroupName {
-		adapter.Logger().Infof(
-			"parameter group changed: %q -> %q",
-			adapter.State.DBInfo.ParameterGroupName,
-			dbInfo.ParameterGroupName,
-		)
-	}
-	if adapter.State.DBInfo != nil && adapter.State.DBInfo.ClusterParameterGroupName != dbInfo.ClusterParameterGroupName {
-		adapter.Logger().Infof(
-			"cluster parameter group changed: %q -> %q",
-			adapter.State.DBInfo.ClusterParameterGroupName,
-			dbInfo.ClusterParameterGroupName,
-		)
+		return err
 	}
 	adapter.State.DBInfo = &dbInfo
 	adapter.State.LastDBInfoCheck = time.Now()
+	return nil
+}
+
+func (adapter *RDSAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
+	adapter.Logger().Info("Collecting system info")
+
+	if err := adapter.refreshDBInfo(ctx); err != nil {
+		return nil, err
+	}
 
 	// Get the RDSDB specific info
 	info, err := adapter.State.DBInfo.TryIntoFlatValuesSlice()
@@ -192,6 +184,18 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return nil
 	}
 
+	// Fail fast on a known-default group before any AWS calls. The post-refresh
+	// check below catches the case where the group rotated to a default between
+	// system-info ticks.
+	if err := defaultParameterGroupError(adapter.State.DBInfo); err != nil {
+		return err
+	}
+
+	// Refresh so we apply against the parameter group actually attached right
+	// now, not whatever was observed at the last system-info tick.
+	if err := adapter.refreshDBInfo(ctx); err != nil {
+		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to refresh DB info before apply: %w", err)}
+	}
 	if err := defaultParameterGroupError(adapter.State.DBInfo); err != nil {
 		return err
 	}
@@ -199,7 +203,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 	err := ApplyConfig(
 		proposedConfig,
 		&adapter.AWSClients,
-		adapter.Config.RDSParameterGroupName,
+		adapter.State.DBInfo.ParameterGroupName,
 		adapter.Config.RDSDatabaseIdentifier,
 		adapter.Logger(),
 		ctx,
