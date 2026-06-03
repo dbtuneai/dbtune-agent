@@ -242,6 +242,20 @@ func (e *ConfigApplyError) Unwrap() error     { return e.Err }
 func (e *ConfigApplyError) ErrorType() string { return "config_apply_error" }
 func (*ConfigApplyError) isApplyConfigError() {}
 
+// DefaultParameterGroupError is returned when the instance has a default
+// parameter group attached. AWS prohibits modifying default.* groups, so the
+// agent refuses to apply rather than failing mid-way. The platform reads this
+// typed error to surface guidance to the user.
+type DefaultParameterGroupError struct {
+	ParameterGroupName string
+}
+
+func (e *DefaultParameterGroupError) Error() string {
+	return fmt.Sprintf("cannot apply config: instance uses default parameter group %q which AWS does not allow modifying", e.ParameterGroupName)
+}
+func (e *DefaultParameterGroupError) ErrorType() string { return "default_parameter_group" }
+func (*DefaultParameterGroupError) isApplyConfigError() {}
+
 func IsRestartAllowed() bool {
 	return viper.GetBool("postgresql.allow_restart")
 }

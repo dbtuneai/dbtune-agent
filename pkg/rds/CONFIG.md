@@ -5,22 +5,25 @@ postgresql:
   allow_restart: false  # Allow the agent to restart PostgreSQL. Defaults to false.
 
 # Only for plain RDS
+# The parameter group is auto-discovered from the instance. The agent refuses
+# to apply tuning changes when the attached group is a `default.*` group
+# (AWS does not allow modifying those); attach a custom parameter group.
 rds:
   # AWS credentials are optional
   # If not provided, the agent will use the default AWS credential chain, which includes WebIdentity tokens
   AWS_ACCESS_KEY_ID: ""
   AWS_SECRET_ACCESS_KEY: ""
   RDS_DATABASE_IDENTIFIER: "" # The Writer instance of the Aurora cluster
-  RDS_PARAMETER_GROUP_NAME: "" # We recommend custom one and not to use the default.postgresXX one
 
 # Only for Aurora RDS
+# Same auto-discovery as plain RDS; both the instance and cluster parameter
+# group names are reported to DBtune in system info.
 rds-aurora:
   # AWS credentials are optional
   # If not provided, the agent will use the default AWS credential chain, which includes WebIdentity tokens
   AWS_ACCESS_KEY_ID: ""
   AWS_SECRET_ACCESS_KEY: ""
   RDS_DATABASE_IDENTIFIER: "" # The Writer instance of the Aurora cluster
-  RDS_PARAMETER_GROUP_NAME: "" # We recommend defining a custom one and not to use the default.postgresXX one
 
 
 dbtune:
@@ -47,7 +50,6 @@ export DBT_DBTUNE_DATABASE_ID=your-database-id
 # Your database specific
 export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database 
 export RDS_DATABASE_IDENTIFIER=
-export DBT_RDS_PARAMETER_GROUP_NAME=
 export DBT_AWS_REGION=
 export DBT_AWS_ACCESS_KEY_ID=  # Optional, see above in yaml config
 export DBT_AWS_SECRET_ACCESS_KEY=  # Optional, see above in yaml config

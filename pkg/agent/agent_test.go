@@ -278,10 +278,11 @@ func TestProposedConfigResponse_UnmarshalJSON_RejectsInvalidKnobApplication(t *t
 	assert.Error(t, err, "decoding should fail before an adapter ever sees the response")
 }
 
-// Compile-time check: both variants satisfy ApplyConfigError.
+// Compile-time check: all variants satisfy ApplyConfigError.
 var (
 	_ ApplyConfigError = (*ConfigApplyError)(nil)
 	_ ApplyConfigError = (*RestartNotAllowedError)(nil)
+	_ ApplyConfigError = (*DefaultParameterGroupError)(nil)
 )
 
 func TestApplyConfigError_ErrorTypes(t *testing.T) {
