@@ -213,7 +213,7 @@ func TestBackendHookIncludesFields(t *testing.T) {
 	assert.Contains(t, (*received)[0].Message, "connection refused")
 }
 
-func TestBackendHookFlushNoopWhenEmpty(t *testing.T) {
+func TestBackendHookFlushNoopWhenEmpty(_ *testing.T) {
 	hook := CreateBackendHook("http://localhost", "key")
 	defer hook.Close()
 
@@ -245,7 +245,7 @@ func TestBackendHookCloseDrainsBuffer(t *testing.T) {
 	assert.Contains(t, (*received)[0].Message, "should be flushed on close")
 }
 
-func TestBackendHookCloseIsIdempotent(t *testing.T) {
+func TestBackendHookCloseIsIdempotent(_ *testing.T) {
 	hook := CreateBackendHook("http://localhost", "key")
 
 	// Calling Close multiple times must not panic.
