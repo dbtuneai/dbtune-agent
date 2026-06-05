@@ -455,6 +455,9 @@ func CreateCommonAgentWithVersion(version string) *CommonAgent {
 		}
 	}
 
+	hook := utils.CreateBackendHook(serverUrl.AgentURL("raw-logs"), serverUrl.ApiKey)
+	logger.AddHook(hook)
+
 	agentID := GetAgentID()
 	logger.Infof("Agent instance ID: %s", agentID)
 
