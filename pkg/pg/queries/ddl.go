@@ -20,12 +20,26 @@ func HashDDL(ddl string) string {
 }
 
 // CollectDDL queries the PostgreSQL catalog and reconstructs a complete DDL
-// snapshot in pg_dump's decomposed format. The output is ordered:
+// snapshot. The output is ordered:
 //
-//	Pre-data:  extensions, schemas, types, functions, sequences, tables (bare),
+//	Pre-data:  extensions, schemas, types, sequences, tables (bare),
 //	           partitions, serial defaults, identity, sequence ownership,
-//	           storage/statistics overrides, views
+//	           storage/statistics overrides, views, materialized views,
+//	           functions
 //	Post-data: constraints, foreign keys, indexes, triggers, RLS
+//
+// Functions emit AFTER tables/views, unlike pg_dump's default static
+// priority which puts functions in pre-data before tables. pg_dump
+// relies on its TopologicalSort to pull a function past the tables it
+// depends on; we feed a single SQL stream to PostgreSQL so any
+// `LANGUAGE sql` function whose body references a table that comes
+// later fails at CREATE time with "relation does not exist". Emitting
+// functions after tables sidesteps the cascade.
+//
+// Trade-off: column DEFAULTs that call a user-defined function will
+// fail to resolve at table-create time. This is rare in practice (most
+// defaults are literals, `now()`, or `nextval()`); if it surfaces, a
+// second pass with stub-then-replace would be the next step.
 func CollectDDL(pgPool *pgxpool.Pool, ctx context.Context) (string, error) {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
@@ -145,9 +159,6 @@ func CollectDDL(pgPool *pgxpool.Pool, ctx context.Context) (string, error) {
 	emit(&b, domains, formatDDLDomainType)
 	emit(&b, composites, formatDDLCompositeType)
 
-	// Functions (extra blank line between each).
-	emitSep(&b, functions, formatDDLFunction, "\n")
-
 	// Sequences (standalone + serial-backing; identity sequences are created by ALTER TABLE).
 	emit(&b, standaloneSeqs, formatCreateSequence)
 	emit(&b, serialSeqs, formatSerialCreateSequence)
@@ -174,6 +185,10 @@ func CollectDDL(pgPool *pgxpool.Pool, ctx context.Context) (string, error) {
 	// Views.
 	emit(&b, views, formatDDLView)
 	emit(&b, matviews, formatDDLMaterializedView)
+
+	// Functions and procedures (after tables/views so SQL-language
+	// bodies that reference user relations resolve at CREATE time).
+	emitSep(&b, functions, formatDDLFunction, "\n")
 
 	// ================================================================
 	// POST-DATA

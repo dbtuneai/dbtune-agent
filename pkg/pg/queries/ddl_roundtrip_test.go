@@ -272,6 +272,15 @@ var goldenSchemaFixtures = []string{
 	 FROM products p LEFT JOIN orders o ON o.product_id = p.id
 	 GROUP BY p.name`,
 
+	// LANGUAGE sql function that references a user table. Bodies of
+	// `LANGUAGE sql` functions are parsed at CREATE time, so the
+	// referenced relation must already exist when CollectDDL's output
+	// is replayed. Regression for the "functions before tables"
+	// ordering bug.
+	`CREATE FUNCTION user_order_count(uid integer) RETURNS bigint
+	 LANGUAGE sql
+	 AS $$ SELECT COUNT(*) FROM orders WHERE user_id = uid $$`,
+
 	// ================================================================
 	// Triggers
 	// ================================================================
