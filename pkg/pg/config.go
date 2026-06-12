@@ -14,9 +14,10 @@ const (
 )
 
 type Config struct {
-	ConnectionURL string `mapstructure:"connection_url" validate:"required"`
-	ServiceName   string `mapstructure:"service_name"` // TODO(eddie): Should be moved under pgprem, as it doesn't apply to all other PG providers
-	AllowRestart  bool   `mapstructure:"allow_restart"`
+	ConnectionURL     string `mapstructure:"connection_url" validate:"required"`
+	ServiceName       string `mapstructure:"service_name"`        // TODO(eddie): Should be moved under pgprem, as it doesn't apply to all other PG providers
+	RestartScriptPath string `mapstructure:"restart_script_path"` // When set, restarts execute this script directly (no shell) instead of `systemctl restart`. Must be an executable path with no arguments. Takes precedence over ServiceName.
+	AllowRestart      bool   `mapstructure:"allow_restart"`
 }
 
 func ConfigFromViper(key *string) (Config, error) {
@@ -42,6 +43,7 @@ func ConfigFromViper(key *string) (Config, error) {
 
 	_ = dbtuneConfig.BindEnv("connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
 	_ = dbtuneConfig.BindEnv("service_name", "DBT_POSTGRESQL_SERVICE_NAME")
+	_ = dbtuneConfig.BindEnv("restart_script_path", "DBT_POSTGRESQL_RESTART_SCRIPT_PATH")
 	_ = dbtuneConfig.BindEnv("allow_restart", "DBT_POSTGRESQL_ALLOW_RESTART")
 
 	// Also bind on the global viper so dotted lookups like
@@ -49,7 +51,7 @@ func ConfigFromViper(key *string) (Config, error) {
 	// resolve the env var. BindEnv on a sub-viper does not propagate to the parent.
 	_ = viper.BindEnv("postgresql.connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
 	_ = viper.BindEnv("postgresql.service_name", "DBT_POSTGRESQL_SERVICE_NAME")
-	_ = viper.BindEnv("postgresql.use_restart_command", "DBT_POSTGRESQL_USE_RESTART_COMMAND")
+	_ = viper.BindEnv("postgresql.restart_script_path", "DBT_POSTGRESQL_RESTART_SCRIPT_PATH")
 	_ = viper.BindEnv("postgresql.allow_restart", "DBT_POSTGRESQL_ALLOW_RESTART")
 
 	dbtuneConfig.SetDefault("allow_restart", false)
@@ -67,8 +69,8 @@ func ConfigFromViper(key *string) (Config, error) {
 		return Config{}, err
 	}
 
-	if pgConfig.AllowRestart && runtime.GOOS == "windows" {
-		return Config{}, fmt.Errorf("postgresql.allow_restart is not supported on Windows: the agent restarts PostgreSQL via systemctl, which has no Windows equivalent yet. Set postgresql.allow_restart=false (or unset DBT_POSTGRESQL_ALLOW_RESTART) to run the agent in monitoring/reload-only mode")
+	if pgConfig.AllowRestart && pgConfig.RestartScriptPath == "" && runtime.GOOS == "windows" {
+		return Config{}, fmt.Errorf("postgresql.allow_restart is not supported on Windows: the agent restarts PostgreSQL via systemctl, which has no Windows equivalent yet. Set postgresql.restart_script_path (env: DBT_POSTGRESQL_RESTART_SCRIPT_PATH) to a custom restart script, or set postgresql.allow_restart=false (or unset DBT_POSTGRESQL_ALLOW_RESTART) to run the agent in monitoring/reload-only mode")
 	}
 
 	return pgConfig, nil
