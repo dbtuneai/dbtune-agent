@@ -3,6 +3,7 @@ package pgprem
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -35,6 +36,30 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 	pgConfig, err := pg.ConfigFromViper(nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if pgConfig.AllowRestart && pgConfig.ServiceName == "" && pgConfig.RestartScriptPath == "" {
+		return nil, fmt.Errorf(
+			"postgresql.allow_restart is true but neither postgresql.service_name nor postgresql.restart_script_path is configured. " +
+				"Set postgresql.service_name (env: DBT_POSTGRESQL_SERVICE_NAME) " +
+				"or set postgresql.restart_script_path (env: DBT_POSTGRESQL_RESTART_SCRIPT_PATH) to a custom restart script",
+		)
+	}
+
+	if pgConfig.RestartScriptPath != "" {
+		info, err := os.Stat(pgConfig.RestartScriptPath)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"postgresql.restart_script_path is set but %s is not accessible: %w",
+				pgConfig.RestartScriptPath, err,
+			)
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf("%s is a directory, expected an executable file", pgConfig.RestartScriptPath)
+		}
+		if info.Mode()&0o111 == 0 {
+			return nil, fmt.Errorf("%s is not executable (mode %s); chmod +x it", pgConfig.RestartScriptPath, info.Mode())
+		}
 	}
 
 	dbpool, err := pgPool.New(context.Background(), pgConfig.ConnectionURL)
@@ -158,8 +183,8 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 	if err != nil {
 		return &agent.ConfigApplyError{Err: err}
 	}
-	if requiresRestart && adapter.pgConfig.ServiceName == "" {
-		return &agent.ConfigApplyError{Err: fmt.Errorf("service name not configured, refusing to apply: a restart is required to take effect")}
+	if requiresRestart && adapter.pgConfig.ServiceName == "" && adapter.pgConfig.RestartScriptPath == "" {
+		return &agent.ConfigApplyError{Err: fmt.Errorf("neither service name nor restart script configured, refusing to apply: a restart is required to take effect")}
 	}
 
 	for _, knob := range parsedKnobs {
@@ -169,9 +194,39 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 		}
 	}
 
-	if requiresRestart {
-		// Restart the service
-		adapter.Logger().Warn("Restarting service")
+	if !requiresRestart {
+		// Reload database when everything is applied. KnobApplication=restart
+		// with no postmaster-context params falls through here too: the intent
+		// is treated as a hint, and we avoid a needless restart.
+		err := pg.ReloadConfig(adapter.pgDriver)
+		if err != nil {
+			return &agent.ConfigApplyError{Err: err}
+		}
+		return nil
+	}
+
+	// Restart the service
+	adapter.Logger().Warn("Restarting service")
+
+	if adapter.pgConfig.RestartScriptPath != "" {
+		// Execute the operator-provided restart script directly (no shell
+		// interpolation). The path comes from trusted config.
+		//
+		// Contract: the script MUST signal success with exit code 0 and failure
+		// with any non-zero exit code. Output written to stdout/stderr is treated
+		// as diagnostic only (logged on failure) and does not affect the
+		// success/failure decision.
+		cmd := exec.Command(adapter.pgConfig.RestartScriptPath) //nolint:gosec // path is from trusted config
+		output, err := cmd.CombinedOutput()
+		exitCode := cmd.ProcessState.ExitCode() // -1 if the process never ran
+		if err != nil || exitCode != 0 {
+			adapter.Logger().Warnf("restart script %s exited with code %d; output: %s",
+				adapter.pgConfig.RestartScriptPath, exitCode, string(output))
+			return &agent.ConfigApplyError{Err: fmt.Errorf("restart script %s failed (exit code %d): %w",
+				adapter.pgConfig.RestartScriptPath, exitCode, err)}
+		}
+		adapter.Logger().Warnf("Service restarted via %s (exit code 0).", adapter.pgConfig.RestartScriptPath)
+	} else {
 		// Execute systemctl restart command if it fails try executing it with sudo
 		cmd := exec.Command("systemctl", "restart", adapter.pgConfig.ServiceName) //nolint:gosec // ServiceName is from trusted config
 		if err := cmd.Run(); err != nil {
@@ -185,19 +240,10 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 		} else {
 			adapter.Logger().Warn("Service restarted.")
 		}
+	}
 
-		err := pg.WaitPostgresReady(adapter.pgDriver)
-		if err != nil {
-			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)}
-		}
-	} else {
-		// Reload database when everything is applied. KnobApplication=restart
-		// with no postmaster-context params falls through here too: the intent
-		// is treated as a hint, and we avoid a needless restart.
-		err := pg.ReloadConfig(adapter.pgDriver)
-		if err != nil {
-			return &agent.ConfigApplyError{Err: err}
-		}
+	if err := pg.WaitPostgresReady(adapter.pgDriver); err != nil {
+		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)}
 	}
 	return nil
 }

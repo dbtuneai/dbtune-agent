@@ -265,7 +265,7 @@ func TestIntegration_Pgprem_ApplyConfig_Restart_NoServiceName(t *testing.T) {
 
 	err := adapter.ApplyConfig(context.Background(), proposed)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "service name not configured")
+	assert.Contains(t, err.Error(), "neither service name nor restart script configured")
 
 	assert.Empty(t, autoConfSetting(t, pool, "shared_buffers"),
 		"no ALTER SYSTEM should have been issued when the agent cannot perform the required restart")
