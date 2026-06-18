@@ -20,7 +20,11 @@ func (l *LeveledLogrus) fields(keysAndValues ...interface{}) map[string]interfac
 }
 
 func (l *LeveledLogrus) Error(msg string, keysAndValues ...interface{}) {
-	l.WithFields(l.fields(keysAndValues...)).Error(msg)
+	// retryablehttp logs each failed *attempt* at Error level; these are
+	// transient and retried, so demote to Info to keep retry noise off the
+	// backend log hook. Exhausted-retry failures are returned by Do and logged
+	// at Error by the caller (runWithTicker / SendHeartbeat).
+	l.WithFields(l.fields(keysAndValues...)).Info(msg)
 }
 
 func (l *LeveledLogrus) Info(msg string, keysAndValues ...interface{}) {
