@@ -24,7 +24,7 @@ SELECT
 	calls,
 	total_exec_time,
 	rows
-FROM pg_stat_statements
+FROM public.pg_stat_statements
 WHERE NOT starts_with(query, '%s')
   AND query !~* '^\\s*(BEGIN|COMMIT|ROLLBACK|SET |SHOW |SELECT (pg_|\\$1$|version\\s*\\(\\s*\\)))\\s*;?\\s*$'
 `, utils.DBtuneQueryPrefix)
@@ -42,7 +42,7 @@ SELECT
 	rows,
 	LEFT(query, %%d) as query,
 	LENGTH(query)
-FROM pg_stat_statements
+FROM public.pg_stat_statements
 WHERE NOT starts_with(query, '%s')
   AND query !~* '^\\s*(BEGIN|COMMIT|ROLLBACK|SET |SHOW |SELECT (pg_|\\$1$|version\\s*\\(\\s*\\)))\\s*;?\\s*$'
 `, utils.DBtuneQueryPrefix)

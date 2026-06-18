@@ -234,7 +234,7 @@ func buildPgStatStatementsQuery(includeQueries bool, maxQueryTextLength int, ext
 		)
 	}
 
-	return fmt.Sprintf("SELECT %s\nFROM pg_stat_statements\n%s",
+	return fmt.Sprintf("SELECT %s\nFROM public.pg_stat_statements\n%s",
 		strings.Join(cols, ", "), pgStatStatementsFilter)
 }
 
