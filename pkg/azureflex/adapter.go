@@ -44,7 +44,7 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 		return nil, err
 	}
 
-	pgPool, err := pgxpool.New(ctx, pgConfig.ConnectionURL)
+	pgPool, err := pg.NewPool(ctx, pgConfig)
 	if err != nil {
 		return nil, err
 	}
