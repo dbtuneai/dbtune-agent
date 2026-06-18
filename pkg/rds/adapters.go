@@ -327,9 +327,12 @@ func CreateAuroraRDSAdapter() (*AuroraRDSAdapter, error) {
 	// Aurora does not support pg_stat_wal: the underlying pg_stat_get_wal()
 	// function errors with "not supported in Aurora". AWS does not document
 	// this publicly; see https://github.com/DataDog/integrations-core/issues/15890.
-	rdsAdapter.Logger().Infof("Aurora: disabling %s (not supported)", queries.PgStatWalName)
+	// pg_stat_wal_receiver is unsupported for the same reason: its backing
+	// function pg_stat_get_wal_receiver() also errors with "not supported in Aurora".
+	rdsAdapter.Logger().Infof("Aurora: disabling %s and %s (not supported)", queries.PgStatWalName, queries.PgStatWalReceiverName)
 	disabled := false
 	cc.Simple[queries.PgStatWalName] = collectorconfig.BaseConfig{Enabled: &disabled}
+	cc.Simple[queries.PgStatWalReceiverName] = collectorconfig.BaseConfig{Enabled: &disabled}
 	catalog, err := pg.CatalogCollectorsForVersion(rdsAdapter.PGDriver, rdsAdapter.PGVersion, cc)
 	if err != nil {
 		return nil, err

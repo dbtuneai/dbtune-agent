@@ -29,15 +29,17 @@ func TestCatalogCollectorsForVersion_EmptyVersion(t *testing.T) {
 }
 
 // TestCatalogCollectorsForVersion_AuroraDisablesPgStatWal mirrors the pattern
-// used by CreateAuroraRDSAdapter: load config, disable pg_stat_wal, build.
+// used by CreateAuroraRDSAdapter: load config, disable the WAL collectors, build.
 func TestCatalogCollectorsForVersion_AuroraDisablesPgStatWal(t *testing.T) {
 	cfg := newEmptyCfg()
 	disabled := false
 	cfg.Simple[queries.PgStatWalName] = collectorconfig.BaseConfig{Enabled: &disabled}
+	cfg.Simple[queries.PgStatWalReceiverName] = collectorconfig.BaseConfig{Enabled: &disabled}
 
 	cs, err := CatalogCollectorsForVersion(nil, "16.4", cfg)
 	require.NoError(t, err)
 	assert.Nil(t, findByName(cs, queries.PgStatWalName), "pg_stat_wal must be absent for Aurora")
+	assert.Nil(t, findByName(cs, queries.PgStatWalReceiverName), "pg_stat_wal_receiver must be absent for Aurora")
 	// Other collectors still present.
 	assert.NotNil(t, findByName(cs, queries.PgStatDatabaseName))
 }
