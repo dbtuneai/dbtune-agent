@@ -186,7 +186,7 @@ func Select1(pgPool *pgxpool.Pool) error {
 }
 
 const CheckPGStatStatementsQuery = `
-SELECT COUNT(*) FROM pg_stat_statements;
+SELECT COUNT(*) FROM public.pg_stat_statements;
 `
 
 func CheckPGStatStatements(pgPool *pgxpool.Pool) error {
