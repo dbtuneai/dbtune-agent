@@ -445,13 +445,21 @@ func CreateCommonAgentWithVersion(version string) *CommonAgent {
 	client := retryablehttp.NewClient()
 	// 30 retries, as the cap is 30seconds for the back-off wait time
 	client.RetryMax = 30
-	client.Logger = &utils.LeveledLogrus{Logger: logger}
+	// retryablehttp logs every failed attempt at Error level. Those are
+	// transient and retried, so silencing its internal logger keeps retry noise
+	// off the backend log hook. The real outcome surfaces via the error Do
+	// returns once retries are exhausted, logged by the caller (runWithTicker /
+	// SendHeartbeat). Do guards all internal logging on a nil logger.
+	client.Logger = nil
 
-	// Intercept the request to add the API token
-	client.RequestLogHook = func(_ retryablehttp.Logger, req *http.Request, _ int) {
+	// Intercept each attempt to add the API token and trace retries at Debug.
+	client.RequestLogHook = func(_ retryablehttp.Logger, req *http.Request, attempt int) {
 		key := req.Header.Get("DBTUNE-API-KEY")
 		if key == "" {
 			req.Header.Add("DBTUNE-API-KEY", serverUrl.ApiKey)
+		}
+		if attempt > 0 {
+			logger.Debugf("retrying %s %s (attempt %d)", req.Method, req.URL, attempt+1)
 		}
 	}
 
