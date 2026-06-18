@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -164,6 +165,28 @@ func newAdapter(t *testing.T, pool *pgxpool.Pool, serviceName string) *DefaultPo
 	return adapter
 }
 
+func newAdapterWithRestartScript(t *testing.T, pool *pgxpool.Pool, scriptPath string) *DefaultPostgreSQLAdapter {
+	t.Helper()
+	adapter := &DefaultPostgreSQLAdapter{
+		pgDriver: pool,
+		pgConfig: pg.Config{
+			ConnectionURL:     pgpremConnStr,
+			RestartScriptPath: scriptPath,
+		},
+	}
+	adapter.WithLogger(logrus.New())
+	return adapter
+}
+
+// writeRestartScript writes an executable /bin/sh script (body appended after
+// the shebang) into a temp dir and returns its path.
+func writeRestartScript(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "restart.sh")
+	require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755))
+	return path
+}
+
 // TestIntegration_Pgprem_ApplyConfig_Reload_NonRestartParam confirms the
 // reload-only path against real PostgreSQL: ALTER SYSTEM is issued and
 // pg_reload_conf makes the new value live.
@@ -265,7 +288,7 @@ func TestIntegration_Pgprem_ApplyConfig_Restart_NoServiceName(t *testing.T) {
 
 	err := adapter.ApplyConfig(context.Background(), proposed)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "service name not configured")
+	assert.Contains(t, err.Error(), "neither service name nor restart script configured")
 
 	assert.Empty(t, autoConfSetting(t, pool, "shared_buffers"),
 		"no ALTER SYSTEM should have been issued when the agent cannot perform the required restart")
@@ -364,5 +387,62 @@ func TestIntegration_Pgprem_ApplyConfig_Restart_AttemptsSystemctl(t *testing.T) 
 	// should be present in postgresql.auto.conf even though the restart
 	// itself failed. (This mirrors the production behaviour: by the time
 	// we attempt the restart, the file has been mutated.)
+	assert.Equal(t, "4096", autoConfSetting(t, pool, "shared_buffers"))
+}
+
+// TestIntegration_Pgprem_ApplyConfig_Restart_ViaScript exercises the custom
+// restart-script branch end to end: with restart_script_path set, a
+// restart-required parameter is ALTER SYSTEM'd, the script is executed, and a
+// zero exit code is treated as a successful restart. The script touches a
+// sentinel file so we can prove it actually ran. PostgreSQL is never really
+// restarted (the testcontainer stays up), which also confirms the post-restart
+// readiness check passes against the live database.
+func TestIntegration_Pgprem_ApplyConfig_Restart_ViaScript(t *testing.T) {
+	setAllowRestart(t, true)
+	pool := newPool(t)
+	t.Cleanup(func() { resetAutoConf(t, pool, "shared_buffers") })
+
+	sentinel := filepath.Join(t.TempDir(), "ran")
+	adapter := newAdapterWithRestartScript(t, pool, writeRestartScript(t, "echo restarted > "+sentinel))
+
+	proposed := &agent.ProposedConfigResponse{
+		Config: []agent.PGConfigRow{
+			{Name: "shared_buffers", Setting: int64(8192), Vartype: "integer"},
+		},
+		KnobsOverrides:  []string{"shared_buffers"},
+		KnobApplication: agent.KnobApplicationRestart,
+	}
+
+	require.NoError(t, adapter.ApplyConfig(context.Background(), proposed))
+
+	assert.FileExists(t, sentinel, "the restart script should have been executed")
+	assert.Equal(t, "8192", autoConfSetting(t, pool, "shared_buffers"),
+		"ALTER SYSTEM should have landed before the restart script ran")
+}
+
+// TestIntegration_Pgprem_ApplyConfig_RestartScript_Fails asserts that a
+// non-zero exit code from the custom restart script is surfaced as an error,
+// mirroring the systemctl-failure path. As there, the ALTER SYSTEM mutation has
+// already landed by the time the restart is attempted.
+func TestIntegration_Pgprem_ApplyConfig_RestartScript_Fails(t *testing.T) {
+	setAllowRestart(t, true)
+	pool := newPool(t)
+	t.Cleanup(func() { resetAutoConf(t, pool, "shared_buffers") })
+
+	adapter := newAdapterWithRestartScript(t, pool, writeRestartScript(t, "echo boom >&2\nexit 3"))
+
+	proposed := &agent.ProposedConfigResponse{
+		Config: []agent.PGConfigRow{
+			{Name: "shared_buffers", Setting: int64(4096), Vartype: "integer"},
+		},
+		KnobsOverrides:  []string{"shared_buffers"},
+		KnobApplication: agent.KnobApplicationRestart,
+	}
+
+	err := adapter.ApplyConfig(context.Background(), proposed)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "restart script")
+	assert.Contains(t, err.Error(), "failed")
+
 	assert.Equal(t, "4096", autoConfSetting(t, pool, "shared_buffers"))
 }

@@ -27,6 +27,22 @@ func TestConfigFromViper_AllowRestartFromEnv(t *testing.T) {
 	assert.True(t, cfg.AllowRestart, "pgConfig.AllowRestart should reflect DBT_POSTGRESQL_ALLOW_RESTART")
 }
 
+// TestConfigFromViper_RestartScriptPathFromEnv locks in that the env var
+// DBT_POSTGRESQL_RESTART_SCRIPT_PATH populates pgConfig.RestartScriptPath via
+// the sub-viper unmarshal path.
+func TestConfigFromViper_RestartScriptPathFromEnv(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	t.Setenv("DBT_POSTGRESQL_CONNECTION_URL", testConnectionURL)
+	t.Setenv("DBT_POSTGRESQL_RESTART_SCRIPT_PATH", "/opt/scripts/restart.sh")
+
+	cfg, err := ConfigFromViper(nil)
+	require.NoError(t, err)
+	assert.Equal(t, "/opt/scripts/restart.sh", cfg.RestartScriptPath,
+		"pgConfig.RestartScriptPath should reflect DBT_POSTGRESQL_RESTART_SCRIPT_PATH")
+}
+
 // TestConfigFromViper_GlobalViperSeesAllowRestartEnv is the regression
 // test for the bug where viper.Sub("postgresql").BindEnv(...) did not
 // propagate to the global viper, so viper.GetBool("postgresql.allow_restart")

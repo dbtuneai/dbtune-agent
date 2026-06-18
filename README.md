@@ -127,6 +127,7 @@ export DBT_DBTUNE_SERVER_URL="https://app.dbtune.com"
 export DBT_DBTUNE_API_KEY=""
 export DBT_DBTUNE_DATABASE_ID=""
 export DBT_POSTGRESQL_ALLOW_RESTART=false  # Set to true to allow PostgreSQL restarts
+export DBT_POSTGRESQL_RESTART_SCRIPT_PATH=""  # Optional. Path to a custom restart script (see below).
 
 # Your database specific
 export DBT_POSTGRESQL_CONNECTION_URL=postgresql://user:password@localhost:5432/database
@@ -177,6 +178,33 @@ sudo systemctl enable --now dbtune-agent
 ```
 
 Once started you can check and verify that the dbtune-agent is running by looking at the journal, for example: `journalctl -u dbtune-agent -f`
+
+### Using a custom restart script
+
+If restarting the database can't be done through `systemctl` (e.g. you need `pg_ctl`, a
+container exec, or a privileged wrapper), you can point the agent at your own restart script.
+
+To do so, export the path to an executable script:
+```bash
+export DBT_POSTGRESQL_RESTART_SCRIPT_PATH=/path/to/your/restart.sh
+```
+When set, this takes precedence over `DBT_POSTGRESQL_SERVICE_NAME` and the agent executes the
+script directly (no shell — the value must be a bare executable path with no arguments). The
+file must exist and be executable (`chmod +x`); the agent validates this on startup.
+
+The script must signal success with exit code `0` and failure with any non-zero exit code.
+Output on stdout/stderr is logged on failure but does not by itself indicate failure — many
+tools (including `pg_ctl`) write to stderr during normal operation.
+
+An example of such a restart script using `pg_ctl` instead of `systemctl`:
+```sh
+#!/bin/bash
+set -eo pipefail
+
+# Restarts the database using pg_ctl, and a timeout of 10min.
+# Assumes PGDATA points to the data folder of postgres.
+exec gosu postgres pg_ctl restart -D "$PGDATA" -m fast -w -t 600
+```
 
 ### AWS Fargate / ECS
 Follow these [README](fargate/README.md) instructions to run the agent under AWS Fargate as a service.
