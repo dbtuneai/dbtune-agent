@@ -838,7 +838,7 @@ func (a *CommonAgent) SendError(ctx context.Context, payload ErrorPayload) error
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 204 && resp.StatusCode != 200 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
 		a.Logger().Errorf("Failed to send error. Response body: %s", string(body))
 		return fmt.Errorf("failed to send error, code: %d", resp.StatusCode)
