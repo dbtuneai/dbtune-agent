@@ -111,8 +111,8 @@ func (m *MockAgentLooper) CatalogCollectors() []queries.CatalogCollector {
 	return nil
 }
 
-func (m *MockAgentLooper) SendCatalogPayload(ctx context.Context, name string, payload []byte) error {
-	args := m.Called(ctx, name, payload)
+func (m *MockAgentLooper) SendCatalogPayload(ctx context.Context, name string, payload []byte, hash string) error {
+	args := m.Called(ctx, name, payload, hash)
 	return args.Error(0)
 }
 
@@ -496,7 +496,7 @@ func TestRunnerCatalogLoop(t *testing.T) {
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
 	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{okCollector, errCollector})
-	mockAgent.On("SendCatalogPayload", mock.Anything, "ok_collector", mock.Anything).Return(nil)
+	mockAgent.On("SendCatalogPayload", mock.Anything, "ok_collector", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
 		return p.ErrorType == "err_collector_error"
 	})).Return(nil)
@@ -513,7 +513,7 @@ func TestRunnerCatalogLoop(t *testing.T) {
 	defer mu.Unlock()
 	assert.Greater(t, sendCount, 1, "ok collector should have ticked more than once")
 	assert.Greater(t, errCount, 0, "err collector should have fired at least once after stagger")
-	mockAgent.AssertCalled(t, "SendCatalogPayload", mock.Anything, "ok_collector", mock.Anything)
+	mockAgent.AssertCalled(t, "SendCatalogPayload", mock.Anything, "ok_collector", mock.Anything, mock.Anything)
 	mockAgent.AssertCalled(t, "SendError", mock.Anything, mock.Anything)
 }
 
@@ -617,10 +617,10 @@ func TestRunnerCatalogLoop_BootstrapRunsBeforeOthers(t *testing.T) {
 	}
 
 	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{bootstrap, other})
-	mockAgent.On("SendCatalogPayload", mock.Anything, "bootstrap_inv", mock.Anything).
+	mockAgent.On("SendCatalogPayload", mock.Anything, "bootstrap_inv", mock.Anything, mock.Anything).
 		Run(func(_ mock.Arguments) { record("bootstrap_inv", "send") }).
 		Return(nil)
-	mockAgent.On("SendCatalogPayload", mock.Anything, "other", mock.Anything).
+	mockAgent.On("SendCatalogPayload", mock.Anything, "other", mock.Anything, mock.Anything).
 		Run(func(_ mock.Arguments) { record("other", "send") }).
 		Return(nil)
 
@@ -674,7 +674,7 @@ func TestRunnerCatalogLoop_BootstrapSkipsFirstTick(t *testing.T) {
 	}
 
 	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{bootstrap})
-	mockAgent.On("SendCatalogPayload", mock.Anything, "bootstrap_inv", mock.Anything).Return(nil)
+	mockAgent.On("SendCatalogPayload", mock.Anything, "bootstrap_inv", mock.Anything, mock.Anything).Return(nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), catalogStagger+300*time.Millisecond)
 	defer cancel()
@@ -718,7 +718,7 @@ func TestRunnerCatalogLoop_BootstrapFailureDoesNotBlockOthers(t *testing.T) {
 	}
 
 	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{bootstrap, other})
-	mockAgent.On("SendCatalogPayload", mock.Anything, "other", mock.Anything).Return(nil)
+	mockAgent.On("SendCatalogPayload", mock.Anything, "other", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
 		return p.ErrorType == "bootstrap_inv_error"
 	})).Return(nil)
@@ -779,7 +779,7 @@ func TestRunnerCatalogLoop_BootstrapRunsConcurrently(t *testing.T) {
 	}
 	mockAgent.On("CatalogCollectors").Return(collectors)
 	for _, c := range collectors {
-		mockAgent.On("SendCatalogPayload", mock.Anything, c.Name, mock.Anything).Return(nil)
+		mockAgent.On("SendCatalogPayload", mock.Anything, c.Name, mock.Anything, mock.Anything).Return(nil)
 	}
 
 	// Window covers concurrent bootstrap (sleep + 2*stagger ≈ 900ms)

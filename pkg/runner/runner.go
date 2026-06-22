@@ -245,7 +245,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 		if data == nil {
 			return nil
 		}
-		return adapter.SendCatalogPayload(ctx, c.Name, data.JSON)
+		return adapter.SendCatalogPayload(ctx, c.Name, data.JSON, data.Hash())
 	}
 
 	bootstrapSet := make(map[string]struct{}, len(bootstrapCollectorNames))

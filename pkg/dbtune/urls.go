@@ -2,6 +2,7 @@ package dbtune
 
 import (
 	"fmt"
+	neturl "net/url"
 
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/spf13/viper"
@@ -51,6 +52,18 @@ func CreateServerURLs() (ServerURLs, error) {
 // e.g. AgentURL("heartbeat") => "https://app.dbtune.com/api/v1/agent/heartbeat?uuid=<db-id>"
 func (s ServerURLs) AgentURL(path string) string {
 	return fmt.Sprintf("%s/api/v1/agent/%s?uuid=%s", s.ServerUrl, path, s.DbID)
+}
+
+// AgentURLWithParams builds an agent API URL with additional query parameters
+// appended. Used to carry a content hash in the query string so the backend
+// can short-circuit on an unchanged payload without reading the (potentially
+// large) request body.
+func (s ServerURLs) AgentURLWithParams(path string, params map[string]string) string {
+	url := s.AgentURL(path)
+	for k, v := range params {
+		url += fmt.Sprintf("&%s=%s", neturl.QueryEscape(k), neturl.QueryEscape(v))
+	}
+	return url
 }
 
 // GetKnobRecommendations generates the URL for getting knob recommendations.

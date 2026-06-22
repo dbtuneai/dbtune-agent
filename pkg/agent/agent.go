@@ -200,8 +200,10 @@ type AgentLooper interface {
 	CatalogCollectors() []queries.CatalogCollector
 
 	// SendCatalogPayload sends pre-marshaled, gzip-compressed JSON to the
-	// DBtune server for the named catalog view.
-	SendCatalogPayload(ctx context.Context, name string, payload []byte) error
+	// DBtune server for the named catalog view. The hash is sent as a query
+	// parameter so the backend can short-circuit on an unchanged payload
+	// without reading the body.
+	SendCatalogPayload(ctx context.Context, name string, payload []byte, hash string) error
 
 	// GetLogger returns the logger for the agent
 	Logger() *log.Logger
@@ -675,7 +677,8 @@ func (a *CommonAgent) SendSystemInfo(ctx context.Context, systemInfo []metrics.F
 		return err
 	}
 
-	resp, err := a.putJSON(ctx, a.ServerURLs.AgentURL("system-info"), jsonData)
+	url := a.ServerURLs.AgentURLWithParams("system-info", map[string]string{"hash": formattedMetrics.Hash})
+	resp, err := a.putJSON(ctx, url, jsonData)
 	if err != nil {
 		return err
 	}
@@ -695,19 +698,21 @@ func (a *CommonAgent) SendActiveConfig(ctx context.Context, config ConfigArraySc
 
 	type Payload struct {
 		Config ConfigArraySchema `json:"config"`
-		Hash   string            `json:"hash"`
 	}
 
+	// The hash travels as a query parameter (not in the body) so the backend
+	// can skip the config payload when it is unchanged.
 	hash, _ := metrics.HashJSON(config)
 
-	jsonData, err := json.Marshal(Payload{Config: config, Hash: hash})
+	jsonData, err := json.Marshal(Payload{Config: config})
 	if err != nil {
 		return err
 	}
 
 	a.Logger().Debugf("Active config payload: %s", string(jsonData))
 
-	resp, err := a.postJSON(ctx, a.ServerURLs.AgentURL("configurations"), jsonData)
+	url := a.ServerURLs.AgentURLWithParams("configurations", map[string]string{"hash": hash})
+	resp, err := a.postJSON(ctx, url, jsonData)
 	if err != nil {
 		return err
 	}
@@ -793,7 +798,7 @@ func gzipCompress(data []byte) (*bytes.Buffer, error) {
 
 // SendCatalogPayload sends pre-marshaled JSON bytes for a catalog view,
 // gzip-compressed, to the DBtune server.
-func (a *CommonAgent) SendCatalogPayload(ctx context.Context, name string, payload []byte) error {
+func (a *CommonAgent) SendCatalogPayload(ctx context.Context, name string, payload []byte, hash string) error {
 	buf, err := gzipCompress(payload)
 	if err != nil {
 		return err
@@ -803,7 +808,7 @@ func (a *CommonAgent) SendCatalogPayload(ctx context.Context, name string, paylo
 	ctx, cancel := context.WithTimeout(ctx, catalogSendTimeout)
 	defer cancel()
 
-	url := a.ServerURLs.AgentURL(name)
+	url := a.ServerURLs.AgentURLWithParams(name, map[string]string{"hash": hash})
 	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, url, buf)
 	if err != nil {
 		return err

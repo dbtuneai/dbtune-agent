@@ -26,6 +26,10 @@ type CatalogCollector struct {
 // the bytes without re-serializing.
 type CollectResult struct {
 	JSON []byte // Pre-marshaled JSON of the payload
+	// hashOverride, when non-empty, is returned by Hash() instead of the
+	// xxhash of JSON. Collectors that compute a domain-specific content hash
+	// (e.g. DDL) set this so the backend receives that hash as a change token.
+	hashOverride string
 }
 
 // PrepareCtx is a hook called before each catalog query to allow adapters
@@ -155,9 +159,14 @@ func NewCollector[T any](
 	}
 }
 
-// Hash returns a hex string of the xxhash of the JSON bytes, suitable for
-// sending to the backend as a change-detection token.
+// Hash returns a change-detection token for the payload, suitable for sending
+// to the backend as a query parameter. When a collector has supplied an
+// explicit hash (hashOverride) it is returned as-is; otherwise it falls back to
+// a hex string of the xxhash of the JSON bytes.
 func (r *CollectResult) Hash() string {
+	if r.hashOverride != "" {
+		return r.hashOverride
+	}
 	return strconv.FormatUint(xxhash.Sum64(r.JSON), 16)
 }
 

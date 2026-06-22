@@ -15,11 +15,11 @@ const (
 )
 
 type ddlPayload struct {
-	DDL     string `json:"ddl"`
-	DDLHash string `json:"ddl_hash"`
+	DDL string `json:"ddl"`
 }
 
-// DDLCollector emits the full DDL dump plus its hash. Payload is deduplicated
+// DDLCollector emits the full DDL dump in the body; its hash travels as a
+// query parameter (see CollectResult.hashOverride). Payload is deduplicated
 // via skipTracker so the backend still receives a heartbeat every
 // skipUnchangedMultiplier intervals even when DDL is unchanged.
 func DDLCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
@@ -39,14 +39,16 @@ func DDLCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
 			if ddl == "" {
 				return nil, nil
 			}
-			data, err := json.Marshal(ddlPayload{DDL: ddl, DDLHash: HashDDL(ddl)})
+			data, err := json.Marshal(ddlPayload{DDL: ddl})
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal DDL: %w", err)
 			}
 			if tracker.shouldSkip(data) {
 				return nil, nil
 			}
-			return &CollectResult{JSON: data}, nil
+			// The DDL hash travels in the query string (not the body) so the
+			// backend can skip the large DDL payload when it is unchanged.
+			return &CollectResult{JSON: data, hashOverride: HashDDL(ddl)}, nil
 		},
 	}
 }

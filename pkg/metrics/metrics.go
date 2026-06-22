@@ -52,7 +52,9 @@ type FormattedMetrics struct {
 type FormattedSystemInfo struct {
 	SystemInfo map[string]MetricData `json:"system_info"`
 	Timestamp  string                `json:"timestamp"`
-	Hash       string                `json:"hash"`
+	// Hash is sent as a query parameter (not in the body) so the backend can
+	// skip the large system-info payload when it is unchanged.
+	Hash string `json:"-"`
 }
 
 // validatePgssDeltaItems validates that the input is an array of CachedPGStatStatement items

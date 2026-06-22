@@ -23,9 +23,11 @@ func TestSendCatalogPayload(t *testing.T) {
 	var gotHeaders http.Header
 	var gotBody []byte
 	var gotPath string
+	var gotHash string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotHeaders = r.Header.Clone()
 		gotPath = r.URL.Path
+		gotHash = r.URL.Query().Get("hash")
 		b, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		gotBody = b
@@ -45,12 +47,13 @@ func TestSendCatalogPayload(t *testing.T) {
 	}
 	ca.APIClient.Logger = nil
 
-	err := ca.SendCatalogPayload(context.Background(), "pg_stats", payload)
+	err := ca.SendCatalogPayload(context.Background(), "pg_stats", payload, "deadbeef")
 	require.NoError(t, err)
 
 	assert.Equal(t, "gzip", gotHeaders.Get("Content-Encoding"))
 	assert.Equal(t, "application/json", gotHeaders.Get("Content-Type"))
 	assert.True(t, strings.Contains(gotPath, "pg_stats"), "path should include collector name, got %q", gotPath)
+	assert.Equal(t, "deadbeef", gotHash, "hash should be sent as a query parameter")
 
 	gr, err := gzip.NewReader(strings.NewReader(string(gotBody)))
 	require.NoError(t, err)
@@ -78,7 +81,7 @@ func TestSendCatalogPayload_NonSuccessStatus(t *testing.T) {
 		},
 	}
 
-	err := ca.SendCatalogPayload(context.Background(), "pg_stats", []byte(`{}`))
+	err := ca.SendCatalogPayload(context.Background(), "pg_stats", []byte(`{}`), "hash")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "400")
 }
