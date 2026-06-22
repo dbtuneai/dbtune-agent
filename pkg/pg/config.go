@@ -17,7 +17,6 @@ type Config struct {
 	ConnectionURL string `mapstructure:"connection_url" validate:"required"`
 	ServiceName   string `mapstructure:"service_name"` // TODO(eddie): Should be moved under pgprem, as it doesn't apply to all other PG providers
 	AllowRestart  bool   `mapstructure:"allow_restart"`
-	AuthMethod    string `mapstructure:"auth_method"`
 }
 
 func ConfigFromViper(key *string) (Config, error) {
@@ -44,7 +43,6 @@ func ConfigFromViper(key *string) (Config, error) {
 	_ = dbtuneConfig.BindEnv("connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
 	_ = dbtuneConfig.BindEnv("service_name", "DBT_POSTGRESQL_SERVICE_NAME")
 	_ = dbtuneConfig.BindEnv("allow_restart", "DBT_POSTGRESQL_ALLOW_RESTART")
-	_ = dbtuneConfig.BindEnv("auth_method", "DBT_POSTGRESQL_AUTH_METHOD")
 
 	// Also bind on the global viper so dotted lookups like
 	// viper.GetBool("postgresql.allow_restart") (used by agent.IsRestartAllowed)
@@ -53,7 +51,6 @@ func ConfigFromViper(key *string) (Config, error) {
 	_ = viper.BindEnv("postgresql.service_name", "DBT_POSTGRESQL_SERVICE_NAME")
 	_ = viper.BindEnv("postgresql.use_restart_command", "DBT_POSTGRESQL_USE_RESTART_COMMAND")
 	_ = viper.BindEnv("postgresql.allow_restart", "DBT_POSTGRESQL_ALLOW_RESTART")
-	_ = viper.BindEnv("postgresql.auth_method", "DBT_POSTGRESQL_AUTH_METHOD")
 
 	dbtuneConfig.SetDefault("allow_restart", false)
 

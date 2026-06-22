@@ -8,11 +8,13 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/dbtune"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // CheckStartupRequirements verifies all mandatory configuration and connectivity requirements.
 // Returns nil if all checks pass, or an error describing the first failure.
-func CheckStartupRequirements() error {
+// If pool is non-nil it is used directly; otherwise a plain pool is created from the connection URL.
+func CheckStartupRequirements(pool *pgxpool.Pool) error {
 	// Check PostgreSQL connection URL
 	pgConfig, err := pg.ConfigFromViper(nil)
 	if err != nil {
@@ -28,12 +30,17 @@ func CheckStartupRequirements() error {
 		return fmt.Errorf("dbtune server configuration invalid: %w", err)
 	}
 
-	// Try to connect to the database
-	dbpool, err := pg.NewPool(context.Background(), pgConfig)
-	if err != nil {
-		return fmt.Errorf("failed to connect to PostgreSQL database: %w", err)
+	// Use the provided pool or create a plain one
+	var dbpool *pgxpool.Pool
+	if pool != nil {
+		dbpool = pool
+	} else {
+		dbpool, err = pgxpool.New(context.Background(), pgConfig.ConnectionURL)
+		if err != nil {
+			return fmt.Errorf("failed to connect to PostgreSQL database: %w", err)
+		}
+		defer dbpool.Close()
 	}
-	defer dbpool.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 
 	defer cancel()

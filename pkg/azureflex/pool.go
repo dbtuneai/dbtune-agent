@@ -1,4 +1,4 @@
-package pg
+package azureflex
 
 import (
 	"context"
@@ -11,21 +11,17 @@ import (
 )
 
 const (
-	AuthMethodPassword = "password"
-	AuthMethodEntra    = "entra"
+	AuthMethodEntra = "entra"
 
 	// entraTokenScope is the OAuth scope for Azure Database for PostgreSQL.
 	entraTokenScope = "https://ossrdbms-aad.database.windows.net/.default"
 )
 
-// NewPool creates a pgxpool from the given Config.
-// When AuthMethod is "entra", a BeforeConnect hook is installed that fetches a
-// fresh Azure AD token via DefaultAzureCredential and injects it as the
-// connection password. This allows connecting to Azure Flex Server using
-// Microsoft Entra authentication without a static password.
-func NewPool(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
+// NewPool creates a pgxpool for Azure Flex Server. When AuthMethod is "entra",
+// a BeforeConnect hook fetches a fresh Azure AD token and injects it as the password.
+func NewPool(ctx context.Context, connectionURL string, cfg Config) (*pgxpool.Pool, error) {
 	if cfg.AuthMethod != AuthMethodEntra {
-		return pgxpool.New(ctx, cfg.ConnectionURL)
+		return pgxpool.New(ctx, connectionURL)
 	}
 
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
@@ -33,7 +29,7 @@ func NewPool(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("entra auth: failed to create Azure credential: %w", err)
 	}
 
-	poolCfg, err := pgxpool.ParseConfig(cfg.ConnectionURL)
+	poolCfg, err := pgxpool.ParseConfig(connectionURL)
 	if err != nil {
 		return nil, fmt.Errorf("entra auth: failed to parse connection URL: %w", err)
 	}

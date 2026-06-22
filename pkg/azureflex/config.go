@@ -13,6 +13,7 @@ type Config struct {
 	SubscriptionID    string `mapstructure:"subscription_id" validate:"required"`
 	ResourceGroupName string `mapstructure:"resource_group_name" validate:"required"`
 	ServerName        string `mapstructure:"server_name" validate:"required"`
+	AuthMethod        string `mapstructure:"auth_method"`
 }
 
 func ConfigFromViper() (Config, error) {
@@ -25,6 +26,7 @@ func ConfigFromViper() (Config, error) {
 	_ = dbtuneConfig.BindEnv("subscription_id", "DBT_AZURE_FLEX_SUBSCRIPTION_ID")
 	_ = dbtuneConfig.BindEnv("resource_group_name", "DBT_AZURE_FLEX_RESOURCE_GROUP_NAME")
 	_ = dbtuneConfig.BindEnv("server_name", "DBT_AZURE_FLEX_SERVER_NAME")
+	_ = dbtuneConfig.BindEnv("auth_method", "DBT_AZURE_FLEX_AUTH_METHOD")
 
 	var config Config
 
