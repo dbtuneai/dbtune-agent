@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	AuthMethodEntra = "entra"
+	AuthMethodPostgres = "postgres"
+	AuthMethodEntra    = "entra"
 
-	// entraTokenScope is the OAuth scope for Azure Database for PostgreSQL.
 	entraTokenScope = "https://ossrdbms-aad.database.windows.net/.default" //nolint:gosec // public OAuth scope
 )
 
