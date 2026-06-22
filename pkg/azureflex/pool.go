@@ -14,7 +14,7 @@ const (
 	AuthMethodEntra = "entra"
 
 	// entraTokenScope is the OAuth scope for Azure Database for PostgreSQL.
-	entraTokenScope = "https://ossrdbms-aad.database.windows.net/.default"
+	entraTokenScope = "https://ossrdbms-aad.database.windows.net/.default" //nolint:gosec // public OAuth scope
 )
 
 // NewPool creates a pgxpool for Azure Flex Server. When AuthMethod is "entra",
