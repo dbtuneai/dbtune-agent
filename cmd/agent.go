@@ -17,10 +17,12 @@ import (
 	"github.com/dbtuneai/agent/pkg/cnpg"
 	"github.com/dbtuneai/agent/pkg/docker"
 	"github.com/dbtuneai/agent/pkg/patroni"
+	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/dbtuneai/agent/pkg/pgprem"
 	"github.com/dbtuneai/agent/pkg/rds"
 	"github.com/dbtuneai/agent/pkg/runner"
 	"github.com/dbtuneai/agent/pkg/version"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/viper"
 )
 
@@ -91,18 +93,39 @@ func main() {
 	viper.AutomaticEnv()      // Read also environment variables
 	viper.SetEnvPrefix("DBT") // Set a prefix for environment variables
 
+	var adapter agent.AgentLooper
+	var err error
+
+	// For Azure Flex with Entra auth, the pool must be created before the startup check
+	// because plain pgxpool.New cannot fetch an Entra token.
+	isAzureFlex := *useAzureFlex || azureflex.DetectConfigFromEnv() || azureflex.DetectConfigFromConfigFile()
+	var azureFlexPool *pgxpool.Pool
+	if isAzureFlex {
+		azFlexCfg, cfgErr := azureflex.ConfigFromViper()
+		if cfgErr != nil {
+			log.Fatalf("Failed to read Azure Flex config: %v", cfgErr)
+		}
+		if azFlexCfg.AuthMethod == azureflex.AuthMethodEntra {
+			pgCfg, cfgErr := pg.ConfigFromViper(nil)
+			if cfgErr != nil {
+				log.Fatalf("Failed to read PostgreSQL config: %v", cfgErr)
+			}
+			azureFlexPool, err = azureflex.NewPool(context.Background(), pgCfg.ConnectionURL, azFlexCfg)
+			if err != nil {
+				log.Fatalf("Failed to create Entra-authenticated pool: %v", err)
+			}
+		}
+	}
+
 	// Startup checks for config and connectivity
 	disableChecks := viper.GetBool("disable_checks")
 	if !disableChecks {
-		if err := checks.CheckStartupRequirements(); err != nil {
+		if err := checks.CheckStartupRequirements(azureFlexPool); err != nil {
 			log.Fatalf("Startup check failed: %v", err)
 		}
 	} else {
 		log.Println("Startup checks are disabled via configuration (disable_checks=true)")
 	}
-
-	var adapter agent.AgentLooper
-	var err error
 
 	// Create the appropriate adapter based on flags
 	switch {
