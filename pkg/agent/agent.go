@@ -445,6 +445,7 @@ func CreateCommonAgentWithVersion(version string) *CommonAgent {
 	client := retryablehttp.NewClient()
 	// 30 retries, as the cap is 30seconds for the back-off wait time
 	client.RetryMax = 30
+	client.HTTPClient.Timeout = 4 * time.Second
 	// retryablehttp logs every failed attempt at Error level. Those are
 	// transient and retried, so silencing its internal logger keeps retry noise
 	// off the backend log hook. The real outcome surfaces via the error Do
@@ -549,8 +550,7 @@ func (a *CommonAgent) SendHeartbeat(ctx context.Context) error {
 		return err
 	}
 
-	// Add a timeout to avoid hanging
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 
 	resp, err := a.postJSON(ctx, url, jsonData)
