@@ -250,7 +250,6 @@ var (
 
 	// OS Info
 	NodeOSInfo        = MetricDef{Key: "node_os_info", Type: String}
-	NodeStorageType   = MetricDef{Key: "node_storage_type", Type: String}
 	NodeOSPlatform    = MetricDef{Key: "system_info_platform", Type: String}
 	NodeOSPlatformVer = MetricDef{Key: "system_info_platform_version", Type: String}
 

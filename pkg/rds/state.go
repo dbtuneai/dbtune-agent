@@ -197,13 +197,6 @@ func (info *DBInfo) TryIntoFlatValuesSlice() ([]metrics.FlatValue, error) {
 		}
 	}
 
-	// TODO(eddie): Really? We should definitely find where to fetch this and add to system info.
-	// For RDS, disk type is always SSD
-	diskTypeMetric, err := metrics.NodeStorageType.AsFlatValue("SSD")
-	if err == nil {
-		flat_metrics = append(flat_metrics, diskTypeMetric)
-	}
-
 	if info.ParameterGroupName != "" {
 		if v, err := metrics.AWSRDSParameterGroup.AsFlatValue(info.ParameterGroupName); err == nil {
 			flat_metrics = append(flat_metrics, v)

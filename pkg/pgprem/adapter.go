@@ -129,11 +129,6 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(_ context.Context) ([]met
 		return nil, err
 	}
 
-	diskType, err := GetDiskType(adapter.pgDriver)
-	if err != nil {
-		adapter.Logger().Warnf("Error getting disk type: %v", err)
-	}
-
 	// Convert into metrics
 	totalMemory, err := metrics.NodeMemoryTotal.AsFlatValue(memoryInfo.Total)
 	if err != nil {
@@ -145,7 +140,6 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(_ context.Context) ([]met
 	platformVersion, _ := metrics.NodeOSPlatformVer.AsFlatValue(hostInfo.PlatformVersion)
 	maxConnectionsMetric, _ := metrics.PGMaxConnections.AsFlatValue(maxConnections)
 	noCPUsMetric, _ := metrics.NodeCPUCount.AsFlatValue(noCPUs)
-	diskTypeMetric, _ := metrics.NodeStorageType.AsFlatValue(diskType)
 
 	systemInfo := []metrics.FlatValue{
 		version,
@@ -155,7 +149,6 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(_ context.Context) ([]met
 		platform,
 		maxConnectionsMetric,
 		noCPUsMetric,
-		diskTypeMetric,
 	}
 
 	return systemInfo, nil

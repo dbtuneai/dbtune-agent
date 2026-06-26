@@ -175,14 +175,6 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]met
 		return nil, err
 	}
 
-	// Aiven uses SSD storage
-	// TODO: Verify this? Can't find anything in their API or website that says this, but it's a reasonable assumption
-	diskTypeMetric, err := metrics.NodeStorageType.AsFlatValue("SSD")
-	if err != nil {
-		adapter.Logger().Errorf("Error creating disk type metric: %v", err)
-		return nil, err
-	}
-
 	maxConnectionsMetric, err := metrics.PGMaxConnections.AsFlatValue(maxConnections)
 	if err != nil {
 		adapter.Logger().Errorf("Error creating max connections metric: %v", err)
@@ -194,7 +186,6 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]met
 		totalMemory,
 		maxConnectionsMetric,
 		noCPUsMetric,
-		diskTypeMetric,
 	}
 
 	return systemInfo, nil
