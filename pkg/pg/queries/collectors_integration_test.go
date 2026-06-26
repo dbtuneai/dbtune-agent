@@ -1907,6 +1907,245 @@ func TestPgStatStatements_AdaptsToOldExtensionOnNewServer(t *testing.T) {
 	}
 }
 
+// assertUniqueCompositeKeys fails if any (queryid, userid, dbid) composite key
+// appears more than once across the given rows. This is the invariant the
+// platform relies on: its INSERT ... ON CONFLICT (db_instance_id, query_id)
+// over the unnested array raises CardinalityViolation on a duplicate key.
+func assertUniqueCompositeKeys(t *testing.T, rows []PgStatStatementsRow, label string) {
+	t.Helper()
+	seen := make(map[string]int, len(rows))
+	for i := range rows {
+		seen[compositeKey(&rows[i])]++
+	}
+	for k, n := range seen {
+		if n > 1 {
+			t.Fatalf("%s: composite key %q appears %d times — not unique", label, k, n)
+		}
+	}
+}
+
+// assertUniqueDeltaKeys is the delta-side equivalent of the above.
+func assertUniqueDeltaKeys(t *testing.T, deltas []PgStatStatementsDelta, label string) {
+	t.Helper()
+	keyOf := func(d *PgStatStatementsDelta) string {
+		r := PgStatStatementsRow{QueryID: d.QueryID, UserID: d.UserID, DbID: d.DbID}
+		return compositeKey(&r)
+	}
+	seen := make(map[string]int, len(deltas))
+	for i := range deltas {
+		seen[keyOf(&deltas[i])]++
+	}
+	for k, n := range seen {
+		if n > 1 {
+			t.Fatalf("%s: delta composite key %q appears %d times — not unique", label, k, n)
+		}
+	}
+}
+
+// TestPgStatStatements_TopLevelNestedAggregation reproduces the production
+// CardinalityViolation at its source. With pg_stat_statements.track = all, a
+// query run both directly and via EXECUTE inside a function parses to the same
+// queryid and appears as two rows (toplevel = true / false). The collector's
+// composite key drops toplevel, so both rows must be collapsed into one before
+// emission. This exercises the real PostgreSQL behaviour (not synthetic rows)
+// and asserts: every emitted row/delta is unique per composite key; the probe
+// query collapses to exactly one row whose calls equal top-level + nested; and
+// the toplevel-spanning merged row clears the toplevel flag.
+//
+// Requires ext >= 1.9 (the toplevel column), i.e. PG 14+. On older extensions
+// PostgreSQL itself folds nested executions into the single entry, so no
+// duplicate arises.
+func TestPgStatStatements_TopLevelNestedAggregation(t *testing.T) {
+	const (
+		probeNormalized = "SELECT count(*) FROM agg_probe WHERE id > $1"
+		topLevelCalls   = 3
+		nestedCalls     = 4
+	)
+
+	for _, inst := range pgInstances {
+		if inst.version < 14 {
+			continue // ext < 1.9 has no toplevel dimension; pg folds nested itself
+		}
+		inst := inst
+		t.Run(fmt.Sprintf("PG%d", inst.version), func(t *testing.T) {
+			// No t.Parallel(): isolated database, kept sequential for readable
+			// failures and to avoid pg_stat_statements cross-talk.
+			ctx := context.Background()
+
+			dbName := fmt.Sprintf("pgss_toplevel_pg%d", inst.version)
+			if _, err := inst.admin.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", dbName)); err != nil {
+				t.Fatalf("CREATE DATABASE %s: %v", dbName, err)
+			}
+			t.Cleanup(func() {
+				_, _ = inst.admin.Exec(ctx,
+					"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
+					dbName)
+				_, _ = inst.admin.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName))
+			})
+
+			baseConn, err := inst.container.ConnectionString(ctx, "sslmode=disable")
+			if err != nil {
+				t.Fatalf("ConnectionString: %v", err)
+			}
+			cfg, err := pgxpool.ParseConfig(baseConn)
+			if err != nil {
+				t.Fatalf("ParseConfig: %v", err)
+			}
+			cfg.ConnConfig.Database = dbName
+			pool, err := pgxpool.NewWithConfig(ctx, cfg)
+			if err != nil {
+				t.Fatalf("NewWithConfig: %v", err)
+			}
+			defer pool.Close()
+
+			// Run all setup + activity on a single pinned connection so that the
+			// session-level SET pg_stat_statements.track = all is in effect for
+			// every probe statement (pooled connections would not share it).
+			conn, err := pool.Acquire(ctx)
+			if err != nil {
+				t.Fatalf("Acquire: %v", err)
+			}
+			defer conn.Release()
+
+			setup := []string{
+				"CREATE EXTENSION pg_stat_statements",
+				"SET pg_stat_statements.track = 'all'",
+				"CREATE TABLE agg_probe (id int)",
+				"INSERT INTO agg_probe SELECT generate_series(1, 100)",
+				// nest() runs the IDENTICAL literal via EXECUTE so the nested
+				// statement gets the same queryid as the top-level probe.
+				`CREATE FUNCTION agg_nest() RETURNS void LANGUAGE plpgsql AS $$
+				 BEGIN EXECUTE 'SELECT count(*) FROM agg_probe WHERE id > 0'; END; $$`,
+				"SELECT pg_stat_statements_reset()",
+			}
+			for _, sql := range setup {
+				if _, err := conn.Exec(ctx, sql); err != nil {
+					t.Fatalf("setup %q: %v", sql[:min(len(sql), 50)], err)
+				}
+			}
+
+			runProbe := func(top, nested int) {
+				for i := 0; i < top; i++ {
+					if _, err := conn.Exec(ctx, "SELECT count(*) FROM agg_probe WHERE id > 0"); err != nil {
+						t.Fatalf("top-level probe: %v", err)
+					}
+				}
+				for i := 0; i < nested; i++ {
+					if _, err := conn.Exec(ctx, "SELECT agg_nest()"); err != nil {
+						t.Fatalf("nested probe: %v", err)
+					}
+				}
+			}
+
+			// Confirm the raw view actually produced two toplevel variants for
+			// the probe queryid — otherwise the test would pass vacuously.
+			runProbe(topLevelCalls, nestedCalls)
+			var rawVariants int
+			if err := conn.QueryRow(ctx,
+				"SELECT count(*) FROM pg_stat_statements WHERE query = $1", probeNormalized,
+			).Scan(&rawVariants); err != nil {
+				t.Fatalf("count raw variants: %v", err)
+			}
+			if rawVariants != 2 {
+				t.Fatalf("precondition: expected 2 raw toplevel variants for the probe, got %d "+
+					"(track=all not in effect, or queryids diverged)", rawVariants)
+			}
+
+			c := PgStatStatementsCollector(pool, noopPrepareCtx, PgStatStatementsConfig{
+				DiffLimit:          PgStatStatementsDiffLimit,
+				IncludeQueries:     true,
+				MaxQueryTextLength: 1000,
+			})
+
+			// First collect: baseline snapshot, rows must already be deduped.
+			r1, err := c.Collect(ctx)
+			if err != nil {
+				t.Fatalf("first Collect(): %v", err)
+			}
+			var p1 PgStatStatementsPayload
+			if err := json.Unmarshal(r1.JSON, &p1); err != nil {
+				t.Fatalf("unmarshal p1: %v", err)
+			}
+			assertUniqueCompositeKeys(t, p1.Rows, "first snapshot rows")
+
+			probeRows := func(rows []PgStatStatementsRow) []PgStatStatementsRow {
+				var out []PgStatStatementsRow
+				for _, r := range rows {
+					if r.Query != nil && string(*r.Query) == probeNormalized {
+						out = append(out, r)
+					}
+				}
+				return out
+			}
+
+			matched := probeRows(p1.Rows)
+			if len(matched) != 1 {
+				t.Fatalf("expected exactly 1 merged probe row, got %d", len(matched))
+			}
+			if got := int64(deref(matched[0].Calls)); got != topLevelCalls+nestedCalls {
+				t.Errorf("merged probe calls = %d, want %d (top-level %d + nested %d)",
+					got, topLevelCalls+nestedCalls, topLevelCalls, nestedCalls)
+			}
+			if matched[0].TopLevel != nil {
+				t.Errorf("merged probe row must clear toplevel, got %v", *matched[0].TopLevel)
+			}
+
+			// The merged distribution fields (the focus of the pooled-variance /
+			// population-stddev analysis) must be populated and self-consistent
+			// on a real PG row, not just synthetic unit-test rows.
+			pr := matched[0]
+			if pr.MinExecTime == nil || pr.MeanExecTime == nil || pr.MaxExecTime == nil || pr.StddevExecTime == nil {
+				t.Fatal("merged probe row missing exec-time stats")
+			}
+			mean := float64(*pr.MeanExecTime)
+			// Combined mean is a calls-weighted average, so it must lie within the
+			// merged [min, max] extrema. Catches a field-population regression.
+			if mean < float64(*pr.MinExecTime) || mean > float64(*pr.MaxExecTime) {
+				t.Errorf("mean_exec_time %.4f outside [min %.4f, max %.4f]",
+					mean, float64(*pr.MinExecTime), float64(*pr.MaxExecTime))
+			}
+			if float64(*pr.StddevExecTime) < 0 {
+				t.Errorf("stddev_exec_time must be non-negative, got %.4f", float64(*pr.StddevExecTime))
+			}
+			// Plan-time stats must be present (values may be 0 when plans = 0).
+			if pr.MeanPlanTime == nil || pr.StddevPlanTime == nil {
+				t.Error("merged probe row missing plan-time stats")
+			}
+
+			// Second collect after more activity: the delta path must also emit
+			// unique composite keys, and the probe's delta must aggregate both
+			// contexts' new calls.
+			runProbe(topLevelCalls, nestedCalls)
+			r2, err := c.Collect(ctx)
+			if err != nil {
+				t.Fatalf("second Collect(): %v", err)
+			}
+			var p2 PgStatStatementsPayload
+			if err := json.Unmarshal(r2.JSON, &p2); err != nil {
+				t.Fatalf("unmarshal p2: %v", err)
+			}
+			assertUniqueCompositeKeys(t, p2.Rows, "second snapshot rows")
+			assertUniqueDeltaKeys(t, p2.Deltas, "second snapshot deltas")
+
+			var probeDelta *PgStatStatementsDelta
+			for i := range p2.Deltas {
+				d := &p2.Deltas[i]
+				if d.QueryID != nil && matched[0].QueryID != nil && *d.QueryID == *matched[0].QueryID {
+					probeDelta = d
+					break
+				}
+			}
+			if probeDelta == nil {
+				t.Fatalf("expected a delta for the probe queryid")
+			}
+			if got := int64(deref(probeDelta.Calls)); got != topLevelCalls+nestedCalls {
+				t.Errorf("probe delta calls = %d, want %d (aggregated top-level + nested)",
+					got, topLevelCalls+nestedCalls)
+			}
+		})
+	}
+}
+
 func TestAutovacuumCount_ReturnsData(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
 		c := AutovacuumCountCollector(inst.pool, noopPrepareCtx)
