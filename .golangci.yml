@@ -19,6 +19,7 @@ linters:
     - nolintlint
     - errorlint
     - bodyclose
+    - unused
 
   settings:
     goconst:
