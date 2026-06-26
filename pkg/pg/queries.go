@@ -151,19 +151,6 @@ func AlterSystemReset(pgPool *pgxpool.Pool, name string) error {
 	return nil
 }
 
-const DataDirectoryQuery = `
-SHOW data_directory;
-`
-
-func DataDirectory(pgPool *pgxpool.Pool) (string, error) {
-	var dataDir string
-	err := utils.QueryRowWithPrefix(pgPool, context.Background(), DataDirectoryQuery).Scan(&dataDir)
-	if err != nil {
-		return "", err
-	}
-	return dataDir, nil
-}
-
 const Select1Query = `
 SELECT 1;
 `
