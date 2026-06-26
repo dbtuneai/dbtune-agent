@@ -138,20 +138,6 @@ func GetCPUUtilization(
 	return getAverageMetricValue(clients, databaseIdentifier, "CPUUtilization", 5)
 }
 
-func GetReadIOPS(
-	databaseIdentifier string,
-	clients *AWSClients,
-) (float64, error) {
-	return getAverageMetricValue(clients, databaseIdentifier, "ReadIOPS", 5)
-}
-
-func GetWriteIOPS(
-	databaseIdentifier string,
-	clients *AWSClients,
-) (float64, error) {
-	return getAverageMetricValue(clients, databaseIdentifier, "WriteIOPS", 5)
-}
-
 type IOPSResult struct {
 	ReadIOPS  float64
 	WriteIOPS float64

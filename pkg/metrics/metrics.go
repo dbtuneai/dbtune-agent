@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math"
 	"reflect"
-	"strings"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/internal/utils"
@@ -323,15 +322,3 @@ var (
 	// Misc
 	ServerUptimeMinutes = MetricDef{Key: "server_uptime", Type: Float}
 )
-
-// One created for each type of wait event, each is Int
-type PGWaitEvent struct {
-	Name string
-}
-
-const PGWaitEventPrefix = "pg_wait_event_"
-
-func (e PGWaitEvent) AsFlatValue(value int) (FlatValue, error) {
-	metricName := fmt.Sprintf("%s%s", PGWaitEventPrefix, strings.ToLower(e.Name))
-	return MetricDef{Key: metricName, Type: Int}.AsFlatValue(value)
-}

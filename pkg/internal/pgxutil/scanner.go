@@ -85,12 +85,6 @@ func (s *Scanner[T]) Scan(row pgx.CollectableRow) (T, error) {
 	return result, nil
 }
 
-// ScanAddr is like Scan but returns a pointer, matching the pgx RowToAddrOf* convention.
-func (s *Scanner[T]) ScanAddr(row pgx.CollectableRow) (*T, error) {
-	result, err := s.Scan(row)
-	return &result, err
-}
-
 // computeStructFields walks a struct type and collects all exported,
 // taggable fields, recursing into anonymous (embedded) structs.
 // This function will panic if t is not a struct

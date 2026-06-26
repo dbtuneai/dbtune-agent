@@ -52,14 +52,6 @@ func GetMemoryTotal(cloudMonitoringClient *CloudMonitoringClient, projectID stri
 	return getLatestMetricValue(cloudMonitoringClient, projectID, "cloudsql.googleapis.com/database/memory/quota", []QueryLabel{{Name: "database_id", Value: fmt.Sprintf("%s:%s", projectID, databaseName)}}, []QueryLabel{})
 }
 
-func GetMemoryUsed(cloudMonitoringClient *CloudMonitoringClient, projectID string, databaseName string) (monitoringpb.TypedValue, error) {
-	return getLatestMetricValue(cloudMonitoringClient, projectID, "cloudsql.googleapis.com/database/memory/total_usage", []QueryLabel{{Name: "database_id", Value: fmt.Sprintf("%s:%s", projectID, databaseName)}}, []QueryLabel{})
-}
-
-func GetMemoryUsedPercentage(cloudMonitoringClient *CloudMonitoringClient, projectID string, databaseName string) (monitoringpb.TypedValue, error) {
-	return getLatestMetricValue(cloudMonitoringClient, projectID, "cloudsql.googleapis.com/database/memory/utilization", []QueryLabel{{Name: "database_id", Value: fmt.Sprintf("%s:%s", projectID, databaseName)}}, []QueryLabel{})
-}
-
 func getMemoryComponents(cloudMonitoringClient *CloudMonitoringClient, projectID string, databaseName string, component string) (monitoringpb.TypedValue, error) {
 	return getLatestMetricValue(cloudMonitoringClient, projectID, "cloudsql.googleapis.com/database/memory/components", []QueryLabel{{Name: "database_id", Value: fmt.Sprintf("%s:%s", projectID, databaseName)}}, []QueryLabel{{Name: "component", Value: component}})
 }
