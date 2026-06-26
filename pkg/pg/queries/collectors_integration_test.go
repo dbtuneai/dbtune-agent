@@ -1012,7 +1012,7 @@ func TestPgClass_BackfillThenDelta(t *testing.T) {
 		ctx := context.Background()
 
 		// Use batch size 1 to force multiple backfill ticks and test pagination.
-		c := PgClassCollector(inst.pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: 1})
+		c := PgClassCollector(inst.pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: 1}, inst.version)
 
 		// First call: backfill returns exactly 1 row (batch size 1).
 		r1, err := c.Collect(ctx)
@@ -1035,6 +1035,16 @@ func TestPgClass_BackfillThenDelta(t *testing.T) {
 		// Verify row has non-empty identifiers.
 		if p1.Rows[0].SchemaName == "" || p1.Rows[0].Oid == 0 || p1.Rows[0].RelName == "" {
 			t.Fatalf("expected non-empty schemaname/oid/relname, got %q/%q/%q", p1.Rows[0].SchemaName, p1.Rows[0].Oid, p1.Rows[0].RelName)
+		}
+
+		// relallfrozen was added in PG18: the column is present (non-nil
+		// pointer) on PG18+ and absent (nil) on older servers.
+		if inst.version >= 18 {
+			if p1.Rows[0].RelAllFrozen == nil {
+				t.Error("expected non-nil relallfrozen on PG18+")
+			}
+		} else if p1.Rows[0].RelAllFrozen != nil {
+			t.Errorf("expected nil relallfrozen on PG%d, got %d", inst.version, int64(*p1.Rows[0].RelAllFrozen))
 		}
 
 		// Drain the remaining backfill ticks until we get nil (backfill exhausted).
@@ -1075,7 +1085,7 @@ func TestPgClass_FullRescanPicksUpAllRelkinds(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
 		ctx := context.Background()
 
-		c := PgClassCollector(inst.pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: 1000})
+		c := PgClassCollector(inst.pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: 1000}, inst.version)
 
 		// Drain the backfill.
 		for i := 0; i < 100; i++ {
@@ -1131,7 +1141,7 @@ func TestPgClass_NewFieldsPopulated(t *testing.T) {
 		ctx := context.Background()
 
 		// Use a large batch size to get all rows in one backfill tick.
-		c := PgClassCollector(inst.pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: 1000})
+		c := PgClassCollector(inst.pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: 1000}, inst.version)
 		result, err := c.Collect(ctx)
 		if err != nil {
 			t.Fatalf("Collect() error: %v", err)
@@ -1921,7 +1931,7 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		ConnectionStatsCollector(pool, noopPrepareCtx),
 		DatabaseSizeCollector(pool, noopPrepareCtx),
 		PgAttributeCollector(pool, noopPrepareCtx),
-		PgClassCollector(pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: PgClassBackfillBatchSize}),
+		PgClassCollector(pool, noopPrepareCtx, PgClassConfig{BackfillBatchSize: PgClassBackfillBatchSize}, pgMajorVersion),
 		PgConstraintCollector(pool, noopPrepareCtx),
 		PgTypeCollector(pool, noopPrepareCtx),
 		PgDatabaseCollector(pool, noopPrepareCtx),

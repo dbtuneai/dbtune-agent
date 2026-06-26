@@ -31,7 +31,9 @@ const (
 	pgClassFullRescanInterval = 30
 )
 
-// pgClassColumns is the SELECT list shared by batch and delta queries.
+// pgClassColumns is the SELECT list shared by batch and delta queries. The
+// trailing %s slot holds the relallfrozen column, which only exists on PG18+
+// (a NULL literal is substituted on older versions); see PgClassCollector.
 const pgClassColumns = `
 	c.oid AS oid,
     n.nspname AS schemaname,
@@ -46,6 +48,7 @@ const pgClassColumns = `
     c.reloptions::text[] AS reloptions,
     am.amname AS access_method,
     c.relallvisible,
+    %s,
     c.relpersistence::text AS relpersistence,
     c.relispartition,
     c.relhassubclass,
@@ -55,7 +58,8 @@ const pgClassColumns = `
 // pgClassQueryBatch paginates through user tables, indexes, and materialized
 // views during backfill. Indexes and matviews are included so consumers get
 // reloptions (fillfactor) and access_method without relying on DDL parsing.
-const pgClassQueryBatch = `SELECT` + pgClassColumns + `
+// %s is the shared column list (see pgClassColumns).
+const pgClassQueryBatch = `SELECT %s
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 LEFT JOIN pg_am am ON am.oid = c.relam
@@ -68,7 +72,8 @@ LIMIT $1 OFFSET $2
 // pgClassQueryDelta returns only regular tables that have been vacuumed or
 // analyzed since $1. Indexes and matviews are not covered here; they are
 // picked up by periodic full rescans (see pgClassFullRescanInterval).
-const pgClassQueryDelta = `SELECT` + pgClassColumns + `
+// %s is the shared column list (see pgClassColumns).
+const pgClassQueryDelta = `SELECT %s
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 LEFT JOIN pg_am am ON am.oid = c.relam
@@ -84,7 +89,8 @@ ORDER BY n.nspname, c.relname
 // pgClassQueryFullRescan returns all user tables, indexes, and materialized
 // views in one shot. Used periodically to pick up structural changes (e.g.
 // ALTER INDEX SET fillfactor) that the timestamp-based delta query misses.
-const pgClassQueryFullRescan = `SELECT` + pgClassColumns + `
+// %s is the shared column list (see pgClassColumns).
+const pgClassQueryFullRescan = `SELECT %s
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 LEFT JOIN pg_am am ON am.oid = c.relam
@@ -108,11 +114,14 @@ type PgClassRow struct {
 	RelOptions      []Text  `json:"reloptions"`
 	AccessMethod    *Text   `json:"access_method" db:"access_method"`
 	RelAllVisible   Integer `json:"relallvisible"`
-	RelPersistence  Text    `json:"relpersistence"`
-	RelIsPartition  Boolean `json:"relispartition"`
-	RelHasSubClass  Boolean `json:"relhassubclass"`
-	RelToastRelID   Oid     `json:"reltoastrelid"`
-	RelTablespace   Oid     `json:"reltablespace"`
+	// The pg_class.relallfrozen column only exists on PG18+;
+	// it is nil/absent on older servers.
+	RelAllFrozen   *Integer `json:"relallfrozen,omitempty" db:"relallfrozen"`
+	RelPersistence Text     `json:"relpersistence"`
+	RelIsPartition Boolean  `json:"relispartition"`
+	RelHasSubClass Boolean  `json:"relhassubclass"`
+	RelToastRelID  Oid      `json:"reltoastrelid"`
+	RelTablespace  Oid      `json:"reltablespace"`
 }
 
 // PgClassConfig holds configuration for the pg_class collector.
@@ -120,7 +129,7 @@ type PgClassConfig struct {
 	BackfillBatchSize int `config:"backfill_batch_size" default:"500" min:"0"`
 }
 
-func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgClassConfig) CatalogCollector {
+func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgClassConfig, pgMajorVersion int) CatalogCollector {
 	backfillBatchSize := cfg.BackfillBatchSize
 	var (
 		backfillOffset = 0
@@ -128,6 +137,17 @@ func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgClassConf
 		lastPoll       time.Time
 		deltaTicks     int
 	)
+
+	// relallfrozen was added in PG18; substitute a NULL literal on older
+	// servers so the query still parses (the column maps to a nil pointer).
+	relAllFrozen := "NULL::integer AS relallfrozen"
+	if pgMajorVersion >= 18 {
+		relAllFrozen = "c.relallfrozen"
+	}
+	columns := fmt.Sprintf(pgClassColumns, relAllFrozen)
+	queryBatch := fmt.Sprintf(pgClassQueryBatch, columns)
+	queryDelta := fmt.Sprintf(pgClassQueryDelta, columns)
+	queryFullRescan := fmt.Sprintf(pgClassQueryFullRescan, columns)
 
 	scanner := pgxutil.NewScanner[PgClassRow]()
 
@@ -145,7 +165,7 @@ func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgClassConf
 
 			if !backfillDone {
 				querier := func() (pgx.Rows, error) {
-					return utils.QueryWithPrefix(pool, ctx, pgClassQueryBatch, backfillBatchSize, backfillOffset)
+					return utils.QueryWithPrefix(pool, ctx, queryBatch, backfillBatchSize, backfillOffset)
 				}
 				classRows, err = CollectView(querier, PgClassName, scanner)
 				if err != nil {
@@ -163,12 +183,12 @@ func PgClassCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, cfg PgClassConf
 					// Full rescan: re-fetch all relkinds to pick up
 					// structural changes missed by delta mode.
 					querier := func() (pgx.Rows, error) {
-						return utils.QueryWithPrefix(pool, ctx, pgClassQueryFullRescan)
+						return utils.QueryWithPrefix(pool, ctx, queryFullRescan)
 					}
 					classRows, err = CollectView(querier, PgClassName, scanner)
 				} else {
 					querier := func() (pgx.Rows, error) {
-						return utils.QueryWithPrefix(pool, ctx, pgClassQueryDelta, lastPoll)
+						return utils.QueryWithPrefix(pool, ctx, queryDelta, lastPoll)
 					}
 					classRows, err = CollectView(querier, PgClassName, scanner)
 				}
