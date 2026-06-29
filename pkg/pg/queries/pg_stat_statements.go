@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -252,6 +253,240 @@ func compositeKey(r *PgStatStatementsRow) string {
 	return fmt.Sprintf("%d_%d_%d", qid, uid, did)
 }
 
+// sumPtr returns the nil-aware sum of two pointers (nil acts as absent, not 0).
+func sumPtr[T ~int64 | ~float64](a, b *T) *T {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	s := *a + *b
+	return &s
+}
+
+// minPtr / maxPtr return the nil-aware extremum of two pointers.
+func minPtr[T ~int64 | ~float64](a, b *T) *T {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *b < *a {
+		return b
+	}
+	return a
+}
+
+func maxPtr[T ~int64 | ~float64](a, b *T) *T {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *b > *a {
+		return b
+	}
+	return a
+}
+
+// meanPtr recomputes a running mean as total/n. Returns nil if total is absent,
+// and a pointer to 0 when n is absent or 0 (matching pg_stat_statements, which
+// reports mean_*_time = 0 when the corresponding call/plan count is 0).
+func meanPtr(total *DoublePrecision, n *Bigint) *DoublePrecision {
+	if total == nil {
+		return nil
+	}
+	var m DoublePrecision
+	if n != nil && *n > 0 {
+		m = *total / DoublePrecision(*n)
+	}
+	return &m
+}
+
+// stddevAccumulator combines per-group (n, mean, stddev) triples into a single
+// pooled population standard deviation using the parallel/Chan variance
+// algorithm. m2 is the running sum of squared deviations (= stddev^2 * n);
+// pg_stat_statements reports a population stddev (sqrt(m2/n)), verified against
+// a live server, so the same divisor is used here.
+type stddevAccumulator struct {
+	n    float64
+	mean float64
+	m2   float64
+	any  bool
+}
+
+// fold merges one group of gN samples with mean gMean and population stddev
+// gStddev into the accumulator. Groups with gN == 0 are no-ops, so plan-time
+// rows with plans = 0 contribute nothing (correct: they have no distribution).
+func (a *stddevAccumulator) fold(gN, gMean, gStddev float64) {
+	a.any = true
+	if gN <= 0 {
+		return
+	}
+	gM2 := gStddev * gStddev * gN
+	if a.n == 0 {
+		a.n, a.mean, a.m2 = gN, gMean, gM2
+		return
+	}
+	nAB := a.n + gN
+	delta := gMean - a.mean
+	a.mean += delta * gN / nAB
+	a.m2 += gM2 + delta*delta*a.n*gN/nAB
+	a.n = nAB
+}
+
+// result returns the pooled population stddev, or nil if no group ever carried
+// the field (so an absent column stays absent rather than becoming 0).
+func (a *stddevAccumulator) result() *DoublePrecision {
+	if !a.any {
+		return nil
+	}
+	var s DoublePrecision
+	if a.n > 0 {
+		s = DoublePrecision(math.Sqrt(a.m2 / a.n))
+	}
+	return &s
+}
+
+// pgssAccumulator merges all pg_stat_statements rows that share a composite key
+// (queryid, userid, dbid) into a single row. The composite key intentionally
+// drops the toplevel dimension, so a query executed both top-level and nested
+// (track = all) yields multiple rows here. Aggregating them collapses those
+// variants so the downstream payload is unique per composite key.
+type pgssAccumulator struct {
+	row      PgStatStatementsRow
+	execDist stddevAccumulator // weighted by calls
+	planDist stddevAccumulator // weighted by plans
+}
+
+func newPgssAccumulator(r PgStatStatementsRow) *pgssAccumulator {
+	a := &pgssAccumulator{row: r}
+	a.foldDistributions(r)
+	return a
+}
+
+// foldDistributions folds a row's exec-time (weighted by calls) and plan-time
+// (weighted by plans) distributions into the pooled accumulators. Called once
+// per source row, including the first.
+func (a *pgssAccumulator) foldDistributions(r PgStatStatementsRow) {
+	if r.Calls != nil && r.MeanExecTime != nil && r.StddevExecTime != nil {
+		a.execDist.fold(float64(*r.Calls), float64(*r.MeanExecTime), float64(*r.StddevExecTime))
+	}
+	if r.Plans != nil && r.MeanPlanTime != nil && r.StddevPlanTime != nil {
+		a.planDist.fold(float64(*r.Plans), float64(*r.MeanPlanTime), float64(*r.StddevPlanTime))
+	}
+}
+
+// merge adds a row sharing the composite key into the accumulator: additive
+// counters are summed, extrema are min/max'd, the first non-null query text is
+// kept, and the exec/plan distributions are folded for an exact pooled stddev.
+func (a *pgssAccumulator) merge(r PgStatStatementsRow) {
+	a.foldDistributions(r)
+	dst := &a.row
+
+	// Keep the first non-null query text; query and query_len move together.
+	if dst.Query == nil {
+		dst.Query, dst.QueryLen = r.Query, r.QueryLen
+	}
+
+	// Additive counters.
+	dst.Calls = sumPtr(dst.Calls, r.Calls)
+	dst.Rows = sumPtr(dst.Rows, r.Rows)
+	dst.Plans = sumPtr(dst.Plans, r.Plans)
+	dst.TotalExecTime = sumPtr(dst.TotalExecTime, r.TotalExecTime)
+	dst.TotalPlanTime = sumPtr(dst.TotalPlanTime, r.TotalPlanTime)
+
+	dst.SharedBlksHit = sumPtr(dst.SharedBlksHit, r.SharedBlksHit)
+	dst.SharedBlksRead = sumPtr(dst.SharedBlksRead, r.SharedBlksRead)
+	dst.SharedBlksDirtied = sumPtr(dst.SharedBlksDirtied, r.SharedBlksDirtied)
+	dst.SharedBlksWritten = sumPtr(dst.SharedBlksWritten, r.SharedBlksWritten)
+	dst.LocalBlksHit = sumPtr(dst.LocalBlksHit, r.LocalBlksHit)
+	dst.LocalBlksRead = sumPtr(dst.LocalBlksRead, r.LocalBlksRead)
+	dst.LocalBlksDirtied = sumPtr(dst.LocalBlksDirtied, r.LocalBlksDirtied)
+	dst.LocalBlksWritten = sumPtr(dst.LocalBlksWritten, r.LocalBlksWritten)
+	dst.TempBlksRead = sumPtr(dst.TempBlksRead, r.TempBlksRead)
+	dst.TempBlksWritten = sumPtr(dst.TempBlksWritten, r.TempBlksWritten)
+
+	dst.SharedBlkReadTime = sumPtr(dst.SharedBlkReadTime, r.SharedBlkReadTime)
+	dst.SharedBlkWriteTime = sumPtr(dst.SharedBlkWriteTime, r.SharedBlkWriteTime)
+	dst.LocalBlkReadTime = sumPtr(dst.LocalBlkReadTime, r.LocalBlkReadTime)
+	dst.LocalBlkWriteTime = sumPtr(dst.LocalBlkWriteTime, r.LocalBlkWriteTime)
+	dst.TempBlkReadTime = sumPtr(dst.TempBlkReadTime, r.TempBlkReadTime)
+	dst.TempBlkWriteTime = sumPtr(dst.TempBlkWriteTime, r.TempBlkWriteTime)
+
+	dst.WalRecords = sumPtr(dst.WalRecords, r.WalRecords)
+	dst.WalFpi = sumPtr(dst.WalFpi, r.WalFpi)
+	dst.WalBytes = sumPtr(dst.WalBytes, r.WalBytes)
+
+	dst.JitFunctions = sumPtr(dst.JitFunctions, r.JitFunctions)
+	dst.JitGenerationTime = sumPtr(dst.JitGenerationTime, r.JitGenerationTime)
+	dst.JitInliningCount = sumPtr(dst.JitInliningCount, r.JitInliningCount)
+	dst.JitInliningTime = sumPtr(dst.JitInliningTime, r.JitInliningTime)
+	dst.JitOptimizationCount = sumPtr(dst.JitOptimizationCount, r.JitOptimizationCount)
+	dst.JitOptimizationTime = sumPtr(dst.JitOptimizationTime, r.JitOptimizationTime)
+	dst.JitEmissionCount = sumPtr(dst.JitEmissionCount, r.JitEmissionCount)
+	dst.JitEmissionTime = sumPtr(dst.JitEmissionTime, r.JitEmissionTime)
+
+	// Extrema.
+	dst.MinExecTime = minPtr(dst.MinExecTime, r.MinExecTime)
+	dst.MaxExecTime = maxPtr(dst.MaxExecTime, r.MaxExecTime)
+	dst.MinPlanTime = minPtr(dst.MinPlanTime, r.MinPlanTime)
+	dst.MaxPlanTime = maxPtr(dst.MaxPlanTime, r.MaxPlanTime)
+}
+
+// finalize materializes the merged row: means are recomputed from the summed
+// totals, stddevs from the pooled accumulators, and toplevel is cleared because
+// the merged row spans both toplevel and nested executions.
+func (a *pgssAccumulator) finalize() PgStatStatementsRow {
+	r := a.row
+	r.MeanExecTime = meanPtr(r.TotalExecTime, r.Calls)
+	r.MeanPlanTime = meanPtr(r.TotalPlanTime, r.Plans)
+	r.StddevExecTime = a.execDist.result()
+	r.StddevPlanTime = a.planDist.result()
+	r.TopLevel = nil
+	return r
+}
+
+// aggregateRowsByCompositeKey collapses pg_stat_statements rows that share a
+// composite key (queryid, userid, dbid) into one row each, guaranteeing the
+// output is unique on that key. This is the single point that fixes the
+// duplicate-key family of bugs: with track = all the same queryid can appear as
+// both a top-level and a nested row, and emitting both produces duplicate
+// composite keys downstream (e.g. an INSERT ... ON CONFLICT (db_instance_id,
+// query_id) over an unnested array raises CardinalityViolation). Rows missing
+// any key component pass through unmerged in input order (they cannot match
+// anything and must not collide on a synthetic "0_0_0" key). Insertion order of
+// first-seen keys is preserved for deterministic output.
+func aggregateRowsByCompositeKey(rows []PgStatStatementsRow) []PgStatStatementsRow {
+	order := make([]string, 0, len(rows))
+	accs := make(map[string]*pgssAccumulator, len(rows))
+	var passthrough []PgStatStatementsRow
+
+	for i := range rows {
+		r := rows[i]
+		if r.QueryID == nil || r.UserID == nil || r.DbID == nil {
+			passthrough = append(passthrough, r)
+			continue
+		}
+		key := compositeKey(&r)
+		if acc, ok := accs[key]; ok {
+			acc.merge(r)
+			continue
+		}
+		accs[key] = newPgssAccumulator(r)
+		order = append(order, key)
+	}
+
+	out := make([]PgStatStatementsRow, 0, len(order)+len(passthrough))
+	for _, key := range order {
+		out = append(out, accs[key].finalize())
+	}
+	return append(out, passthrough...)
+}
+
 // ptrDiff returns *curr - *prev if both are non-nil and the result is non-negative.
 func ptrDiff[T ~int64 | ~float64](prev, curr *T) *T {
 	if prev == nil || curr == nil {
@@ -300,6 +535,13 @@ func buildPayloadParts(
 	avgRuntime float64,
 	nextSnapshot map[string]PgStatStatementsRow,
 ) {
+	// Collapse rows sharing the composite key (toplevel/nested variants of the
+	// same queryid) before any delta, snapshot, or AQR work. This guarantees
+	// the emitted rows and deltas are unique per composite key and that the
+	// snapshot baseline stored for the next tick is the aggregated value, not
+	// an arbitrary single variant.
+	curr = aggregateRowsByCompositeKey(curr)
+
 	type ranked struct {
 		row     PgStatStatementsRow
 		delta   *PgStatStatementsDelta
