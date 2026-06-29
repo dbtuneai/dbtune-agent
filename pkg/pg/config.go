@@ -2,7 +2,6 @@ package pg
 
 import (
 	"fmt"
-	"os"
 	"runtime"
 
 	"github.com/dbtuneai/agent/pkg/internal/utils"
@@ -74,29 +73,4 @@ func ConfigFromViper(key *string) (Config, error) {
 	}
 
 	return pgConfig, nil
-}
-
-func DetectConfigFromConfigFile() bool {
-	config := viper.Sub(DEFAULT_CONFIG_KEY)
-	if config != nil {
-		return true
-	}
-	// Check alternate key "postgres" for backward compatibility
-	config = viper.Sub("postgres")
-	return config != nil
-}
-
-func DetectConfigFromEnv() bool {
-	envKeysToDetect := []string{
-		"DBT_POSTGRESQL_CONNECTION_URL",
-		// NOTE: We don't require the service name to be set,
-		"DBT_POSTGRESQL_SERVICE_NAME",
-	}
-	for _, envKey := range envKeysToDetect {
-		if os.Getenv(envKey) != "" {
-			return true
-		}
-	}
-
-	return false
 }

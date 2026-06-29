@@ -151,39 +151,9 @@ func AlterSystemReset(pgPool *pgxpool.Pool, name string) error {
 	return nil
 }
 
-const AlterDatabaseQuery = `
-ALTER DATABASE %s SET %s = %s;
-`
-
-func AlterDatabase(pgPool *pgxpool.Pool, dbname string, name string, value string) error {
-	_, err := utils.ExecWithPrefix(pgPool, context.Background(), fmt.Sprintf(AlterDatabaseQuery, dbname, name, value))
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-const DataDirectoryQuery = `
-SHOW data_directory;
-`
-
-func DataDirectory(pgPool *pgxpool.Pool) (string, error) {
-	var dataDir string
-	err := utils.QueryRowWithPrefix(pgPool, context.Background(), DataDirectoryQuery).Scan(&dataDir)
-	if err != nil {
-		return "", err
-	}
-	return dataDir, nil
-}
-
 const Select1Query = `
 SELECT 1;
 `
-
-func Select1(pgPool *pgxpool.Pool) error {
-	_, err := utils.ExecWithPrefix(pgPool, context.Background(), Select1Query)
-	return err
-}
 
 const CheckPGStatStatementsQuery = `
 SELECT COUNT(*) FROM public.pg_stat_statements;

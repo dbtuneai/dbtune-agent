@@ -20,12 +20,6 @@ type SqlAdminClient struct {
 	client *sqladmin.Service
 }
 
-func NewSqlAdminClient(client *sqladmin.Service) SqlAdminClient {
-	return SqlAdminClient{
-		client: client,
-	}
-}
-
 func (client *SqlAdminClient) ApplyFlags(projectId string, databaseName string, newFlags []*sqladmin.DatabaseFlags) error {
 	// get current flag values (so we don't unset any that are already set!)
 	inst, err := client.client.Instances.Get(projectId, databaseName).Do()

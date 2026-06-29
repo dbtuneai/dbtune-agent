@@ -31,3 +31,9 @@ repos:
         language: system
         types: [go]
         pass_filenames: false
+      - id: deadcode
+        name: deadcode
+        entry: bash scripts/deadcode.sh
+        language: system
+        types: [go]
+        pass_filenames: false

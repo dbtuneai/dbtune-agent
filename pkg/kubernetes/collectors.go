@@ -30,14 +30,6 @@ type ContainerMetricsCache struct {
 	Initialized                 bool
 }
 
-// ContainerMetricsCollector returns a collector function that gathers container metrics from Kubernetes
-func ContainerMetricsCollector(client Client, podName string, containerName string) func(ctx context.Context, state *agent.MetricsState) error {
-	return func(ctx context.Context, state *agent.MetricsState) error {
-		containerClient := client.ContainerClient(podName, containerName)
-		return CollectContainerMetrics(ctx, containerClient, state)
-	}
-}
-
 // CNPGContainerMetricsCollector returns a collector function that dynamically discovers the CNPG primary pod
 // before collecting metrics. This ensures metrics are always collected from the current primary,
 // even after failovers.

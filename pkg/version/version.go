@@ -22,18 +22,3 @@ func GetVersion() string {
 func GetVersionOnly() string {
 	return Version
 }
-
-// GetCommit returns the commit hash
-func GetCommit() string {
-	return Commit
-}
-
-// GetBuildDate returns the build date
-func GetBuildDate() string {
-	return Date
-}
-
-// GetGoVersion returns the Go runtime version
-func GetGoVersion() string {
-	return runtime.Version()
-}
