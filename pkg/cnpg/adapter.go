@@ -507,6 +507,13 @@ func (adapter *CNPGAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatVa
 	}
 	flatValues = append(flatValues, maxConnectionsMetric)
 
+	// Current database and user-database count
+	databaseInfo, err := pg.DatabaseSystemInfo(adapter.PGDriver)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create database system info metrics: %w", err)
+	}
+	flatValues = append(flatValues, databaseInfo...)
+
 	// Dynamically discover current primary pod for system info
 	primaryPod, err := adapter.K8sClient.FindCNPGPrimaryPod(dbCtx, adapter.Config.ClusterName)
 	if err != nil {

@@ -170,6 +170,14 @@ func (adapter *RDSAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatVal
 	}
 	info = append(info, maxConnectionsMetric)
 
+	// Current database and user-database count
+	databaseInfo, err := pg.DatabaseSystemInfo(adapter.PGDriver)
+	if err != nil {
+		adapter.Logger().Errorf("Failed to create database system info metrics: %v", err)
+		return nil, err
+	}
+	info = append(info, databaseInfo...)
+
 	return info, nil
 }
 

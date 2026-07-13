@@ -141,6 +141,11 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(_ context.Context) ([]met
 	maxConnectionsMetric, _ := metrics.PGMaxConnections.AsFlatValue(maxConnections)
 	noCPUsMetric, _ := metrics.NodeCPUCount.AsFlatValue(noCPUs)
 
+	databaseInfo, err := pg.DatabaseSystemInfo(pgDriver)
+	if err != nil {
+		return nil, err
+	}
+
 	systemInfo := []metrics.FlatValue{
 		version,
 		totalMemory,
@@ -150,6 +155,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(_ context.Context) ([]met
 		maxConnectionsMetric,
 		noCPUsMetric,
 	}
+	systemInfo = append(systemInfo, databaseInfo...)
 
 	return systemInfo, nil
 }

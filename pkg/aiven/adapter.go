@@ -181,12 +181,19 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]met
 		return nil, err
 	}
 
+	databaseInfo, err := pg.DatabaseSystemInfo(adapter.PGDriver)
+	if err != nil {
+		adapter.Logger().Errorf("Error creating database system info metrics: %v", err)
+		return nil, err
+	}
+
 	systemInfo := []metrics.FlatValue{
 		version,
 		totalMemory,
 		maxConnectionsMetric,
 		noCPUsMetric,
 	}
+	systemInfo = append(systemInfo, databaseInfo...)
 
 	return systemInfo, nil
 }
