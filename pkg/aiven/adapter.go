@@ -187,12 +187,13 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]met
 		return nil, err
 	}
 
-	systemInfo := []metrics.FlatValue{
+	systemInfo := make([]metrics.FlatValue, 0, 4+len(databaseInfo))
+	systemInfo = append(systemInfo,
 		version,
 		totalMemory,
 		maxConnectionsMetric,
 		noCPUsMetric,
-	}
+	)
 	systemInfo = append(systemInfo, databaseInfo...)
 
 	return systemInfo, nil

@@ -310,12 +310,13 @@ func (adapter *AzureFlexAdapter) GetSystemInfo(ctx context.Context) ([]metrics.F
 		return nil, err
 	}
 
-	systemInfo := []metrics.FlatValue{
+	systemInfo := make([]metrics.FlatValue, 0, 4+len(databaseInfo))
+	systemInfo = append(systemInfo,
 		version,
 		maxConnectionsMetric,
 		cpuCountMetric,
 		memoryTotalMetric,
-	}
+	)
 	systemInfo = append(systemInfo, databaseInfo...)
 	return systemInfo, nil
 }

@@ -146,7 +146,8 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(_ context.Context) ([]met
 		return nil, err
 	}
 
-	systemInfo := []metrics.FlatValue{
+	systemInfo := make([]metrics.FlatValue, 0, 7+len(databaseInfo))
+	systemInfo = append(systemInfo,
 		version,
 		totalMemory,
 		hostOS,
@@ -154,7 +155,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(_ context.Context) ([]met
 		platform,
 		maxConnectionsMetric,
 		noCPUsMetric,
-	}
+	)
 	systemInfo = append(systemInfo, databaseInfo...)
 
 	return systemInfo, nil

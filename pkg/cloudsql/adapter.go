@@ -226,12 +226,13 @@ func (adapter *CloudSQLAdapter) GetSystemInfo(_ context.Context) ([]metrics.Flat
 		return nil, err
 	}
 
-	systemInfo := []metrics.FlatValue{
+	systemInfo := make([]metrics.FlatValue, 0, 4+len(databaseInfo))
+	systemInfo = append(systemInfo,
 		version,
 		maxConnectionsMetric,
 		cpuCountMetric,
 		memoryTotalMetric,
-	}
+	)
 	systemInfo = append(systemInfo, databaseInfo...)
 
 	adapter.Logger().Debugf("SystemMetrics: %v", systemInfo)

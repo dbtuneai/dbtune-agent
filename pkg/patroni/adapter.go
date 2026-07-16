@@ -734,7 +734,8 @@ func (adapter *PatroniAdapter) GetSystemInfo(ctx context.Context) ([]metrics.Fla
 		return nil, err
 	}
 
-	systemInfo := []metrics.FlatValue{
+	systemInfo := make([]metrics.FlatValue, 0, 7+len(databaseInfo))
+	systemInfo = append(systemInfo,
 		version,
 		totalMemory,
 		hostOS,
@@ -742,7 +743,7 @@ func (adapter *PatroniAdapter) GetSystemInfo(ctx context.Context) ([]metrics.Fla
 		platform,
 		maxConnectionsMetric,
 		noCPUsMetric,
-	}
+	)
 	systemInfo = append(systemInfo, databaseInfo...)
 
 	return systemInfo, nil
