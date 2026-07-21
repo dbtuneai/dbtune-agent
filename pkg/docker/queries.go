@@ -1,6 +1,6 @@
 package docker
 
-import "github.com/docker/docker/api/types/container"
+import "github.com/moby/moby/api/types/container"
 
 // CalculateDockerCPUPercent calculates the CPU usage percentage for a Docker container
 // Implementation based on: https://github.com/docker/cli/blob/master/cli/command/container/stats_helpers.go

@@ -8,16 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/netip"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/pg"
-	dockercontainer "github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v5/pgxpool"
+	dockercontainer "github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -60,9 +61,9 @@ func TestMain(m *testing.M) {
 		testcontainers.CustomizeRequest(testcontainers.GenericContainerRequest{
 			ContainerRequest: testcontainers.ContainerRequest{
 				HostConfigModifier: func(hc *dockercontainer.HostConfig) {
-					hc.PortBindings = nat.PortMap{
-						"5432/tcp": []nat.PortBinding{
-							{HostIP: "127.0.0.1", HostPort: dockerIntegrationPort},
+					hc.PortBindings = network.PortMap{
+						network.MustParsePort("5432/tcp"): []network.PortBinding{
+							{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: dockerIntegrationPort},
 						},
 					}
 				},
@@ -225,9 +226,9 @@ func TestIntegration_Docker_ApplyConfig_Restart_Allowed(t *testing.T) {
 	require.NoError(t, adapter.ApplyConfig(context.Background(), proposed))
 
 	// Container should be running after the restart.
-	inspect, err := dockerClient.ContainerInspect(context.Background(), dockerContainerID)
+	inspect, err := dockerClient.ContainerInspect(context.Background(), dockerContainerID, client.ContainerInspectOptions{})
 	require.NoError(t, err)
-	assert.True(t, inspect.State.Running, "container should be running after restart")
+	assert.True(t, inspect.Container.State.Running, "container should be running after restart")
 
 	// Value should be live after the restart took effect.
 	assert.Equal(t, expected8kBUnits, livePGSetting(t, pool, "shared_buffers"),
@@ -383,9 +384,9 @@ func TestIntegration_Docker_ApplyConfig_ValidateUsesLiveCatalog(t *testing.T) {
 
 func containerStartedAt(t *testing.T) time.Time {
 	t.Helper()
-	inspect, err := dockerClient.ContainerInspect(context.Background(), dockerContainerID)
+	inspect, err := dockerClient.ContainerInspect(context.Background(), dockerContainerID, client.ContainerInspectOptions{})
 	require.NoError(t, err)
-	ts, err := time.Parse(time.RFC3339Nano, inspect.State.StartedAt)
+	ts, err := time.Parse(time.RFC3339Nano, inspect.Container.State.StartedAt)
 	require.NoError(t, err)
 	return ts
 }
