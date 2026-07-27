@@ -726,7 +726,16 @@ func (adapter *PatroniAdapter) GetSystemInfo(ctx context.Context) ([]metrics.Fla
 	maxConnectionsMetric, _ := metrics.PGMaxConnections.AsFlatValue(maxConnections)
 	noCPUsMetric, _ := metrics.NodeCPUCount.AsFlatValue(noCPUs)
 
-	systemInfo := []metrics.FlatValue{
+	databaseInfo, err := pg.DatabaseSystemInfo(adapter.PGDriver)
+	if err != nil {
+		if failoverErr := adapter.handlePossibleFailoverError(ctx, err, "in GetSystemInfo (DatabaseSystemInfo)"); failoverErr != nil {
+			return nil, failoverErr
+		}
+		return nil, err
+	}
+
+	systemInfo := make([]metrics.FlatValue, 0, 7+len(databaseInfo))
+	systemInfo = append(systemInfo,
 		version,
 		totalMemory,
 		hostOS,
@@ -734,7 +743,8 @@ func (adapter *PatroniAdapter) GetSystemInfo(ctx context.Context) ([]metrics.Fla
 		platform,
 		maxConnectionsMetric,
 		noCPUsMetric,
-	}
+	)
+	systemInfo = append(systemInfo, databaseInfo...)
 
 	return systemInfo, nil
 }

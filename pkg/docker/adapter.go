@@ -185,6 +185,11 @@ func (d *DockerContainerAdapter) GetSystemInfo(ctx context.Context) ([]metrics.F
 		return nil, fmt.Errorf("failed to create platform version metric: %w", err)
 	}
 
+	databaseInfo, err := pg.DatabaseSystemInfo(pgDriver)
+	if err != nil {
+		return nil, err
+	}
+
 	systemInfo = append(systemInfo,
 		version,
 		memLimitMetric,
@@ -194,6 +199,7 @@ func (d *DockerContainerAdapter) GetSystemInfo(ctx context.Context) ([]metrics.F
 		containerPlatform,
 		containerVersion,
 	)
+	systemInfo = append(systemInfo, databaseInfo...)
 
 	return systemInfo, nil
 }

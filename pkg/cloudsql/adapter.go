@@ -220,12 +220,20 @@ func (adapter *CloudSQLAdapter) GetSystemInfo(_ context.Context) ([]metrics.Flat
 		return nil, err
 	}
 
-	systemInfo := []metrics.FlatValue{
+	databaseInfo, err := pg.DatabaseSystemInfo(adapter.PGDriver)
+	if err != nil {
+		adapter.Logger().Errorf("Error creating database system info metrics: %v", err)
+		return nil, err
+	}
+
+	systemInfo := make([]metrics.FlatValue, 0, 4+len(databaseInfo))
+	systemInfo = append(systemInfo,
 		version,
 		maxConnectionsMetric,
 		cpuCountMetric,
 		memoryTotalMetric,
-	}
+	)
+	systemInfo = append(systemInfo, databaseInfo...)
 
 	adapter.Logger().Debugf("SystemMetrics: %v", systemInfo)
 

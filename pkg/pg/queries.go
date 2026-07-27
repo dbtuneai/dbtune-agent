@@ -9,6 +9,7 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -74,6 +75,70 @@ func MaxConnections(pgPool *pgxpool.Pool) (uint32, error) {
 	}
 
 	return maxConnections, nil
+}
+
+// CurrentDatabaseQuery returns the name of the database the agent is connected to.
+const CurrentDatabaseQuery = `
+SELECT current_database();
+`
+
+// CurrentDatabase returns the name of the database the agent is connected to
+// (i.e. the database being tuned).
+func CurrentDatabase(pgPool *pgxpool.Pool) (string, error) {
+	var currentDatabase string
+	err := utils.QueryRowWithPrefix(pgPool, context.Background(), CurrentDatabaseQuery).Scan(&currentDatabase)
+	if err != nil {
+		return "", fmt.Errorf("error getting current database: %w", err)
+	}
+
+	return currentDatabase, nil
+}
+
+// UserDatabaseCountQuery counts the non-template, connectable databases in the
+// cluster. A count greater than 1 indicates the tuned database shares the
+// cluster with other user databases.
+const UserDatabaseCountQuery = `
+SELECT count(*)::integer FROM pg_database WHERE NOT datistemplate AND datallowconn;
+`
+
+// UserDatabaseCount returns the number of non-template, connectable databases in
+// the cluster.
+func UserDatabaseCount(pgPool *pgxpool.Pool) (int, error) {
+	var count int
+	err := utils.QueryRowWithPrefix(pgPool, context.Background(), UserDatabaseCountQuery).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("error getting user database count: %w", err)
+	}
+
+	return count, nil
+}
+
+// DatabaseSystemInfo returns the system-info metrics describing which database
+// the agent is tuning (pg_current_database) and how many user databases share
+// the cluster (pg_database_count). This lets us tell whether the tuned database
+// runs standalone or alongside other databases in the same cluster.
+func DatabaseSystemInfo(pgPool *pgxpool.Pool) ([]metrics.FlatValue, error) {
+	currentDatabase, err := CurrentDatabase(pgPool)
+	if err != nil {
+		return nil, err
+	}
+
+	databaseCount, err := UserDatabaseCount(pgPool)
+	if err != nil {
+		return nil, err
+	}
+
+	currentDatabaseMetric, err := metrics.PGCurrentDatabase.AsFlatValue(currentDatabase)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create current database metric: %w", err)
+	}
+
+	databaseCountMetric, err := metrics.PGDatabaseCount.AsFlatValue(databaseCount)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create database count metric: %w", err)
+	}
+
+	return []metrics.FlatValue{currentDatabaseMetric, databaseCountMetric}, nil
 }
 
 func GetActiveConfig(

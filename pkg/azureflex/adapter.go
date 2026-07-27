@@ -305,12 +305,19 @@ func (adapter *AzureFlexAdapter) GetSystemInfo(ctx context.Context) ([]metrics.F
 		return nil, fmt.Errorf("Failed to convert memory total: %w", err)
 	}
 
-	systemInfo := []metrics.FlatValue{
+	databaseInfo, err := pg.DatabaseSystemInfo(adapter.PGDriver)
+	if err != nil {
+		return nil, err
+	}
+
+	systemInfo := make([]metrics.FlatValue, 0, 4+len(databaseInfo))
+	systemInfo = append(systemInfo,
 		version,
 		maxConnectionsMetric,
 		cpuCountMetric,
 		memoryTotalMetric,
-	}
+	)
+	systemInfo = append(systemInfo, databaseInfo...)
 	return systemInfo, nil
 }
 
