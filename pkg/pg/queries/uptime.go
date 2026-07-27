@@ -45,6 +45,9 @@ SELECT (pg_control_system()).system_identifier AS system_identifier,
 // clusterIdentityRefreshInterval bounds how often the pg_control_* query
 // runs. Identity only changes on restart/restore/failover, so a few minutes
 // of staleness is fine and avoids an extra round-trip on every 5s tick.
+// A change in the observed postmaster start time invalidates the cache
+// immediately, so a restart/restore/failover never pairs a fresh start time
+// with pre-failover identity.
 const clusterIdentityRefreshInterval = 10 * time.Minute
 
 type clusterIdentity struct {
@@ -61,10 +64,18 @@ type clusterIdentityCache struct {
 	pool          *pgxpool.Pool
 	cached        *clusterIdentity
 	lastAttempt   time.Time
+	lastStartTime time.Time
 	loggedFailure bool
 }
 
-func (c *clusterIdentityCache) get(ctx context.Context) *clusterIdentity {
+func (c *clusterIdentityCache) get(ctx context.Context, postmasterStartTime time.Time) *clusterIdentity {
+	if !postmasterStartTime.IsZero() && !postmasterStartTime.Equal(c.lastStartTime) {
+		if !c.lastStartTime.IsZero() {
+			c.lastAttempt = time.Time{}
+			c.cached = nil
+		}
+		c.lastStartTime = postmasterStartTime
+	}
 	if !c.lastAttempt.IsZero() && time.Since(c.lastAttempt) < clusterIdentityRefreshInterval {
 		return c.cached
 	}
@@ -83,12 +94,17 @@ func (c *clusterIdentityCache) get(ctx context.Context) *clusterIdentity {
 	}
 	c.loggedFailure = false
 	c.cached = &clusterIdentity{
-		// system_identifier is a uint64 exposed through bigint; reinterpret
-		// the bits so values above MaxInt64 render as unsigned decimal.
-		systemIdentifier: strconv.FormatUint(uint64(systemIdentifier), 10), //nolint:gosec // intentional bit reinterpretation
+		systemIdentifier: formatSystemIdentifier(systemIdentifier),
 		timelineID:       timelineID,
 	}
 	return c.cached
+}
+
+// formatSystemIdentifier renders pg_control_system().system_identifier — a
+// uint64 exposed through bigint — by reinterpreting the bits so values above
+// MaxInt64 render as unsigned decimal.
+func formatSystemIdentifier(v int64) string {
+	return strconv.FormatUint(uint64(v), 10) //nolint:gosec // intentional bit reinterpretation
 }
 
 func UptimeMinutesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
@@ -115,7 +131,7 @@ func UptimeMinutesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCo
 				started := postmasterStartTime.UTC().Format(time.RFC3339)
 				row.PostmasterStartTime = &started
 			}
-			if id := identity.get(ctx); id != nil {
+			if id := identity.get(ctx, postmasterStartTime); id != nil {
 				row.SystemIdentifier = &id.systemIdentifier
 				row.TimelineID = &id.timelineID
 			}
