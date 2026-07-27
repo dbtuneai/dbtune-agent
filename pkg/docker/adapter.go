@@ -12,8 +12,8 @@ import (
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // DockerContainerAdapter works with the container name and by
@@ -114,7 +114,7 @@ func (d *DockerContainerAdapter) GetSystemInfo(ctx context.Context) ([]metrics.F
 	}
 
 	// Get container stats
-	stats, err := d.dockerClient.ContainerStats(ctx, d.Config.ContainerName, false)
+	stats, err := d.dockerClient.ContainerStats(ctx, d.Config.ContainerName, client.ContainerStatsOptions{Stream: false})
 	if err != nil {
 		return nil, err
 	}
@@ -128,10 +128,11 @@ func (d *DockerContainerAdapter) GetSystemInfo(ctx context.Context) ([]metrics.F
 	}
 
 	// Get container info for additional details
-	containerInfo, err := d.dockerClient.ContainerInspect(ctx, d.Config.ContainerName)
+	inspectResult, err := d.dockerClient.ContainerInspect(ctx, d.Config.ContainerName, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, err
 	}
+	containerInfo := inspectResult.Container
 
 	// Create metrics
 	version, err := metrics.PGVersion.AsFlatValue(pgVersion)
@@ -199,7 +200,7 @@ func (d *DockerContainerAdapter) GetSystemInfo(ctx context.Context) ([]metrics.F
 
 func (d *DockerContainerAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	// Get container stats
-	stats, err := d.dockerClient.ContainerStats(ctx, d.Config.ContainerName, false)
+	stats, err := d.dockerClient.ContainerStats(ctx, d.Config.ContainerName, client.ContainerStatsOptions{Stream: false})
 	if err != nil {
 		d.Logger().Warnf("guardrail: could not fetch docker stats: %v", err)
 		return nil
@@ -268,7 +269,7 @@ func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig
 		d.Logger().Warn("Restarting service")
 
 		// Execute docker restart command
-		err := d.dockerClient.ContainerRestart(ctx, d.Config.ContainerName, container.StopOptions{})
+		_, err := d.dockerClient.ContainerRestart(ctx, d.Config.ContainerName, client.ContainerRestartOptions{})
 		if err != nil {
 			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to restart PostgreSQL service: %w", err)}
 		}
