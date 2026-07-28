@@ -528,7 +528,35 @@ func TestDatabaseSize_ReturnsData(t *testing.T) {
 func TestUptimeMinutes_ReturnsData(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
 		c := UptimeMinutesCollector(inst.pool, noopPrepareCtx)
-		requireRows(t, c)
+		result, err := c.Collect(context.Background())
+		if err != nil {
+			t.Fatalf("Collect() error: %v", err)
+		}
+		var p Payload[UptimeMinutesRow]
+		if err := json.Unmarshal(result.JSON, &p); err != nil {
+			t.Fatalf("failed to parse result: %v", err)
+		}
+		if len(p.Rows) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(p.Rows))
+		}
+		row := p.Rows[0]
+		if row.UptimeMinutes <= 0 {
+			t.Fatalf("expected uptime_minutes > 0, got %f", row.UptimeMinutes)
+		}
+		// pg_control_system()/pg_control_checkpoint() are callable by any
+		// role on self-hosted PG, so identity must be present here.
+		if row.SystemIdentifier == nil || *row.SystemIdentifier == "" {
+			t.Fatal("expected system_identifier to be set")
+		}
+		if row.TimelineID == nil || *row.TimelineID < 1 {
+			t.Fatal("expected timeline_id >= 1")
+		}
+		if row.PostmasterStartTime == nil {
+			t.Fatal("expected postmaster_start_time to be set")
+		}
+		if _, err := time.Parse(time.RFC3339, *row.PostmasterStartTime); err != nil {
+			t.Fatalf("postmaster_start_time not RFC3339: %v", err)
+		}
 	})
 }
 

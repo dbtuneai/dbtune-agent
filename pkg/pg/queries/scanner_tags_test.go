@@ -15,7 +15,7 @@ import (
 // name, which silently fails to populate the field when the two don't match
 // (e.g., DataName → "dataname" vs column "datname").
 //
-// Excluded: PgStatsRow (uses manual rows.Scan, not pgxutil.Scanner).
+// Excluded: PgStatsRow, UptimeMinutesRow (manual rows.Scan, not pgxutil.Scanner).
 var scannerBackedTypes = []interface{}{
 	AutovacuumCountRow{},
 	ConnectionStatsRow{},
@@ -54,7 +54,6 @@ var scannerBackedTypes = []interface{}{
 	PgStatWalReceiverRow{},
 	PgStatioUserIndexesRow{},
 	PgStatioUserTablesRow{},
-	UptimeMinutesRow{},
 	WaitEventRow{},
 }
 
