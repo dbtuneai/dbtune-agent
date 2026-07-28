@@ -7,14 +7,15 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/netip"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/metrics"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	tclog "github.com/testcontainers/testcontainers-go/log"
@@ -49,9 +50,9 @@ func TestMain(m *testing.M) {
 		testcontainers.CustomizeRequest(testcontainers.GenericContainerRequest{
 			ContainerRequest: testcontainers.ContainerRequest{
 				HostConfigModifier: func(hc *container.HostConfig) {
-					hc.PortBindings = nat.PortMap{
-						"5432/tcp": []nat.PortBinding{
-							{HostIP: "127.0.0.1", HostPort: dbSysInfoIntegrationPort},
+					hc.PortBindings = network.PortMap{
+						network.MustParsePort("5432/tcp"): []network.PortBinding{
+							{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: dbSysInfoIntegrationPort},
 						},
 					}
 				},
