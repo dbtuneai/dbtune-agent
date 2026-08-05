@@ -521,6 +521,23 @@ func (a *CommonAgent) putJSON(ctx context.Context, url string, jsonData []byte) 
 	return a.APIClient.Do(req)
 }
 
+// postJSONGzip sends a POST request with a gzip-compressed JSON body
+// using the provided context.
+func (a *CommonAgent) postJSONGzip(ctx context.Context, url string, jsonData []byte) (*http.Response, error) {
+	buf, err := gzipCompress(jsonData)
+	if err != nil {
+		return nil, err
+	}
+	a.Logger().Debugf("POST %s: %d bytes -> %d bytes gzipped", url, len(jsonData), buf.Len())
+	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", url, buf)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	return a.APIClient.Do(req)
+}
+
 // getRequest sends a GET request using the provided context.
 func (a *CommonAgent) getRequest(ctx context.Context, url string) (*http.Response, error) {
 	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", url, nil)
@@ -715,7 +732,7 @@ func (a *CommonAgent) SendActiveConfig(ctx context.Context, config ConfigArraySc
 
 	a.Logger().Debugf("Active config payload: %s", string(jsonData))
 
-	resp, err := a.postJSON(ctx, a.ServerURLs.AgentURL("configurations"), jsonData)
+	resp, err := a.postJSONGzip(ctx, a.ServerURLs.AgentURL("configurations"), jsonData)
 	if err != nil {
 		return err
 	}
@@ -802,24 +819,12 @@ func gzipCompress(data []byte) (*bytes.Buffer, error) {
 // SendCatalogPayload sends pre-marshaled JSON bytes for a catalog view,
 // gzip-compressed, to the DBtune server.
 func (a *CommonAgent) SendCatalogPayload(ctx context.Context, name string, payload []byte) error {
-	buf, err := gzipCompress(payload)
-	if err != nil {
-		return err
-	}
-	a.Logger().Printf("%s payload: %d bytes -> %d bytes gzipped", name, len(payload), buf.Len())
+	a.Logger().Printf("Sending %s payload (%d bytes)", name, len(payload))
 
 	ctx, cancel := context.WithTimeout(ctx, catalogSendTimeout)
 	defer cancel()
 
-	url := a.ServerURLs.AgentURL(name)
-	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, url, buf)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Content-Encoding", "gzip")
-
-	resp, err := a.APIClient.Do(req)
+	resp, err := a.postJSONGzip(ctx, a.ServerURLs.AgentURL(name), payload)
 	if err != nil {
 		return err
 	}

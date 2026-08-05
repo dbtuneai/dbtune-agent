@@ -8,6 +8,7 @@ package dbtunetest
 
 import (
 	"bytes"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"net/http"
@@ -171,13 +172,38 @@ func postHeartbeat(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-func postActiveConfig(req *http.Request) (*http.Response, error) {
+func requireGzipJSON(req *http.Request) *http.Response {
 	if req.Header.Get("Content-Type") != contentTypeJSON {
 		return &http.Response{
 			Status:     "415 Unsupported Media Type",
 			StatusCode: http.StatusUnsupportedMediaType,
 			Body:       io.NopCloser(bytes.NewBufferString(fmt.Sprintf("Expected Content-Type to be application/json, got %s", req.Header.Get("Content-Type")))),
-		}, nil
+		}
+	}
+	if req.Header.Get("Content-Encoding") != "gzip" {
+		return &http.Response{
+			Status:     "400 Bad Request",
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(bytes.NewBufferString(fmt.Sprintf("Expected Content-Encoding to be gzip, got %q", req.Header.Get("Content-Encoding")))),
+		}
+	}
+	gr, err := gzip.NewReader(req.Body)
+	if err == nil {
+		_, err = io.ReadAll(gr)
+	}
+	if err != nil {
+		return &http.Response{
+			Status:     "400 Bad Request",
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(bytes.NewBufferString(fmt.Sprintf("Expected body to be valid gzip: %s", err))),
+		}
+	}
+	return nil
+}
+
+func postActiveConfig(req *http.Request) (*http.Response, error) {
+	if resp := requireGzipJSON(req); resp != nil {
+		return resp, nil
 	}
 	if !req.URL.Query().Has("uuid") {
 		return &http.Response{
