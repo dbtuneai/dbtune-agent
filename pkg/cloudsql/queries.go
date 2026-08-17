@@ -3,7 +3,6 @@ package cloudsql
 import (
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
@@ -123,9 +122,8 @@ func getLatestMetricValue(cloudMonitoringClient *CloudMonitoringClient, projectI
 	if errors.Is(err, iterator.Done) {
 		return monitoringpb.TypedValue{}, fmt.Errorf("Oh no, we didn't get any results!")
 	}
-	// TODO: what other errors can this actually return?
 	if err != nil {
-		log.Fatalf("Could not read time series value: %v", err)
+		return monitoringpb.TypedValue{}, fmt.Errorf("could not read time series value: %w", err)
 	}
 
 	// the iterator should end here as our filters should give a single time series
