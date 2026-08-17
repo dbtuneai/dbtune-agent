@@ -71,6 +71,11 @@ func (h *BackendHook) Levels() []logrus.Level {
 }
 
 func (h *BackendHook) Fire(entry *logrus.Entry) error {
+	// The hook is the path failures are reported on, so it has nowhere to
+	// report its own: drop the entry rather than take down the caller, which
+	// is an arbitrary agent goroutine.
+	defer func() { _ = recover() }()
+
 	caller := ""
 	if entry.Caller != nil {
 		caller = fmt.Sprintf("%s:%d", path.Base(entry.Caller.File), entry.Caller.Line)
@@ -178,6 +183,10 @@ func (h *BackendHook) flushLoop(flushInterval time.Duration) {
 }
 
 func (h *BackendHook) sendBatch(entries []backendLogEntry) {
+	// Discard the batch on a panic, same as on any send failure, so the flush
+	// loop survives and later batches still go out.
+	defer func() { _ = recover() }()
+
 	jsonData, err := json.Marshal(entries)
 	if err != nil {
 		return

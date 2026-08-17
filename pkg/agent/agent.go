@@ -623,6 +623,15 @@ func (a *CommonAgent) GetMetrics(ctx context.Context) ([]metrics.FlatValue, erro
 			done := make(chan error, 1)
 
 			go func() {
+				// A panicking collector must not take the process down: convert
+				// it into a collector error so the remaining collectors still
+				// report and the failure surfaces to the backend.
+				defer func() {
+					if r := recover(); r != nil {
+						done <- PanicError(fmt.Sprintf("collector %s", c.Key), r)
+					}
+				}()
+
 				a.Logger().Debugf("Starting collector: %s", c.Key)
 				// Create copy of the context to be passed to the collector
 				newCtx, cancel := context.WithCancel(collectorCtx)

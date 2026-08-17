@@ -121,6 +121,41 @@ func TestGetMetrics(t *testing.T) {
 		assert.Len(t, flat_metrics, 1)
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric1", Value: 1, Type: "int"})
 	})
+
+	// A panicking collector used to take the whole process down, since
+	// collectors run in their own goroutine and nothing recovered.
+	t.Run("panicking collector does not kill the process", func(t *testing.T) {
+		agent := &CommonAgent{
+			logger: logrus.New(),
+			MetricsState: MetricsState{
+				Collectors: []MetricCollector{
+					{
+						Key: "panicking_collector",
+						Collector: func(_ context.Context, _ *MetricsState) error {
+							var nilMap map[string]int
+							nilMap["boom"] = 1 // assignment to entry in nil map
+							return nil
+						},
+					},
+					mockCollector(10*time.Millisecond, false, []metrics.FlatValue{{
+						Key:   "metric2",
+						Value: 2,
+						Type:  "int",
+					}}),
+				},
+				Mutex: &sync.Mutex{},
+			},
+			CollectionTimeout: 1 * time.Second,
+			IndividualTimeout: 500 * time.Millisecond,
+		}
+
+		flat_metrics, err := agent.GetMetrics(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "panic in collector panicking_collector")
+		assert.Contains(t, err.Error(), "nil map")
+		assert.Len(t, flat_metrics, 1, "healthy collectors must still report")
+		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric2", Value: 2, Type: "int"})
+	})
 }
 
 // Creates a CommonAgent for testing purposes

@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -182,6 +183,200 @@ func TestRunWithTicker(t *testing.T) {
 		defer mu.Unlock()
 		assert.Greater(t, counter, 1, "function should have been called multiple times")
 		assert.Less(t, counter, 100, "function should not have been called more than 100 times")
+	})
+}
+
+// A panicking collector must not take the process down. The panic becomes an
+// error payload the platform can alert on, and the returned error is logged by
+// the caller like any other failure.
+func TestPanicGuard(t *testing.T) {
+	panics := func(_ context.Context) error { panic("boom") }
+
+	t.Run("panic becomes an error and is reported", func(t *testing.T) {
+		m := new(MockAgentLooper)
+		m.On("Logger").Return(logrus.New())
+		m.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+			return p.ErrorType == "pg_stats_panic" &&
+				strings.Contains(p.ErrorMessage, "panic in pg_stats") &&
+				strings.Contains(p.ErrorMessage, "boom")
+		})).Return(nil)
+
+		err := newPanicGuard(m).wrap("pg_stats", panics)(context.Background())
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "panic in pg_stats (consecutive panics: 1): boom")
+		assert.Contains(t, err.Error(), "runner.TestPanicGuard", "error must carry the stack trace")
+		m.AssertNumberOfCalls(t, "SendError", 1)
+	})
+
+	// Runtime faults carry their cause in the recovered value, so the report
+	// names the fault rather than just saying a panic happened.
+	t.Run("reports the cause of a runtime fault", func(t *testing.T) {
+		causes := []struct {
+			name string
+			fn   func(ctx context.Context) error
+			want string
+		}{
+			{
+				name: "nil pointer dereference",
+				fn: func(_ context.Context) error {
+					type row struct{ n int }
+					var r *row
+					return fmt.Errorf("%d", r.n)
+				},
+				want: "runtime error: invalid memory address or nil pointer dereference",
+			},
+			{
+				name: "index out of range",
+				fn: func(_ context.Context) error {
+					rows := []int{}
+					next := len(rows) + 3
+					return fmt.Errorf("%d", rows[next])
+				},
+				want: "runtime error: index out of range [3] with length 0",
+			},
+			{
+				name: "nil map write",
+				fn: func(_ context.Context) error {
+					var counts map[string]int
+					counts["boom"] = 1
+					return nil
+				},
+				want: "assignment to entry in nil map",
+			},
+		}
+
+		for _, c := range causes {
+			t.Run(c.name, func(t *testing.T) {
+				m := new(MockAgentLooper)
+				m.On("Logger").Return(logrus.New())
+				var payload agent.ErrorPayload
+				m.On("SendError", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+					payload = args.Get(1).(agent.ErrorPayload)
+				}).Return(nil)
+
+				err := newPanicGuard(m).wrap("pg_stats", c.fn)(context.Background())
+
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), c.want)
+				assert.Contains(t, payload.ErrorMessage, c.want, "the platform must see the cause, not just \"panicked\"")
+			})
+		}
+	})
+
+	t.Run("passes results through when there is no panic", func(t *testing.T) {
+		m := new(MockAgentLooper)
+		guard := newPanicGuard(m)
+		expectedErr := errors.New("collect failed")
+
+		assert.NoError(t, guard.wrap("pg_stats", func(_ context.Context) error {
+			return nil
+		})(context.Background()))
+
+		assert.Equal(t, expectedErr, guard.wrap("pg_stats", func(_ context.Context) error {
+			return expectedErr
+		})(context.Background()))
+
+		m.AssertNotCalled(t, "SendError", mock.Anything, mock.Anything)
+	})
+
+	t.Run("report schedule is ascending powers of ten", func(t *testing.T) {
+		require.Equal(t, uint64(1), reportAt[0], "the first panic must always report")
+		for i, count := range reportAt[1:] {
+			assert.Equal(t, reportAt[i]*10, count)
+		}
+	})
+
+	// A task that panics once keeps panicking on every tick, so reports back
+	// off to powers of ten and carry the count instead of firing every time.
+	t.Run("reports back off exponentially", func(t *testing.T) {
+		m := new(MockAgentLooper)
+		m.On("Logger").Return(logrus.New())
+		m.On("SendError", mock.Anything, mock.Anything).Return(nil)
+
+		guarded := newPanicGuard(m).wrap("pg_stats", panics)
+
+		var reported []uint64
+		for i := uint64(1); i <= 100; i++ {
+			if err := guarded(context.Background()); err != nil {
+				reported = append(reported, i)
+				assert.Contains(t, err.Error(), fmt.Sprintf("consecutive panics: %d)", i))
+			}
+		}
+
+		assert.Equal(t, []uint64{1, 10, 100}, reported)
+		m.AssertNumberOfCalls(t, "SendError", 3)
+	})
+
+	t.Run("a panic-free run clears the count", func(t *testing.T) {
+		m := new(MockAgentLooper)
+		m.On("Logger").Return(logrus.New())
+		m.On("SendError", mock.Anything, mock.Anything).Return(nil)
+
+		guard := newPanicGuard(m)
+		guarded := guard.wrap("pg_stats", panics)
+
+		require.Error(t, guarded(context.Background())) // 1st, reported
+		require.NoError(t, guarded(context.Background()) /* 2nd */, "suppressed occurrences must not surface")
+		require.NoError(t, guarded(context.Background()) /* 3rd */)
+
+		require.NoError(t, guard.wrap("pg_stats", func(_ context.Context) error {
+			return nil
+		})(context.Background()))
+
+		err := guarded(context.Background())
+		require.Error(t, err, "the count restarts after a panic-free run")
+		assert.Contains(t, err.Error(), "consecutive panics: 1)")
+	})
+
+	t.Run("counts are per task", func(t *testing.T) {
+		m := new(MockAgentLooper)
+		m.On("Logger").Return(logrus.New())
+		m.On("SendError", mock.Anything, mock.Anything).Return(nil)
+
+		guard := newPanicGuard(m)
+		pgStats := guard.wrap("pg_stats", panics)
+		pgClass := guard.wrap("pg_class", panics)
+
+		for range 9 {
+			_ = pgStats(context.Background())
+			_ = pgClass(context.Background())
+			_ = pgClass(context.Background())
+		}
+
+		err := pgStats(context.Background())
+		require.Error(t, err, "pg_stats reports on its own 10th panic")
+		assert.Contains(t, err.Error(), "consecutive panics: 10)", "pg_class must not advance pg_stats")
+	})
+
+	// The guarded task keeps running on its ticker: a collector stuck in a
+	// panic loop retries every tick instead of killing the agent.
+	t.Run("panicking task keeps ticking", func(t *testing.T) {
+		m := new(MockAgentLooper)
+		m.On("Logger").Return(logrus.New())
+		m.On("SendError", mock.Anything, mock.Anything).Return(nil)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+
+		var mu sync.Mutex
+		calls := 0
+
+		go runWithTicker(ctx, ticker, "test", logrus.New(), false, newPanicGuard(m).wrap("test", func(_ context.Context) error {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			panic("boom")
+		}))
+
+		<-ctx.Done()
+
+		mu.Lock()
+		defer mu.Unlock()
+		assert.Greater(t, calls, 1, "a panicking task must be retried on the next tick")
 	})
 }
 

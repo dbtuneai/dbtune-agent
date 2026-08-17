@@ -275,3 +275,41 @@ func TestBackendHookIntegrationWithLogger(t *testing.T) {
 	assert.Contains(t, (*received)[0].Message, "a warning")
 	assert.Contains(t, (*received)[1].Message, "an error")
 }
+
+// panickingTransport stands in for anything that can blow up while a batch is
+// being sent. http.Client does not recover a panicking RoundTripper, so without
+// the hook's own guard this takes down the flush loop's goroutine.
+type panickingTransport struct{}
+
+func (panickingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	panic("transport exploded")
+}
+
+// The hook is the path failures are reported on, so it cannot report its own:
+// a panic must cost the batch, not the process.
+func TestBackendHookSurvivesPanicWhileSending(t *testing.T) {
+	server, received, mu := newTestServer(t)
+
+	hook := CreateBackendHook(server.URL, "test-key")
+	defer hook.Close()
+
+	working := hook.client
+	hook.client = &http.Client{Transport: panickingTransport{}}
+
+	fireEntry(t, hook, logrus.ErrorLevel, "discarded by the panic")
+	hook.Flush()
+
+	mu.Lock()
+	assert.Empty(t, *received, "the batch that panicked is discarded")
+	mu.Unlock()
+
+	// The flush loop is still alive and later batches still go out.
+	hook.client = working
+	fireEntry(t, hook, logrus.ErrorLevel, "sent after the panic")
+	hook.Flush()
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, *received, 1)
+	assert.Equal(t, "sent after the panic", (*received)[0].Message)
+}
