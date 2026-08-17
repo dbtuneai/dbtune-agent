@@ -84,6 +84,9 @@ func setupTestFixtures(ctx context.Context, pool *pgxpool.Pool, pgMajorVersion i
 		`CREATE INDEX idx_test_users_score_ff70 ON test_users(score) WITH (fillfactor = 70)`,
 		// Enable pg_stat_statements (shared_preload_libraries is set at container start).
 		`CREATE EXTENSION IF NOT EXISTS pg_stat_statements`,
+		// gen_random_uuid() is built-in from PG 13; on PG 12 it's provided by
+		// pgcrypto. Harmless to install on every version.
+		`CREATE EXTENSION IF NOT EXISTS pgcrypto`,
 	}
 	if pgMajorVersion >= 15 {
 		// NULLS NOT DISTINCT unique index for pg_index.indnullsnotdistinct testing.
