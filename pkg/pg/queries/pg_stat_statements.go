@@ -194,10 +194,21 @@ func buildPgStatStatementsQuery(includeQueries bool, maxQueryTextLength int, ext
 		)
 	}
 
-	cols = append(cols,
-		"calls", "total_exec_time", "min_exec_time", "max_exec_time",
-		"mean_exec_time", "stddev_exec_time", "rows",
-	)
+	// total_time/min_time/max_time/mean_time/stddev_time were renamed to their
+	// _exec_time counterparts in extension 1.8 (default in PG 13). PG 12 ships
+	// 1.7 and needs the pre-rename column names, aliased to match PgStatStatementsRow.
+	if extVersion.GTE(1, 8) {
+		cols = append(cols,
+			"calls", "total_exec_time", "min_exec_time", "max_exec_time",
+			"mean_exec_time", "stddev_exec_time", "rows",
+		)
+	} else {
+		cols = append(cols,
+			"calls",
+			"total_time AS total_exec_time", "min_time AS min_exec_time", "max_time AS max_exec_time",
+			"mean_time AS mean_exec_time", "stddev_time AS stddev_exec_time", "rows",
+		)
+	}
 
 	cols = append(cols,
 		"shared_blks_hit", "shared_blks_read", "shared_blks_dirtied", "shared_blks_written",
@@ -215,11 +226,21 @@ func buildPgStatStatementsQuery(includeQueries bool, maxQueryTextLength int, ext
 		)
 	}
 
-	cols = append(cols,
-		"plans", "total_plan_time", "min_plan_time", "max_plan_time",
-		"mean_plan_time", "stddev_plan_time",
-		"wal_records", "wal_fpi", "wal_bytes",
-	)
+	// plans/total_plan_time/etc. and the wal_* columns were also added in 1.8.
+	if extVersion.GTE(1, 8) {
+		cols = append(cols,
+			"plans", "total_plan_time", "min_plan_time", "max_plan_time",
+			"mean_plan_time", "stddev_plan_time",
+			"wal_records", "wal_fpi", "wal_bytes",
+		)
+	} else {
+		cols = append(cols,
+			"NULL::bigint AS plans", "NULL::double precision AS total_plan_time",
+			"NULL::double precision AS min_plan_time", "NULL::double precision AS max_plan_time",
+			"NULL::double precision AS mean_plan_time", "NULL::double precision AS stddev_plan_time",
+			"NULL::bigint AS wal_records", "NULL::bigint AS wal_fpi", "NULL::bigint AS wal_bytes",
+		)
+	}
 
 	if extVersion.GTE(1, 9) {
 		cols = append(cols, "toplevel")

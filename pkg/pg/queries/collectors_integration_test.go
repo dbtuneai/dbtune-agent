@@ -105,7 +105,7 @@ func TestMain(m *testing.M) {
 	log.SetOutput(&logBuf)
 
 	ctx := context.Background()
-	versions := []int{13, 14, 15, 16, 17, 18}
+	versions := []int{12, 13, 14, 15, 16, 17, 18}
 
 	containers := make([]*postgres.PostgresContainer, 0, len(versions))
 
@@ -2215,13 +2215,13 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		PgStatDatabaseCollector(pool, noopPrepareCtx),
 		PgStatDatabaseConflictsCollector(pool, noopPrepareCtx),
 		PgStatIOCollector(pool, noopPrepareCtx, pgMajorVersion),
-		PgStatProgressAnalyzeCollector(pool, noopPrepareCtx),
+		PgStatProgressAnalyzeCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatProgressCreateIndexCollector(pool, noopPrepareCtx),
 		PgStatProgressVacuumCollector(pool, noopPrepareCtx),
 		PgStatRecoveryPrefetchCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatReplicationCollector(pool, noopPrepareCtx),
 		PgStatReplicationSlotsCollector(pool, noopPrepareCtx, pgMajorVersion),
-		PgStatSlruCollector(pool, noopPrepareCtx),
+		PgStatSlruCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatStatementsCollector(pool, noopPrepareCtx, PgStatStatementsConfig{
 			DiffLimit:          PgStatStatementsDiffLimit,
 			IncludeQueries:     true,
