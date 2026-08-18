@@ -943,6 +943,12 @@ func TestDDL_RoundTrip(t *testing.T) {
 			}
 			defer sourceAdmin.Close()
 
+			// gen_random_uuid() is built-in from PG 13; on PG 12 it's provided
+			// by pgcrypto. Harmless to install on every version.
+			if _, err := sourceAdmin.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pgcrypto"); err != nil {
+				t.Fatalf("failed to create pgcrypto extension: %v", err)
+			}
+
 			// Set up golden schema fixtures in the source DB.
 			for _, sql := range goldenSchemaFixtures {
 				if _, err := sourceAdmin.Exec(ctx, sql); err != nil {

@@ -31,6 +31,6 @@ const (
 
 const pgStatProgressAnalyzeQuery = `SELECT * FROM pg_stat_progress_analyze WHERE datname = current_database()`
 
-func PgStatProgressAnalyzeCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	return NewCollector[PgStatProgressAnalyzeRow](pool, prepareCtx, PgStatProgressAnalyzeName, PgStatProgressAnalyzeInterval, pgStatProgressAnalyzeQuery, WithSkipUnchanged())
+func PgStatProgressAnalyzeCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
+	return NewCollector[PgStatProgressAnalyzeRow](pool, prepareCtx, PgStatProgressAnalyzeName, PgStatProgressAnalyzeInterval, pgStatProgressAnalyzeQuery, WithSkipUnchanged(), WithMinPGVersion(pgMajorVersion, 13))
 }

@@ -44,6 +44,19 @@ const (
 // query_id is constructed as a composite key (queryid_usesysid_datid) matching
 // the format used in pg_stat_statements, enabling correlation without needing
 // the raw query text. queryid was added in PG 14, so PG 13 uses NULL.
+// leader_pid was added in PG 13, so PG 12 uses NULL.
+const pgStatActivityQueryPG12 = `SELECT
+	datid, datname, pid, NULL::integer as leader_pid, usesysid, usename,
+	application_name, client_addr, client_hostname, client_port,
+	backend_start, xact_start, query_start, state_change,
+	wait_event_type, wait_event, state,
+	backend_xid, age(backend_xid)::bigint AS backend_xid_age,
+	backend_xmin, age(backend_xmin)::bigint AS backend_xmin_age,
+	NULL as query_id,
+	backend_type
+FROM pg_stat_activity
+WHERE datname = current_database()`
+
 const pgStatActivityQueryPG13 = `SELECT
 	datid, datname, pid, leader_pid, usesysid, usename,
 	application_name, client_addr, client_hostname, client_port,
@@ -69,9 +82,14 @@ FROM pg_stat_activity
 WHERE datname = current_database()`
 
 func PgStatActivityCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
-	query := pgStatActivityQueryPG14
-	if pgMajorVersion < 14 {
+	var query string
+	switch {
+	case pgMajorVersion < 13:
+		query = pgStatActivityQueryPG12
+	case pgMajorVersion < 14:
 		query = pgStatActivityQueryPG13
+	default:
+		query = pgStatActivityQueryPG14
 	}
 	return NewCollector[PgStatActivityRow](pool, prepareCtx, PgStatActivityName, PgStatActivityInterval, query)
 }

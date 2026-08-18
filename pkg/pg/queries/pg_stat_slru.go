@@ -28,6 +28,6 @@ const (
 
 const pgStatSlruQuery = `SELECT * FROM pg_stat_slru`
 
-func PgStatSlruCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	return NewCollector[PgStatSlruRow](pool, prepareCtx, PgStatSlruName, PgStatSlruInterval, pgStatSlruQuery)
+func PgStatSlruCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
+	return NewCollector[PgStatSlruRow](pool, prepareCtx, PgStatSlruName, PgStatSlruInterval, pgStatSlruQuery, WithMinPGVersion(pgMajorVersion, 13))
 }

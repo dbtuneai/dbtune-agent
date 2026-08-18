@@ -84,6 +84,9 @@ func setupTestFixtures(ctx context.Context, pool *pgxpool.Pool, pgMajorVersion i
 		`CREATE INDEX idx_test_users_score_ff70 ON test_users(score) WITH (fillfactor = 70)`,
 		// Enable pg_stat_statements (shared_preload_libraries is set at container start).
 		`CREATE EXTENSION IF NOT EXISTS pg_stat_statements`,
+		// gen_random_uuid() is built-in from PG 13; on PG 12 it's provided by
+		// pgcrypto. Harmless to install on every version.
+		`CREATE EXTENSION IF NOT EXISTS pgcrypto`,
 	}
 	if pgMajorVersion >= 15 {
 		// NULLS NOT DISTINCT unique index for pg_index.indnullsnotdistinct testing.
@@ -105,7 +108,7 @@ func TestMain(m *testing.M) {
 	log.SetOutput(&logBuf)
 
 	ctx := context.Background()
-	versions := []int{13, 14, 15, 16, 17, 18}
+	versions := []int{12, 13, 14, 15, 16, 17, 18}
 
 	containers := make([]*postgres.PostgresContainer, 0, len(versions))
 
@@ -2215,13 +2218,13 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		PgStatDatabaseCollector(pool, noopPrepareCtx),
 		PgStatDatabaseConflictsCollector(pool, noopPrepareCtx),
 		PgStatIOCollector(pool, noopPrepareCtx, pgMajorVersion),
-		PgStatProgressAnalyzeCollector(pool, noopPrepareCtx),
+		PgStatProgressAnalyzeCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatProgressCreateIndexCollector(pool, noopPrepareCtx),
 		PgStatProgressVacuumCollector(pool, noopPrepareCtx),
 		PgStatRecoveryPrefetchCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatReplicationCollector(pool, noopPrepareCtx),
 		PgStatReplicationSlotsCollector(pool, noopPrepareCtx, pgMajorVersion),
-		PgStatSlruCollector(pool, noopPrepareCtx),
+		PgStatSlruCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatStatementsCollector(pool, noopPrepareCtx, PgStatStatementsConfig{
 			DiffLimit:          PgStatStatementsDiffLimit,
 			IncludeQueries:     true,
