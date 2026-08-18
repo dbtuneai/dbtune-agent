@@ -152,6 +152,29 @@ func TestBuildPgStatStatementsQuery_ColumnGating(t *testing.T) {
 		expect
 	}{
 		{
+			name: "ext_1_7_pg12_pre_rename_total_time_aliased_no_plans_no_wal",
+			v:    PgStatStatementsExtVersion{Major: 1, Minor: 7},
+			expect: expect{
+				mustContain: []string{
+					"total_time AS total_exec_time",
+					"min_time AS min_exec_time",
+					"max_time AS max_exec_time",
+					"mean_time AS mean_exec_time",
+					"stddev_time AS stddev_exec_time",
+					"NULL::bigint AS plans",
+					"NULL::bigint AS wal_records",
+					"blk_read_time AS shared_blk_read_time",
+				},
+				mustNotContain: []string{
+					", total_exec_time", // bare (unaliased) column must not appear
+					"toplevel",
+					"jit_functions",
+					"temp_blk_read_time",
+					"local_blk_read_time",
+				},
+			},
+		},
+		{
 			name: "ext_1_8_pg13_no_toplevel_no_jit_no_temp_blk_time_blk_read_time_aliased",
 			v:    PgStatStatementsExtVersion{Major: 1, Minor: 8},
 			expect: expect{

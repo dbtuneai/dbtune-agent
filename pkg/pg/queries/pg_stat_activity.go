@@ -82,12 +82,14 @@ FROM pg_stat_activity
 WHERE datname = current_database()`
 
 func PgStatActivityCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
-	query := pgStatActivityQueryPG14
-	if pgMajorVersion < 14 {
-		query = pgStatActivityQueryPG13
-	}
-	if pgMajorVersion < 13 {
+	var query string
+	switch {
+	case pgMajorVersion < 13:
 		query = pgStatActivityQueryPG12
+	case pgMajorVersion < 14:
+		query = pgStatActivityQueryPG13
+	default:
+		query = pgStatActivityQueryPG14
 	}
 	return NewCollector[PgStatActivityRow](pool, prepareCtx, PgStatActivityName, PgStatActivityInterval, query)
 }
