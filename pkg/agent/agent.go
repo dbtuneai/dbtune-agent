@@ -414,6 +414,21 @@ type CommonAgent struct {
 	// DBPool is the pgxpool.Pool used for database connections.
 	// Set by adapters so the runner can create a HealthGate.
 	DBPool *pgxpool.Pool
+	// collectorPanics throttles and reports panics of the metric collectors.
+	// Created on first use rather than at construction: adapters copy the
+	// CommonAgent they are built from, so a guard bound here would report
+	// through the pre-copy instance.
+	collectorPanics *PanicGuard
+}
+
+// collectorGuard returns the guard for the metric collectors. Not safe for
+// concurrent GetMetrics calls on the same agent, which already share
+// MetricsState and are serialised by the runner's metrics ticker.
+func (a *CommonAgent) collectorGuard() *PanicGuard {
+	if a.collectorPanics == nil {
+		a.collectorPanics = NewPanicGuard(a)
+	}
+	return a.collectorPanics
 }
 
 func CreateCommonAgent() *CommonAgent {
@@ -609,10 +624,25 @@ func (a *CommonAgent) GetMetrics(ctx context.Context) ([]metrics.FlatValue, erro
 	var wg sync.WaitGroup
 	errorsChan := make(chan error, len(a.MetricsState.Collectors))
 
+	guard := a.collectorGuard()
+
 	// Launch collectors in parallel
 	for _, collector := range a.MetricsState.Collectors {
 		c := collector // Create local copy for goroutine
 		wg.Add(1)
+
+		// Guarded per collector rather than at the runner's metrics task: a
+		// panicking collector becomes one collector error, so the healthy
+		// collectors' samples still ship on the partial-send path, and it gets
+		// the same <name>_panic report and throttling as every other task.
+		collect := guard.Wrap(c.Key, func(ctx context.Context) error {
+			a.Logger().Debugf("Starting collector: %s", c.Key)
+			if err := c.Collector(ctx, &a.MetricsState); err != nil {
+				return fmt.Errorf("collector %s failed: %w", c.Key, err)
+			}
+			return nil
+		})
+
 		go func() {
 			defer wg.Done()
 
@@ -623,26 +653,11 @@ func (a *CommonAgent) GetMetrics(ctx context.Context) ([]metrics.FlatValue, erro
 			done := make(chan error, 1)
 
 			go func() {
-				// A panicking collector must not take the process down: convert
-				// it into a collector error so the remaining collectors still
-				// report and the failure surfaces to the backend.
-				defer func() {
-					if r := recover(); r != nil {
-						done <- PanicError(fmt.Sprintf("collector %s", c.Key), r)
-					}
-				}()
-
-				a.Logger().Debugf("Starting collector: %s", c.Key)
 				// Create copy of the context to be passed to the collector
 				newCtx, cancel := context.WithCancel(collectorCtx)
 				defer cancel()
 
-				err := c.Collector(newCtx, &a.MetricsState)
-				if err != nil {
-					done <- fmt.Errorf("collector %s failed: %w", c.Key, err)
-					return
-				}
-				done <- nil
+				done <- collect(newCtx)
 			}()
 
 			select {

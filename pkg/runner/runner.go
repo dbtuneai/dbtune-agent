@@ -3,7 +3,6 @@ package runner
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -68,73 +67,6 @@ func handleCollectorError(ctx context.Context, adapter agent.AgentLooper, name s
 	return err
 }
 
-// panicGuard makes the agent's periodic tasks panic-proof: a panicking
-// collector cannot take the process down, every other task keeps running on its
-// own ticker, and the panicking one retries on its next tick.
-//
-// A collector that panics once almost always panics on every subsequent tick,
-// so reports are throttled per task to the 1st, 10th, 100th, ... consecutive
-// panic. Each carries its occurrence count, which is what conveys how long the
-// task has been broken: on the 5s metrics ticker that is a report at first
-// failure, then ~50s, ~8m, ~1h20m. A run that does not panic clears the count.
-type panicGuard struct {
-	adapter agent.AgentLooper
-	mu      sync.Mutex
-	panics  map[string]uint64
-}
-
-func newPanicGuard(adapter agent.AgentLooper) *panicGuard {
-	return &panicGuard{adapter: adapter, panics: make(map[string]uint64)}
-}
-
-// reportAt lists the consecutive-panic counts that produce a report. A task
-// panicking past the last entry has been failing for years at any tick rate.
-var reportAt = []uint64{1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000}
-
-// record counts a panic for name and reports whether this occurrence is due.
-func (g *panicGuard) record(name string) (uint64, bool) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.panics[name]++
-	count := g.panics[name]
-	return count, slices.Contains(reportAt, count)
-}
-
-func (g *panicGuard) clear(name string) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	delete(g.panics, name)
-}
-
-// wrap attaches panic recovery to a periodic task. A due occurrence is sent to
-// the platform as an error payload and returned to the caller, which logs it.
-// Occurrences in between return nil and are logged at debug level only, so the
-// panic loop neither floods the backend nor hides.
-func (g *panicGuard) wrap(name string, fn func(ctx context.Context) error) func(ctx context.Context) error {
-	return func(ctx context.Context) (err error) {
-		defer func() {
-			r := recover()
-			if r == nil {
-				g.clear(name)
-				return
-			}
-			count, due := g.record(name)
-			panicErr := agent.PanicError(fmt.Sprintf("%s (consecutive panics: %d)", name, count), r)
-			if !due {
-				g.adapter.Logger().Debugf("%v", panicErr)
-				return
-			}
-			err = panicErr
-			_ = g.adapter.SendError(ctx, agent.ErrorPayload{
-				ErrorMessage: panicErr.Error(),
-				ErrorType:    name + "_panic",
-				Timestamp:    time.Now().UTC().Format(time.RFC3339),
-			})
-		}()
-		return fn(ctx)
-	}
-}
-
 func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger *logrus.Logger, skipFirst bool, fn func(ctx context.Context) error) {
 	// Run immediately
 	if !skipFirst {
@@ -191,8 +123,10 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	// Create a HealthGate to short-circuit DB-hitting calls when the database is unreachable.
 	hg := agent.NewHealthGate(ctx, pool, pg.IsConnectionError, logger)
 
-	// Shared across every task so each one keeps its own panic count.
-	guard := newPanicGuard(adapter)
+	// Shared across every task so each one keeps its own panic count. The
+	// metric collectors are guarded inside GetMetrics instead, so a panicking
+	// one does not discard the healthy collectors' samples.
+	guard := agent.NewPanicGuard(adapter)
 
 	// Create tickers for different intervals
 	metricsTicker := time.NewTicker(5 * time.Second)
@@ -202,12 +136,12 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	guardrailTicker := time.NewTicker(1 * time.Second)
 
 	// Heartbeat goroutine
-	go runWithTicker(ctx, heartbeatTicker, "heartbeat", logger, true, guard.wrap("heartbeat", func(ctx context.Context) error {
+	go runWithTicker(ctx, heartbeatTicker, "heartbeat", logger, true, guard.Wrap("heartbeat", func(ctx context.Context) error {
 		return adapter.SendHeartbeat(ctx)
 	}))
 
 	// Metrics collection goroutine
-	go runWithTicker(ctx, metricsTicker, "metrics", logger, false, guard.wrap("metrics", func(ctx context.Context) error {
+	go runWithTicker(ctx, metricsTicker, "metrics", logger, false, guard.Wrap("metrics", func(ctx context.Context) error {
 		return withHealthGate(hg, logger, func() error {
 			data, err := adapter.GetMetrics(ctx)
 			if err != nil {
@@ -224,7 +158,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	}))
 
 	// System metrics collection goroutine
-	go runWithTicker(ctx, systemMetricsTicker, "system info", logger, false, guard.wrap("system info", func(ctx context.Context) error {
+	go runWithTicker(ctx, systemMetricsTicker, "system info", logger, false, guard.Wrap("system info", func(ctx context.Context) error {
 		return withHealthGate(hg, logger, func() error {
 			data, err := adapter.GetSystemInfo(ctx)
 			if err != nil {
@@ -235,7 +169,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	}))
 
 	// Config management goroutine
-	go runWithTicker(ctx, configTicker, "config", logger, false, guard.wrap("config", func(ctx context.Context) error {
+	go runWithTicker(ctx, configTicker, "config", logger, false, guard.Wrap("config", func(ctx context.Context) error {
 		return withHealthGate(hg, logger, func() error {
 			config, err := adapter.GetActiveConfig(ctx)
 			if err != nil {
@@ -282,7 +216,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	// Time is kept in a pointer to keep a persistent reference
 	// May need to refactor this for testing
 	var lastCheck *time.Time
-	go runWithTicker(ctx, guardrailTicker, "guardrail", logger, false, guard.wrap("guardrail", func(ctx context.Context) error {
+	go runWithTicker(ctx, guardrailTicker, "guardrail", logger, false, guard.Wrap("guardrail", func(ctx context.Context) error {
 		if lastCheck != nil && time.Since(*lastCheck) < 15*time.Second {
 			return nil
 		}
@@ -306,7 +240,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	// Guarded here rather than at each call site so both the bootstrap pass and
 	// the steady-state tickers survive a panicking catalog collector.
 	collectAndSend := func(ctx context.Context, c queries.CatalogCollector) error {
-		return guard.wrap(c.Name, func(ctx context.Context) error {
+		return guard.Wrap(c.Name, func(ctx context.Context) error {
 			if hg.IsClosed() {
 				logger.Debugf("Skipping catalog collector %s, health gate closed", c.Name)
 				return nil
