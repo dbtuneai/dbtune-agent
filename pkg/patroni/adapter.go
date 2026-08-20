@@ -708,6 +708,11 @@ func (adapter *PatroniAdapter) GetSystemInfo(ctx context.Context) ([]metrics.Fla
 	if err != nil {
 		return nil, err
 	}
+	// gopsutil can return an empty PlatformVersion on some Windows builds; the
+	// backend rejects a blank string for this field.
+	if hostInfo.PlatformVersion == "" {
+		hostInfo.PlatformVersion = "unknown"
+	}
 
 	noCPUs, err := cpu.Counts(true)
 	if err != nil {
