@@ -121,6 +121,77 @@ func TestGetMetrics(t *testing.T) {
 		assert.Len(t, flat_metrics, 1)
 		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric1", Value: 1, Type: "int"})
 	})
+
+	// A panicking collector used to take the whole process down, since
+	// collectors run in their own goroutine and nothing recovered.
+	t.Run("panicking collector does not kill the process", func(t *testing.T) {
+		transport := dbtunetest.CreateSuccessfulTripWithRoutes([]dbtunetest.Route{
+			{"/api/v1/agent/log-entries", http.MethodPost},
+		})
+		agent := CreateCommonAgentForTests(transport)
+		agent.MetricsState = MetricsState{
+			Collectors: []MetricCollector{
+				{
+					Key: "panicking_collector",
+					Collector: func(_ context.Context, _ *MetricsState) error {
+						var nilMap map[string]int
+						nilMap["boom"] = 1 // assignment to entry in nil map
+						return nil
+					},
+				},
+				mockCollector(10*time.Millisecond, false, []metrics.FlatValue{{
+					Key:   "metric2",
+					Value: 2,
+					Type:  "int",
+				}}),
+			},
+			Mutex: &sync.Mutex{},
+		}
+		agent.CollectionTimeout = 1 * time.Second
+		agent.IndividualTimeout = 500 * time.Millisecond
+
+		flat_metrics, err := agent.GetMetrics(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "panic in panicking_collector (consecutive panics: 1)")
+		assert.Contains(t, err.Error(), "nil map")
+		assert.Len(t, flat_metrics, 1, "healthy collectors must still report")
+		assert.Contains(t, flat_metrics, metrics.FlatValue{Key: "metric2", Value: 2, Type: "int"})
+
+		// The panic reaches the platform under its own type, like every other
+		// guarded collector, rather than as a plain collector error.
+		transport.ActionWasCalled(t, "/api/v1/agent/log-entries", http.MethodPost)
+	})
+
+	// A collector that panics once panics on every tick, so its reports back
+	// off instead of firing every 5 seconds forever.
+	t.Run("a collector stuck panicking is throttled", func(t *testing.T) {
+		transport := dbtunetest.CreateSuccessfulTripWithRoutes([]dbtunetest.Route{
+			{"/api/v1/agent/log-entries", http.MethodPost},
+		})
+		agent := CreateCommonAgentForTests(transport)
+		agent.MetricsState = MetricsState{
+			Collectors: []MetricCollector{
+				{
+					Key: "panicking_collector",
+					Collector: func(_ context.Context, _ *MetricsState) error {
+						panic("boom")
+					},
+				},
+			},
+			Mutex: &sync.Mutex{},
+		}
+		agent.CollectionTimeout = 1 * time.Second
+		agent.IndividualTimeout = 500 * time.Millisecond
+
+		var errored int
+		for range 10 {
+			if _, err := agent.GetMetrics(context.Background()); err != nil {
+				errored++
+			}
+		}
+
+		assert.Equal(t, 2, errored, "the 1st and 10th panic surface, the rest are suppressed")
+	})
 }
 
 // Creates a CommonAgent for testing purposes

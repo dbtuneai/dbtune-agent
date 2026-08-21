@@ -123,6 +123,11 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	// Create a HealthGate to short-circuit DB-hitting calls when the database is unreachable.
 	hg := agent.NewHealthGate(ctx, pool, pg.IsConnectionError, logger)
 
+	// Shared across every task so each one keeps its own panic count. The
+	// metric collectors are guarded inside GetMetrics instead, so a panicking
+	// one does not discard the healthy collectors' samples.
+	guard := agent.NewPanicGuard(adapter)
+
 	// Create tickers for different intervals
 	metricsTicker := time.NewTicker(5 * time.Second)
 	systemMetricsTicker := time.NewTicker(1 * time.Minute)
@@ -131,12 +136,12 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	guardrailTicker := time.NewTicker(1 * time.Second)
 
 	// Heartbeat goroutine
-	go runWithTicker(ctx, heartbeatTicker, "heartbeat", logger, true, func(ctx context.Context) error {
+	go runWithTicker(ctx, heartbeatTicker, "heartbeat", logger, true, guard.Wrap("heartbeat", func(ctx context.Context) error {
 		return adapter.SendHeartbeat(ctx)
-	})
+	}))
 
 	// Metrics collection goroutine
-	go runWithTicker(ctx, metricsTicker, "metrics", logger, false, func(ctx context.Context) error {
+	go runWithTicker(ctx, metricsTicker, "metrics", logger, false, guard.Wrap("metrics", func(ctx context.Context) error {
 		return withHealthGate(hg, logger, func() error {
 			data, err := adapter.GetMetrics(ctx)
 			if err != nil {
@@ -150,10 +155,10 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 			}
 			return adapter.SendMetrics(ctx, data)
 		})
-	})
+	}))
 
 	// System metrics collection goroutine
-	go runWithTicker(ctx, systemMetricsTicker, "system info", logger, false, func(ctx context.Context) error {
+	go runWithTicker(ctx, systemMetricsTicker, "system info", logger, false, guard.Wrap("system info", func(ctx context.Context) error {
 		return withHealthGate(hg, logger, func() error {
 			data, err := adapter.GetSystemInfo(ctx)
 			if err != nil {
@@ -161,10 +166,10 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 			}
 			return adapter.SendSystemInfo(ctx, data)
 		})
-	})
+	}))
 
 	// Config management goroutine
-	go runWithTicker(ctx, configTicker, "config", logger, false, func(ctx context.Context) error {
+	go runWithTicker(ctx, configTicker, "config", logger, false, guard.Wrap("config", func(ctx context.Context) error {
 		return withHealthGate(hg, logger, func() error {
 			config, err := adapter.GetActiveConfig(ctx)
 			if err != nil {
@@ -205,13 +210,13 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 			}
 			return applyErr
 		})
-	})
+	}))
 
 	// Guardrail check goroutine
 	// Time is kept in a pointer to keep a persistent reference
 	// May need to refactor this for testing
 	var lastCheck *time.Time
-	go runWithTicker(ctx, guardrailTicker, "guardrail", logger, false, func(ctx context.Context) error {
+	go runWithTicker(ctx, guardrailTicker, "guardrail", logger, false, guard.Wrap("guardrail", func(ctx context.Context) error {
 		if lastCheck != nil && time.Since(*lastCheck) < 15*time.Second {
 			return nil
 		}
@@ -226,26 +231,30 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 			lastCheck = &now
 		}
 		return nil
-	})
+	}))
 
 	// Catalog view collection goroutines — each runs at its own interval
 	// with a staggered start to avoid thundering herd on startup.
 	collectors := adapter.CatalogCollectors()
 
+	// Guarded here rather than at each call site so both the bootstrap pass and
+	// the steady-state tickers survive a panicking catalog collector.
 	collectAndSend := func(ctx context.Context, c queries.CatalogCollector) error {
-		if hg.IsClosed() {
-			logger.Debugf("Skipping catalog collector %s, health gate closed", c.Name)
-			return nil
-		}
-		data, err := c.Collect(ctx)
-		if err != nil {
-			hg.ReportError(err)
-			return handleCollectorError(ctx, adapter, c.Name, err)
-		}
-		if data == nil {
-			return nil
-		}
-		return adapter.SendCatalogPayload(ctx, c.Name, data.JSON)
+		return guard.Wrap(c.Name, func(ctx context.Context) error {
+			if hg.IsClosed() {
+				logger.Debugf("Skipping catalog collector %s, health gate closed", c.Name)
+				return nil
+			}
+			data, err := c.Collect(ctx)
+			if err != nil {
+				hg.ReportError(err)
+				return handleCollectorError(ctx, adapter, c.Name, err)
+			}
+			if data == nil {
+				return nil
+			}
+			return adapter.SendCatalogPayload(ctx, c.Name, data.JSON)
+		})(ctx)
 	}
 
 	bootstrapSet := make(map[string]struct{}, len(bootstrapCollectorNames))

@@ -185,6 +185,48 @@ func TestRunWithTicker(t *testing.T) {
 	})
 }
 
+// The guard's own behaviour is covered in pkg/agent; this covers the wiring:
+// a task that panics is reported under its own type and keeps its ticker, so a
+// collector stuck in a panic loop retries instead of killing the agent.
+func TestPanicGuardedTaskKeepsTicking(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		calls    int
+		reported int
+	)
+
+	m := new(MockAgentLooper)
+	m.On("Logger").Return(logrus.New())
+	m.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+		return p.ErrorType == "pg_stats_panic" && strings.Contains(p.ErrorMessage, "boom")
+	})).Run(func(mock.Arguments) {
+		mu.Lock()
+		reported++
+		mu.Unlock()
+	}).Return(nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	go runWithTicker(ctx, ticker, "pg_stats", logrus.New(), false, agent.NewPanicGuard(m).Wrap("pg_stats", func(_ context.Context) error {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		panic("boom")
+	}))
+
+	<-ctx.Done()
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Greater(t, calls, 1, "a panicking task must be retried on the next tick")
+	assert.GreaterOrEqual(t, reported, 1, "the first panic must reach the platform")
+	assert.Less(t, reported, calls, "the panic loop must not report every tick")
+}
+
 // Test Runner function
 func TestRunner(t *testing.T) {
 	mockAgent := new(MockAgentLooper)
