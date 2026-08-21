@@ -123,8 +123,11 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(_ context.Context) ([]met
 	if err != nil {
 		return nil, err
 	}
-	// gopsutil can return an empty PlatformVersion on some Windows builds; the
-	// backend rejects a blank string for this field.
+	// gopsutil can return an empty Platform/PlatformVersion on some Windows
+	// builds; the backend rejects a blank string for either field.
+	if hostInfo.Platform == "" {
+		hostInfo.Platform = "unknown"
+	}
 	if hostInfo.PlatformVersion == "" {
 		hostInfo.PlatformVersion = "unknown"
 	}
