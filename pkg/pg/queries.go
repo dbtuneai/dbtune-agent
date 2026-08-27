@@ -154,7 +154,8 @@ func GetActiveConfig(
 
 // settingsToConfigRows converts raw PgSettingsRow values into the
 // ConfigArraySchema consumed by the tuning loop. Numeric vartypes
-// have InferNumericType applied; NULL units become nil.
+// have InferNumericType applied; NULL units become nil. min_val/max_val
+// are relayed verbatim as strings so the backend owns unit conversion.
 func settingsToConfigRows(settings []queries.PgSettingsRow) agent.ConfigArraySchema {
 	configRows := make(agent.ConfigArraySchema, 0, len(settings))
 	for _, s := range settings {
@@ -174,9 +175,20 @@ func settingsToConfigRows(settings []queries.PgSettingsRow) agent.ConfigArraySch
 			Unit:    unit,
 			Vartype: string(s.Vartype),
 			Context: string(s.Context),
+			MinVal:  textToStringPtr(s.MinVal),
+			MaxVal:  textToStringPtr(s.MaxVal),
 		})
 	}
 	return configRows
+}
+
+// textToStringPtr converts a nullable pg text column to *string, preserving NULL.
+func textToStringPtr(t *queries.Text) *string {
+	if t == nil {
+		return nil
+	}
+	v := string(*t)
+	return &v
 }
 
 const ReloadConfigQuery = `
