@@ -3,7 +3,6 @@ package pg
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -32,22 +31,35 @@ func InferNumericType(setting interface{}) interface{} {
 	return s
 }
 
-// PGVersion returns the version of the PostgreSQL instance
+// PGVersionQuery asks PostgreSQL everything it will say about itself: the
+// version, the target it was compiled for, the compiler and the word size.
 const PGVersionQuery = `
 SELECT version();
 `
 
-// Example: 16.4
+// PGVersionInfo runs SELECT version() and returns the parsed result. It returns
+// ErrNotPostgres when the server answered but the string is unrecognisable,
+// which callers should distinguish from a connection failure.
+func PGVersionInfo(pgPool *pgxpool.Pool) (VersionInfo, error) {
+	var rawVersion string
+	err := utils.QueryRowWithPrefix(pgPool, context.Background(), PGVersionQuery).Scan(&rawVersion)
+	if err != nil {
+		return VersionInfo{}, err
+	}
+
+	return ParseVersionString(rawVersion)
+}
+
+// PGVersion returns the version of the PostgreSQL instance, e.g. "16.4". It is
+// truncated to two components so that it keeps reporting what it reported before
+// ParseVersionString replaced its regex — see VersionInfo.ShortVersion.
 func PGVersion(pgPool *pgxpool.Pool) (string, error) {
-	var pgVersion string
-	versionRegex := regexp.MustCompile(`PostgreSQL (\d+\.\d+)`)
-	err := utils.QueryRowWithPrefix(pgPool, context.Background(), PGVersionQuery).Scan(&pgVersion)
+	info, err := PGVersionInfo(pgPool)
 	if err != nil {
 		return "", err
 	}
-	matches := versionRegex.FindStringSubmatch(pgVersion)
 
-	return matches[1], nil
+	return info.ShortVersion(), nil
 }
 
 // PGMajorVersion extracts the integer major version from a version string like "16.4".
