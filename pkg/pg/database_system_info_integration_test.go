@@ -226,7 +226,7 @@ func TestDatabaseSystemInfo(t *testing.T) {
 
 	fvs, err := DatabaseSystemInfo(pool)
 	require.NoError(t, err)
-	require.Len(t, fvs, 2)
+	require.Len(t, fvs, 6)
 
 	byKey := make(map[string]metrics.FlatValue, len(fvs))
 	for _, fv := range fvs {
@@ -250,5 +250,26 @@ func TestDatabaseSystemInfo(t *testing.T) {
 		require.True(t, ok, "pg_database_count missing")
 		require.Equal(t, metrics.Int, fv.Type)
 		require.Equal(t, wantCount, fv.Value)
+	})
+
+	// A smoke test only: this package pins a single container, so the build
+	// keys are exercised against one image. ParseVersionString's table test is
+	// what actually covers the range of version() shapes.
+	t.Run("build info flat values", func(t *testing.T) {
+		for _, def := range []metrics.MetricDef{
+			metrics.PGCompilationTarget,
+			metrics.PGArch,
+			metrics.PGOS,
+			metrics.PGBits,
+		} {
+			fv, ok := byKey[def.Key]
+			require.True(t, ok, "%s missing", def.Key)
+			require.Equal(t, metrics.String, fv.Type, def.Key)
+			require.NotEmpty(t, fv.Value, def.Key)
+		}
+
+		require.Equal(t, "linux", byKey[metrics.PGOS.Key].Value)
+		require.Equal(t, "64", byKey[metrics.PGBits.Key].Value)
+		require.NotEqual(t, "unknown", byKey[metrics.PGCompilationTarget.Key].Value)
 	})
 }
