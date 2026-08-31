@@ -251,6 +251,9 @@ var (
 	NodeOSInfo        = MetricDef{Key: "node_os_info", Type: String}
 	NodeOSPlatform    = MetricDef{Key: "system_info_platform", Type: String}
 	NodeOSPlatformVer = MetricDef{Key: "system_info_platform_version", Type: String}
+	// AgentRuntimeGOOS is the Go build target of the agent binary (runtime.GOOS),
+	// not the OS of the probed database host.
+	AgentRuntimeGOOS = MetricDef{Key: "agent_runtime_goos", Type: String}
 
 	// AWS RDS / Aurora
 	AWSRDSParameterGroup        = MetricDef{Key: "aws_rds_parameter_group", Type: String}

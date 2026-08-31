@@ -717,7 +717,10 @@ func (a *CommonAgent) SendMetrics(ctx context.Context, ms []metrics.FlatValue) e
 func (a *CommonAgent) SendSystemInfo(ctx context.Context, systemInfo []metrics.FlatValue) error {
 	a.Logger().Println("Sending system info to server")
 
-	formattedMetrics := metrics.FormatSystemInfo(systemInfo)
+	// runtime.GOOS is a compile-time constant, so it's injected here for every
+	// adapter rather than collected per-adapter in GetSystemInfo.
+	runtimeGOOS, _ := metrics.AgentRuntimeGOOS.AsFlatValue(runtime.GOOS)
+	formattedMetrics := metrics.FormatSystemInfo(append(systemInfo, runtimeGOOS))
 
 	jsonData, err := json.Marshal(formattedMetrics)
 	if err != nil {

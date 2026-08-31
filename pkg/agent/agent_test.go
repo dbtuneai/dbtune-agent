@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -294,6 +297,40 @@ func TestCommonAgent_SendSystemInfo_Succeeds(t *testing.T) {
 	assert.NoError(t, err)
 
 	transport.ActionWasCalled(t, "/api/v1/agent/system-info", http.MethodPut)
+}
+
+func TestCommonAgent_SendSystemInfo_IncludesRuntimeGOOS(t *testing.T) {
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		gotBody = b
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	ca := &CommonAgent{
+		logger:    logrus.New(),
+		APIClient: retryablehttp.NewClient(),
+		ServerURLs: dbtune.ServerURLs{
+			ServerUrl: server.URL,
+			ApiKey:    "k",
+			DbID:      "db",
+		},
+		StartTime: time.Now().UTC().Format(time.RFC3339),
+	}
+	ca.APIClient.Logger = nil
+
+	err := ca.SendSystemInfo(context.Background(), nil)
+	require.NoError(t, err)
+
+	var payload metrics.FormattedSystemInfo
+	require.NoError(t, json.Unmarshal(gotBody, &payload))
+
+	goos, ok := payload.SystemInfo["agent_runtime_goos"]
+	require.True(t, ok, "payload should carry agent_runtime_goos, got keys: %v", payload.SystemInfo)
+	assert.Equal(t, "string", goos.Type)
+	assert.Equal(t, runtime.GOOS, goos.Value)
 }
 
 func TestCommonAgent_GetProposedConfig_Succeeds(t *testing.T) {
