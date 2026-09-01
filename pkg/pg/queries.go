@@ -2,8 +2,8 @@ package pg
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -32,22 +32,35 @@ func InferNumericType(setting interface{}) interface{} {
 	return s
 }
 
-// PGVersion returns the version of the PostgreSQL instance
+// PGVersionQuery asks PostgreSQL everything it will say about itself: the
+// version, the target it was compiled for, the compiler and the word size.
 const PGVersionQuery = `
 SELECT version();
 `
 
-// Example: 16.4
+// PGVersionInfo runs SELECT version() and returns the parsed result. It returns
+// ErrNotPostgres when the server answered but the string is unrecognisable,
+// which callers should distinguish from a connection failure.
+func PGVersionInfo(pgPool *pgxpool.Pool) (VersionInfo, error) {
+	var rawVersion string
+	err := utils.QueryRowWithPrefix(pgPool, context.Background(), PGVersionQuery).Scan(&rawVersion)
+	if err != nil {
+		return VersionInfo{}, err
+	}
+
+	return ParseVersionString(rawVersion)
+}
+
+// PGVersion returns the version of the PostgreSQL instance, e.g. "16.4". It is
+// truncated to two components so that it keeps reporting what it reported before
+// ParseVersionString replaced its regex — see VersionInfo.ShortVersion.
 func PGVersion(pgPool *pgxpool.Pool) (string, error) {
-	var pgVersion string
-	versionRegex := regexp.MustCompile(`PostgreSQL (\d+\.\d+)`)
-	err := utils.QueryRowWithPrefix(pgPool, context.Background(), PGVersionQuery).Scan(&pgVersion)
+	info, err := PGVersionInfo(pgPool)
 	if err != nil {
 		return "", err
 	}
-	matches := versionRegex.FindStringSubmatch(pgVersion)
 
-	return matches[1], nil
+	return info.ShortVersion(), nil
 }
 
 // PGMajorVersion extracts the integer major version from a version string like "16.4".
@@ -113,10 +126,16 @@ func UserDatabaseCount(pgPool *pgxpool.Pool) (int, error) {
 	return count, nil
 }
 
-// DatabaseSystemInfo returns the system-info metrics describing which database
-// the agent is tuning (pg_current_database) and how many user databases share
-// the cluster (pg_database_count). This lets us tell whether the tuned database
-// runs standalone or alongside other databases in the same cluster.
+// DatabaseSystemInfo returns the system-info metrics we can read straight out of
+// the server: which database the agent is tuning (pg_current_database), how many
+// user databases share the cluster (pg_database_count) — which tells us whether
+// the tuned database runs standalone or alongside others — and what the server
+// was built for (pg_compilation_target, pg_arch, pg_os, pg_bits).
+//
+// Every adapter calls this, so the build information reaches the managed
+// adapters too. Those have no host to inspect, and the ones that do inspect a
+// host are inspecting the agent's, which is the database server's only by
+// coincidence.
 func DatabaseSystemInfo(pgPool *pgxpool.Pool) ([]metrics.FlatValue, error) {
 	currentDatabase, err := CurrentDatabase(pgPool)
 	if err != nil {
@@ -125,6 +144,13 @@ func DatabaseSystemInfo(pgPool *pgxpool.Pool) ([]metrics.FlatValue, error) {
 
 	databaseCount, err := UserDatabaseCount(pgPool)
 	if err != nil {
+		return nil, err
+	}
+
+	// A version string we cannot parse is reported as unknown rather than
+	// failing the cycle; only the query itself failing is an error, as above.
+	versionInfo, err := PGVersionInfo(pgPool)
+	if err != nil && !errors.Is(err, ErrNotPostgres) {
 		return nil, err
 	}
 
@@ -138,7 +164,60 @@ func DatabaseSystemInfo(pgPool *pgxpool.Pool) ([]metrics.FlatValue, error) {
 		return nil, fmt.Errorf("failed to create database count metric: %w", err)
 	}
 
-	return []metrics.FlatValue{currentDatabaseMetric, databaseCountMetric}, nil
+	buildInfo, err := buildSystemInfo(versionInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	systemInfo := make([]metrics.FlatValue, 0, 2+len(buildInfo))
+	systemInfo = append(systemInfo, currentDatabaseMetric, databaseCountMetric)
+	systemInfo = append(systemInfo, buildInfo...)
+
+	return systemInfo, nil
+}
+
+// unknownPlaceholder is what we report for a build field version() did not
+// carry. The backend rejects blank strings for this class of field, so we never
+// send "".
+const unknownPlaceholder = "unknown"
+
+// orUnknown reports v, or the placeholder when version() did not carry it.
+func orUnknown(v string) string {
+	if v == "" {
+		return unknownPlaceholder
+	}
+	return v
+}
+
+// buildSystemInfo turns a parsed version() string into the metrics describing
+// what the server was compiled for.
+//
+// Every key is emitted on every call, degrading to "unknown" rather than being
+// left out. The backend hashes the whole system-info map, key set included, so a
+// key that comes and goes reads as the system having changed and can abort a
+// tuning session in progress — see the contract on agent.Adapter.GetSystemInfo.
+// A blank string is not an option either: the backend rejects those.
+func buildSystemInfo(info VersionInfo) ([]metrics.FlatValue, error) {
+	fields := []struct {
+		def   metrics.MetricDef
+		value string
+	}{
+		{metrics.PGCompilationTarget, info.Target.Raw},
+		{metrics.PGArch, info.Target.Arch},
+		{metrics.PGOS, info.Target.OS},
+		{metrics.PGBits, info.Bits},
+	}
+
+	buildInfo := make([]metrics.FlatValue, 0, len(fields))
+	for _, field := range fields {
+		metric, err := field.def.AsFlatValue(orUnknown(field.value))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create %s metric: %w", field.def.Key, err)
+		}
+		buildInfo = append(buildInfo, metric)
+	}
+
+	return buildInfo, nil
 }
 
 func GetActiveConfig(
