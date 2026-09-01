@@ -3,10 +3,10 @@ package rds
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/sirupsen/logrus"
@@ -214,8 +215,27 @@ func getLastDatapoint[T RDSDatapointConstraint](datapoints []T) (*T, error) {
 	return &datapoints[latestIdx], nil
 }
 
-// AWS PRM attribution token - use AddUserAgentKey, not AddUserAgentKeyValue (renders as "key/value" and breaks the format).
+// AWS PRM attribution token. Appended via raw header middleware below, not AddUserAgentKey(Value) -
+// those sanitize "/" to "-" and corrupt this format (confirmed live via CloudTrail).
 const awsPartnerAttributionUserAgent = "APN_1.1/pc_dml4zrdqnmoacdcn4u6vmz9q4$"
+
+// Must run after the SDK's "UserAgent" middleware, or that middleware overwrites this.
+type prmUserAgentMiddleware struct{}
+
+func (prmUserAgentMiddleware) ID() string { return "DBtunePRMUserAgent" }
+
+func (prmUserAgentMiddleware) HandleBuild(
+	ctx context.Context, in middleware.BuildInput, next middleware.BuildHandler,
+) (middleware.BuildOutput, middleware.Metadata, error) {
+	if req, ok := in.Request.(*smithyhttp.Request); ok {
+		req.Header.Set("User-Agent", strings.TrimLeft(req.Header.Get("User-Agent")+" "+awsPartnerAttributionUserAgent, " "))
+	}
+	return next.HandleBuild(ctx, in)
+}
+
+func addPRMUserAgent(stack *middleware.Stack) error {
+	return stack.Build.Insert(prmUserAgentMiddleware{}, "UserAgent", middleware.After)
+}
 
 func FetchAWSConfig(
 	awsAccessKey string,
@@ -225,7 +245,7 @@ func FetchAWSConfig(
 ) (aws.Config, error) {
 	region := config.WithRegion(awsRegion)
 	apiOptions := config.WithAPIOptions([]func(*middleware.Stack) error{
-		awsmiddleware.AddUserAgentKey(awsPartnerAttributionUserAgent),
+		addPRMUserAgent,
 	})
 	if awsAccessKey != "" && awsSecretAccessKey != "" {
 		// Use static credentials if provided
