@@ -3,6 +3,7 @@ package rds
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -227,7 +228,7 @@ func (prmUserAgentMiddleware) HandleBuild(
 	ctx context.Context, in middleware.BuildInput, next middleware.BuildHandler,
 ) (middleware.BuildOutput, middleware.Metadata, error) {
 	if req, ok := in.Request.(*smithyhttp.Request); ok {
-		req.Header.Set("User-Agent", req.Header.Get("User-Agent")+" "+awsPartnerAttributionUserAgent)
+		req.Header.Set("User-Agent", strings.TrimLeft(req.Header.Get("User-Agent")+" "+awsPartnerAttributionUserAgent, " "))
 	}
 	return next.HandleBuild(ctx, in)
 }
