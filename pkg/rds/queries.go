@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
@@ -14,6 +15,7 @@ import (
 	pitypes "github.com/aws/aws-sdk-go-v2/service/pi/types"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
+	"github.com/aws/smithy-go/middleware"
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/sirupsen/logrus"
@@ -212,6 +214,9 @@ func getLastDatapoint[T RDSDatapointConstraint](datapoints []T) (*T, error) {
 	return &datapoints[latestIdx], nil
 }
 
+// AWS PRM attribution token - use AddUserAgentKey, not AddUserAgentKeyValue (renders as "key/value" and breaks the format).
+const awsPartnerAttributionUserAgent = "APN_1.1/pc_dml4zrdqnmoacdcn4u6vmz9q4$"
+
 func FetchAWSConfig(
 	awsAccessKey string,
 	awsSecretAccessKey string,
@@ -219,16 +224,19 @@ func FetchAWSConfig(
 	ctx context.Context,
 ) (aws.Config, error) {
 	region := config.WithRegion(awsRegion)
+	apiOptions := config.WithAPIOptions([]func(*middleware.Stack) error{
+		awsmiddleware.AddUserAgentKey(awsPartnerAttributionUserAgent),
+	})
 	if awsAccessKey != "" && awsSecretAccessKey != "" {
 		// Use static credentials if provided
 		creds := credentials.NewStaticCredentialsProvider(awsAccessKey, awsSecretAccessKey, "")
 		provider := config.WithCredentialsProvider(creds)
-		return config.LoadDefaultConfig(ctx, region, provider)
+		return config.LoadDefaultConfig(ctx, region, provider, apiOptions)
 	} else {
 		// Use default credential chain
 		// Includes by default WebIdentityToken:
 		// https://github.com/aws/aws-sdk-go-v2/blob/main/config/resolve_credentials.go#L119
-		return config.LoadDefaultConfig(ctx, region)
+		return config.LoadDefaultConfig(ctx, region, apiOptions)
 	}
 }
 
