@@ -299,7 +299,7 @@ func classifySequences(raw []DDLSequenceRaw) ([]SeqParams, []DDLSerialSequence, 
 // --------------------------------------------------------------------
 const ddlFunctionsQuery = `
 SELECT
-    p.oid::integer   AS oid,
+    p.oid            AS oid,
     p.proname        AS name,
     pg_get_functiondef(p.oid) AS function_def
 FROM pg_proc p
@@ -338,7 +338,7 @@ func queryDDLFunctions(pool *pgxpool.Pool, ctx context.Context, schemas []string
 // --------------------------------------------------------------------
 const ddlTablesQuery = `
 SELECT
-    c.oid::integer         AS oid,
+    c.oid                  AS oid,
     c.relname              AS name,
     quote_ident(n.nspname) || '.' || quote_ident(c.relname) AS quoted_name,
     c.relkind::text        AS relkind,
@@ -398,7 +398,7 @@ func queryDDLTables(pool *pgxpool.Pool, ctx context.Context, schemas []string) (
 // --------------------------------------------------------------------
 const ddlColumnsQuery = `
 SELECT
-    c.oid::integer          AS table_oid,
+    c.oid                   AS table_oid,
     quote_ident(n.nspname) || '.' || quote_ident(c.relname) AS table_name,
     a.attnum                AS attnum,
     quote_ident(a.attname)  AS name,

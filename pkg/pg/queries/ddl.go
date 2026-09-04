@@ -264,7 +264,7 @@ func filter[T any](items []T, pred func(T) bool) []T {
 // "tableOID:attnum" keys.
 func buildPKColSet(pool *pgxpool.Pool, ctx context.Context, schemas []string) (map[string]bool, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT con.conrelid::integer, unnest(con.conkey)::integer
+		SELECT con.conrelid, unnest(con.conkey)::integer
 		FROM pg_constraint con
 		JOIN pg_namespace n ON n.oid = (SELECT relnamespace FROM pg_class WHERE oid = con.conrelid)
 		WHERE n.nspname = ANY($1::text[]) AND con.contype = 'p'`, schemas)
@@ -275,7 +275,8 @@ func buildPKColSet(pool *pgxpool.Pool, ctx context.Context, schemas []string) (m
 
 	m := make(map[string]bool)
 	for rows.Next() {
-		var tableOID, attnum int
+		var tableOID uint32
+		var attnum int
 		if err := rows.Scan(&tableOID, &attnum); err != nil {
 			return nil, err
 		}

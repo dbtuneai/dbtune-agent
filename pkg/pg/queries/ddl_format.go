@@ -135,7 +135,7 @@ func formatDDLTable(t *DDLTable, columns []DDLColumn, serialCols, identityCols, 
 		}
 
 		// Identity: always emit NOT NULL (required by ADD GENERATED AS IDENTITY).
-		// PK: skip NOT NULL (implied by constraint, PG 18 rejects redundant).
+		// PK: skip NOT NULL (implied by the constraint, so it is noise).
 		// Other: emit if attnotnull is true.
 		isPK := pkCols[fmt.Sprintf("%d:%d", col.TableOID, col.AttNum)]
 		if isIdentity || (col.NotNull && !isPK) {
