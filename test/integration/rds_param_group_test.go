@@ -180,3 +180,39 @@ func TestRDSAdapter_ApplyConfig_BehaviourMatchesAttachedPG(t *testing.T) {
 	require.NoError(t, err,
 		"apply against custom PG %q should succeed; got %v", pgName, err)
 }
+
+// TestRDSAdapter_ConnectionEndpointVerification asserts that endpoint discovery
+// works against real AWS and that a correctly-configured environment is never
+// reported as a mismatch.
+//
+// A mismatch here means DBT_POSTGRESQL_CONNECTION_URL and
+// DBT_RDS_DATABASE_IDENTIFIER address different RDS instances, which is the
+// misconfiguration the check exists to catch. Connecting through RDS Proxy, a
+// tunnel or a CNAME yields EndpointUnverifiable, which is expected and fine.
+func TestRDSAdapter_ConnectionEndpointVerification(t *testing.T) {
+	adapter := newAdapter(t)
+
+	info := adapter.State.DBInfo
+	require.NotNil(t, info)
+
+	require.NotEmpty(t, info.InstanceEndpoint,
+		"DescribeDBInstances should report an endpoint for an available instance")
+	t.Logf("instance endpoint=%q cluster endpoints=%v",
+		info.InstanceEndpoint, info.ClusterEndpoints)
+
+	if info.ClusterParameterGroupName != "" {
+		assert.NotEmpty(t, info.ClusterEndpoints,
+			"a clustered instance should report cluster endpoints")
+	}
+
+	outcome := rds.VerifyConnectionEndpoint(
+		info,
+		os.Getenv("DBT_POSTGRESQL_CONNECTION_URL"),
+		adapter.Logger(),
+	)
+	t.Logf("endpoint verification outcome=%d (0=verified 1=mismatch 2=unverifiable)", outcome)
+
+	assert.NotEqual(t, rds.EndpointMismatch, outcome,
+		"connection URL and RDS_DATABASE_IDENTIFIER appear to address different instances; "+
+			"known endpoints for this instance: %v", info.KnownEndpoints())
+}
