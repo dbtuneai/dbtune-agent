@@ -259,21 +259,17 @@ func FetchAWSConfig(
 	}
 }
 
-// ApplyConfig applies the proposed configuration to the RDS instance.
+// ApplyConfig writes the targets to the instance's parameter group.
 //
-// The targets are resolved by the caller, which also verifies them afterwards,
-// so the values written here and the values checked against pg_settings are
-// the same slice rather than two separate resolutions of one proposal.
+// The caller resolves the targets and verifies them afterwards, so the values
+// written and the values checked against pg_settings are the same slice.
 //
-// The knobApplication signal chooses between ApplyMethodImmediate and
-// ApplyMethodPendingReboot. If the chosen method mismatches the actual
-// parameter (e.g. immediate apply on a static parameter), AWS surfaces an
-// error from ModifyDBParameterGroup which is returned as-is; we do not
-// attempt a recovery write.
+// knobApplication chooses the apply method. If it mismatches the parameter
+// (e.g. immediate on a static one), the ModifyDBParameterGroup error is
+// returned as-is; there is no recovery write.
 //
-// A successful return means RDS stored the values. It does not mean the
-// running server has them — the caller must verify that against pg_settings
-// (see RDSAdapter.verifyAppliedSettings).
+// A successful return means RDS stored the values, not that the server has
+// them. The caller must verify against pg_settings.
 func ApplyConfig(
 	targets []targetKnob,
 	knobApplication agent.KnobApplication,
@@ -294,21 +290,18 @@ func ApplyConfig(
 		applyMethod = rdsTypes.ApplyMethodImmediate
 	}
 
-	// Nothing to change, assume we just go ahead
 	if len(targets) == 0 {
 		logger.Info("No parameter changes were required")
 		return nil
 	}
 
-	// If the parameter group would be set to pending-reboot but the agent is
-	// not allowed to restart, bail before modifying the parameter group.
+	// Bail before writing if this needs a reboot the agent may not do.
 	if applyMethod == rdsTypes.ApplyMethodPendingReboot && !agent.IsRestartAllowed() {
 		return &agent.RestartNotAllowedError{
 			Message: "restart is not allowed in the agent",
 		}
 	}
 
-	// Modify parameter group
 	args := &rds.ModifyDBParameterGroupInput{
 		DBParameterGroupName: aws.String(parameterGroupName),
 		Parameters:           awsParameters(targets, applyMethod),
@@ -319,8 +312,7 @@ func ApplyConfig(
 		return fmt.Errorf("failed to modify parameter group: %w", err)
 	}
 
-	// If restart is required and specified. IsRestartAllowed was already
-	// verified above, before modifying the parameter group.
+	// IsRestartAllowed was checked above, before the write.
 	if applyMethod == rdsTypes.ApplyMethodPendingReboot {
 		args := &rds.RebootDBInstanceInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
 		_, err = clients.RDSClient.RebootDBInstance(ctx, args)
@@ -329,7 +321,7 @@ func ApplyConfig(
 		}
 	}
 
-	// Wait for the instance to become available and PostgreSQL to be online
+	// Wait for the instance to come back available.
 	waiter := rds.NewDBInstanceAvailableWaiter(clients.RDSClient)
 	dbWaiterArgs := &rds.DescribeDBInstancesInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
 	err = waiter.Wait(ctx, dbWaiterArgs, 15*time.Minute)
@@ -340,13 +332,11 @@ func ApplyConfig(
 	return nil
 }
 
-// describeTargetParameters returns the parameter-group entries for exactly the
-// named parameters.
+// describeTargetParameters returns the group entries for the named parameters.
 //
-// Source is deliberately not filtered: every valid parameter of the engine
-// comes back (as engine-default when unset), so a name absent from the
-// response is one this engine does not have, rather than one that is merely
-// unset.
+// Source is not filtered on purpose: every valid engine parameter comes back,
+// engine-default when unset, so an absent name is one the engine lacks rather
+// than one merely unset.
 func describeTargetParameters(
 	clients *AWSClients,
 	parameterGroupName string,

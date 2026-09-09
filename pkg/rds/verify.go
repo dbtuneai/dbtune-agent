@@ -13,21 +13,15 @@ import (
 	"github.com/dbtuneai/agent/pkg/pg/queries"
 )
 
-// targetKnob is one parameter the agent asks RDS to set, carrying what is
-// needed both to write it and to verify afterwards that it landed. Values are
-// formatted in the parameter's pg_settings native unit, which is also the unit
-// RDS parameter groups use.
+// targetKnob is one parameter to write and later verify. Values use the
+// pg_settings native unit, which is what RDS parameter groups use too.
 type targetKnob struct {
-	Name string
-	// Value is the requested setting, formatted as pg_settings would report it.
-	Value string
-	// Vartype is the pg_settings vartype carried with the proposal, used to
-	// compare values without tripping over representation differences.
+	Name    string
+	Value   string
 	Vartype string
 }
 
-// targetKnobsToApply resolves every overridden knob in the proposal into a
-// targetKnob. It fails as a unit: either every knob parses or none is applied.
+// targetKnobsToApply resolves the proposal's overridden knobs. All or nothing.
 func targetKnobsToApply(proposedConfig *agent.ProposedConfigResponse) ([]targetKnob, error) {
 	targets := make([]targetKnob, 0, len(proposedConfig.KnobsOverrides))
 	for _, knob := range proposedConfig.KnobsOverrides {
@@ -61,8 +55,6 @@ func awsParameters(targets []targetKnob, applyMethod rdsTypes.ApplyMethod) []rds
 	return params
 }
 
-// targetNames lists the parameter names, for the DescribeDBParameters filter
-// and for error messages.
 func targetNames(targets []targetKnob) []string {
 	names := make([]string, 0, len(targets))
 	for _, t := range targets {
@@ -71,13 +63,9 @@ func targetNames(targets []targetKnob) []string {
 	return names
 }
 
-// groupValueMismatches reports the requested parameters the group does not
-// hold, formatted for an error message.
-//
-// This only runs once an apply has already failed, to tell a write that never
-// stuck apart from one the engine simply did not load. Do not use it to judge
-// an apply: the group can hold a value the running server has never seen,
-// which is what diffPGSettings is for.
+// groupValueMismatches reports which requested values the group does not hold.
+// Diagnostic only: the group can hold a value the server never loaded, so use
+// diffPGSettings to judge an apply.
 func groupValueMismatches(targets []targetKnob, actual []rdsTypes.Parameter) []string {
 	byName := make(map[string]rdsTypes.Parameter, len(actual))
 	for _, p := range actual {
@@ -91,8 +79,7 @@ func groupValueMismatches(targets []targetKnob, actual []rdsTypes.Parameter) []s
 			mismatches = append(mismatches, fmt.Sprintf("%s (absent from the group)", t.Name))
 			continue
 		}
-		// ParameterValue is omitted entirely when a parameter has never been
-		// set, so an unset parameter reads as "" and never matches.
+		// ParameterValue is omitted when never set, so it reads as "".
 		current := aws.ToString(param.ParameterValue)
 		if valuesEqual(t.Vartype, t.Value, current) {
 			continue
@@ -105,15 +92,13 @@ func groupValueMismatches(targets []targetKnob, actual []rdsTypes.Parameter) []s
 	return mismatches
 }
 
-// settingsDiff is what pg_settings says about the parameters the agent wrote.
-// The zero value means the running server reports every requested value.
+// settingsDiff is what pg_settings reports about the parameters written. The
+// zero value means every requested value is live.
 type settingsDiff struct {
-	// Missing knobs are absent from pg_settings entirely (unknown parameter
-	// name for this server version).
+	// Missing is absent from pg_settings: unknown to this server version.
 	Missing []string
-	// Mismatched knobs report a value other than the one requested. Right
-	// after a write this is the normal "not propagated yet" state; once the
-	// wait times out it means the value never arrived.
+	// Mismatched reports another value. Normal right after a write; after the
+	// wait times out, the value never arrived.
 	Mismatched []string
 }
 
@@ -135,9 +120,8 @@ func (d settingsDiff) String() string {
 	return strings.Join(parts, "; ")
 }
 
-// diffPGSettings compares the requested values against what the running
-// server reports. This is the only check that proves an apply actually took
-// effect: the parameter group can hold a value the engine never loaded.
+// diffPGSettings compares the requested values against what the server
+// reports. Only this proves an apply took effect.
 func diffPGSettings(targets []targetKnob, rows []queries.PgSettingsRow) settingsDiff {
 	byName := make(map[string]queries.PgSettingsRow, len(rows))
 	for _, r := range rows {
@@ -151,7 +135,7 @@ func diffPGSettings(targets []targetKnob, rows []queries.PgSettingsRow) settings
 			diff.Missing = append(diff.Missing, t.Name)
 			continue
 		}
-		// Prefer the vartype the server reports over the proposal's.
+		// The server's vartype wins over the proposal's.
 		vartype := t.Vartype
 		if row.Vartype != "" {
 			vartype = string(row.Vartype)
@@ -166,9 +150,9 @@ func diffPGSettings(targets []targetKnob, rows []queries.PgSettingsRow) settings
 	return diff
 }
 
-// valuesEqual compares two settings written in the same unit, tolerating the
-// representation differences between what the agent sends and what pg_settings
-// reports (e.g. "1" vs "1.0", "on" vs "true", "LOGICAL" vs "logical").
+// valuesEqual compares two settings in the same unit, tolerating
+// representation differences: "1" vs "1.0", "on" vs "true", "LOGICAL" vs
+// "logical".
 func valuesEqual(vartype, want, got string) bool {
 	want = strings.TrimSpace(want)
 	got = strings.TrimSpace(got)
@@ -190,8 +174,7 @@ func valuesEqual(vartype, want, got string) bool {
 		w, wErr := strconv.ParseFloat(want, 64)
 		g, gErr := strconv.ParseFloat(got, 64)
 		if wErr == nil && gErr == nil {
-			// The agent formats reals with %.6g, so compare on that precision
-			// rather than requiring bit equality.
+			// The agent formats reals with %.6g, so compare at that precision.
 			return math.Abs(w-g) <= math.Max(1e-9, 1e-6*math.Abs(w))
 		}
 	case "bool":
@@ -202,12 +185,12 @@ func valuesEqual(vartype, want, got string) bool {
 		}
 	}
 
-	// Enums and strings: PostgreSQL lowercases most enum values.
+	// Enums and strings. PostgreSQL lowercases most enum values.
 	return strings.EqualFold(want, got)
 }
 
-// parseNumber parses an integer setting, accepting a float representation of a
-// whole number ("1024.0") since JSON round-trips can introduce one.
+// parseNumber parses an integer setting, accepting "1024.0" from a JSON
+// round-trip.
 func parseNumber(s string) (int64, error) {
 	if v, err := strconv.ParseInt(s, 10, 64); err == nil {
 		return v, nil

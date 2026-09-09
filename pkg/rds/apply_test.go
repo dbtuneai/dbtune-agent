@@ -17,9 +17,7 @@ import (
 
 func TestAsApplyConfigError(t *testing.T) {
 	t.Run("preserves the type pg.ValidateRestartPolicy returns", func(t *testing.T) {
-		// The other adapters do &ConfigApplyError{Err: err} here, which
-		// downgrades this to config_apply_error. Keep the wire type the
-		// platform dispatches on.
+		// Wrapping would downgrade this to config_apply_error.
 		inner := &agent.RestartNotAllowedError{Message: "restart is not allowed in the agent"}
 		got := asApplyConfigError(inner)
 		assert.Equal(t, "restart_not_allowed", got.ErrorType())
@@ -77,8 +75,7 @@ func TestTargetKnobsToApply(t *testing.T) {
 
 func TestStateApplyDebounced(t *testing.T) {
 	assert.False(t, (&State{}).ApplyDebounced(time.Minute), "fresh state")
-	// Debounced on the attempt, not the success: without this a config that
-	// fails verification is re-written on every config tick.
+	// Debounced on the attempt, not the success.
 	assert.True(t, (&State{LastApplyAttempt: time.Now()}).ApplyDebounced(time.Minute))
 	assert.False(t, (&State{LastApplyAttempt: time.Now().Add(-2 * time.Minute)}).ApplyDebounced(time.Minute))
 }
@@ -100,28 +97,23 @@ func TestCheckParameterGroupState(t *testing.T) {
 		return a, &logs
 	}
 
-	// None of these describe a write that has not happened yet, so none of
-	// them may block the apply. "failed-to-apply" is in the list on purpose:
-	// the corrective write happens after this check and is the only thing
-	// that clears the state, so refusing would strand the agent in it,
-	// returning config_apply_error on every config tick with no way back out.
+	// None of these describe a write that has not happened yet, so none may
+	// block the apply. "failed-to-apply" included: only the next write clears
+	// it, and refusing here would strand the agent.
 	for _, status := range []string{"", "in-sync", "applying", "pending-reboot", "failed-to-apply"} {
 		a, _ := adapterWith(status)
 		assert.Nil(t, a.checkParameterGroupState(), "status %q", status)
 	}
 
 	t.Run("the pre-write status reaches the log", func(t *testing.T) {
-		// Nothing calls failed-to-apply out separately, so the unconditional
-		// log line is the only trace that the group was in a bad state when
-		// an apply went ahead.
+		// The only trace that an apply went ahead on a bad group.
 		a, logs := adapterWith("failed-to-apply")
 		require.Nil(t, a.checkParameterGroupState())
 		assert.Contains(t, logs.String(), "failed-to-apply")
 	})
 
 	t.Run("pending-database-upgrade still refuses", func(t *testing.T) {
-		// Unlike failed-to-apply, no write clears this: the instance itself
-		// has to be upgraded first.
+		// No write clears this; the instance has to be upgraded.
 		a, _ := adapterWith("pending-database-upgrade")
 		err := a.checkParameterGroupState()
 		require.NotNil(t, err)

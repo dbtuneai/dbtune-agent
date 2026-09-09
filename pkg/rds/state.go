@@ -20,19 +20,17 @@ import (
 )
 
 type State struct {
-	// LastApplyAttempt is when the agent last wrote to the RDS API, whether
-	// or not the apply went on to succeed. Debouncing on the attempt rather
-	// than on the success keeps a failing apply from re-writing on every
-	// config tick.
+	// LastApplyAttempt is the last apply, successful or not. Debouncing on the
+	// attempt keeps a failing apply from retrying every config tick.
 	LastApplyAttempt   time.Time
 	LastGuardrailCheck time.Time
 	LastDBInfoCheck    time.Time
 	DBInfo             *DBInfo
 }
 
-// applyDebounce is the minimum spacing between writes to the RDS parameter
-// group API. RDS also serves stale config reads for a while after an apply,
-// so re-proposals arriving inside this window are ignored.
+// applyDebounce is the minimum spacing between parameter group writes. RDS
+// serves stale config reads after an apply, so re-proposals inside it are
+// ignored.
 const applyDebounce = 1 * time.Minute
 
 // ApplyDebounced reports whether an apply was attempted within d.

@@ -26,7 +26,7 @@ func TestGroupValueMismatches(t *testing.T) {
 	t.Run("group holds everything", func(t *testing.T) {
 		assert.Empty(t, groupValueMismatches(targets, []rdsTypes.Parameter{
 			param("work_mem", aws.String("16384")),
-			// Same value, different representation: not a mismatch.
+			// Same value, different representation.
 			param("random_page_cost", aws.String("1.100")),
 			param("unrelated", aws.String("x")),
 		}))
@@ -95,7 +95,7 @@ func TestDiffPGSettings(t *testing.T) {
 	})
 
 	t.Run("server vartype wins over the proposal's", func(t *testing.T) {
-		// Proposal claims integer; the server says real and reports 1.1000.
+		// Proposal says integer, server says real.
 		diff := diffPGSettings(
 			[]targetKnob{{Name: "random_page_cost", Value: "1.1", Vartype: "integer"}},
 			[]queries.PgSettingsRow{row("random_page_cost", "1.1000", "real")},
@@ -126,8 +126,7 @@ func TestValuesEqual(t *testing.T) {
 		// An unset parameter never matches a requested value.
 		{"integer", "16384", "", false},
 		{"string", "", "", true},
-		// A non-numeric value under a numeric vartype must not compare equal
-		// just because both fail to parse.
+		// Both failing to parse must not compare equal.
 		{"integer", "auto", "16384", false},
 	}
 	for _, c := range cases {

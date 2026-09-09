@@ -193,19 +193,16 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return nil
 	}
 
-	// Stamped on return so the next attempt is spaced from the end of a failed
-	// apply rather than from its start.
+	// Stamped on return, so a refused or failed apply is debounced too.
 	defer func() { adapter.State.LastApplyAttempt = time.Now() }()
 
-	// Fail fast on a known-default group before any AWS calls. The post-refresh
-	// check below catches the case where the group rotated to a default between
-	// system-info ticks.
+	// Fail fast before any AWS call. The check after the refresh catches a
+	// group that rotated to a default since the last system-info tick.
 	if err := defaultParameterGroupError(adapter.State.DBInfo); err != nil {
 		return err
 	}
 
-	// Refresh so we apply against the parameter group actually attached right
-	// now, not whatever was observed at the last system-info tick.
+	// Apply against the group attached now, not the one seen at the last tick.
 	if err := adapter.refreshDBInfo(ctx); err != nil {
 		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to refresh DB info before apply: %w", err)}
 	}
@@ -213,8 +210,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return err
 	}
 
-	// The refresh above just told us what state the instance thinks this group
-	// is in. Costs no extra API call.
+	// Uses the DBInfo just refreshed; no extra API call.
 	if err := adapter.checkParameterGroupState(); err != nil {
 		return err
 	}
@@ -224,11 +220,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to resolve knobs to apply: %w", targetErr)}
 	}
 
-	// Ask the running server which of these knobs need a restart, before
-	// touching the parameter group, so a reload that cannot deliver the value
-	// is refused rather than half-applied. Same helper and same policy as the
-	// other adapters; asApplyConfigError keeps the typed
-	// RestartNotAllowedError it may return.
+	// Refuse a reload that cannot deliver the value before writing anything.
 	if _, err := pg.ValidateRestartPolicy(
 		adapter.PGDriver, ctx, targetNames(targets), proposedConfig.KnobApplication,
 	); err != nil {
@@ -255,9 +247,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return &agent.ConfigApplyError{Err: fmt.Errorf("error waiting for PostgreSQL to come back online: %w", err)}
 	}
 
-	// The parameter group holding the values is not proof the running server
-	// loaded them. Without this check the platform is told an apply landed
-	// that never did, and re-proposes it forever.
+	// The group holding the values is not proof the server loaded them.
 	if applyErr := adapter.verifyAppliedSettings(ctx, targets); applyErr != nil {
 		return applyErr
 	}
@@ -265,18 +255,15 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 	return nil
 }
 
-// checkParameterGroupState rejects an apply that RDS has already said it
-// cannot process, reading only the DBInfo that refreshDBInfo just fetched.
+// checkParameterGroupState rejects an apply RDS has already said it cannot
+// process, from the DBInfo refreshDBInfo just fetched.
 //
-// Only "pending-database-upgrade" is terminal: "in-sync" and "applying" say
+// Only "pending-database-upgrade" is terminal. "in-sync" and "applying" say
 // nothing about a write that has not happened yet, and "pending-reboot" is
-// normal for a group with staged static values.
+// normal for staged static values.
 //
-// "failed-to-apply" is deliberately absent. It means the group holds a value
-// RDS could not apply, and the next valid write is the only thing that clears
-// it — a write this check runs before. Refusing here would take away the
-// agent's sole route out of the state and return config_apply_error on every
-// config tick indefinitely. The log line below is its record.
+// "failed-to-apply" is absent on purpose: only the next valid write clears it,
+// and that write comes after this check. Refusing would strand the agent.
 func (adapter *RDSAdapter) checkParameterGroupState() agent.ApplyConfigError {
 	name := adapter.State.DBInfo.ParameterGroupName
 	status := adapter.State.DBInfo.ParameterGroupStatus(name)
@@ -285,9 +272,8 @@ func (adapter *RDSAdapter) checkParameterGroupState() agent.ApplyConfigError {
 		return nil
 	}
 
-	// Logged unconditionally: this is the state before our write, so even a
-	// clean "in-sync" is context worth having when a later step fails, and a
-	// status RDS adds in future shows up here rather than passing silently.
+	// Logged either way: context for a later failure, and any status RDS adds
+	// in future surfaces here.
 	applyStatus := *status.ParameterApplyStatus
 	adapter.Logger().Infof("Parameter group %q apply status before write: %s", name, applyStatus)
 
@@ -300,18 +286,17 @@ func (adapter *RDSAdapter) checkParameterGroupState() agent.ApplyConfigError {
 	return nil
 }
 
-// Timing for the pg_settings read-back. RDS propagates an immediate parameter
-// change to the engine within about a minute; past that it is not coming.
-// Normally, the settings will be updated before the parameter group is settled.
+// Timing for the pg_settings read-back. RDS propagates an immediate change
+// within about a minute; past that it is not coming.
 const (
 	pgVerifyTimeout  = 90 * time.Second
 	pgVerifyInterval = 5 * time.Second
-	// Budget for the one-off parameter group read on the failure path.
+	// For the one-off group read on the failure path.
 	paramGroupReadTimeout = 15 * time.Second
 )
 
-// verifyAppliedSettings polls pg_settings until the running server reports
-// every value the agent just wrote, and classifies the failure otherwise.
+// verifyAppliedSettings polls pg_settings until the server reports every value
+// written, and classifies the failure otherwise.
 func (adapter *RDSAdapter) verifyAppliedSettings(
 	ctx context.Context,
 	targets []targetKnob,
@@ -356,14 +341,10 @@ func (adapter *RDSAdapter) verifyAppliedSettings(
 	}
 }
 
-// parameterGroupDiagnosis reports whether the parameter group actually holds
-// the requested values, to narrow down an apply that pg_settings never
-// confirmed: either the write did not stick, or it did and the engine never
-// loaded it.
+// parameterGroupDiagnosis says whether the group holds the requested values,
+// separating a write that never stuck from one the engine never loaded.
 //
-// Left until the failure path on purpose. It costs an API call and cannot
-// judge an apply on its own — the group happily reports a value the running
-// server has never seen.
+// Failure path only: it costs an API call and cannot judge an apply by itself.
 func (adapter *RDSAdapter) parameterGroupDiagnosis(ctx context.Context, targets []targetKnob) string {
 	name := adapter.State.DBInfo.ParameterGroupName
 
@@ -386,12 +367,9 @@ func (adapter *RDSAdapter) parameterGroupDiagnosis(ctx context.Context, targets 
 	)
 }
 
-// asApplyConfigError keeps a typed ApplyConfigError found anywhere in the
-// chain so the platform receives its specific wire type instead of the
-// generic config_apply_error.
-//
-// Notably pg.ValidateRestartPolicy returns a *agent.RestartNotAllowedError,
-// which &ConfigApplyError{Err: err} would downgrade to config_apply_error.
+// asApplyConfigError keeps a typed ApplyConfigError from anywhere in the chain,
+// so the platform gets its wire type. pg.ValidateRestartPolicy returns
+// *agent.RestartNotAllowedError, which wrapping would downgrade.
 func asApplyConfigError(err error) agent.ApplyConfigError {
 	var typed agent.ApplyConfigError
 	if errors.As(err, &typed) {
