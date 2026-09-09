@@ -193,6 +193,10 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return nil
 	}
 
+	// Stamped on return so the next attempt is spaced from the end of a failed
+	// apply rather than from its start.
+	defer func() { adapter.State.LastApplyAttempt = time.Now() }()
+
 	// Fail fast on a known-default group before any AWS calls. The post-refresh
 	// check below catches the case where the group rotated to a default between
 	// system-info ticks.
@@ -231,12 +235,9 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return asApplyConfigError(err)
 	}
 
-	// Stamped on return so the next attempt is spaced from the end of a failed
-	// apply rather than from its start.
-	defer func() { adapter.State.LastApplyAttempt = time.Now() }()
-
 	err := ApplyConfig(
-		proposedConfig,
+		targets,
+		proposedConfig.KnobApplication,
 		&adapter.AWSClients,
 		adapter.State.DBInfo.ParameterGroupName,
 		adapter.Config.RDSDatabaseIdentifier,
@@ -267,9 +268,15 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 // checkParameterGroupState rejects an apply that RDS has already said it
 // cannot process, reading only the DBInfo that refreshDBInfo just fetched.
 //
-// Of the documented statuses only these two are terminal: "in-sync" and
-// "applying" say nothing about a write that has not happened yet, and
-// "pending-reboot" is normal for a group with staged static values.
+// Only "pending-database-upgrade" is terminal: "in-sync" and "applying" say
+// nothing about a write that has not happened yet, and "pending-reboot" is
+// normal for a group with staged static values.
+//
+// "failed-to-apply" is deliberately absent. It means the group holds a value
+// RDS could not apply, and the next valid write is the only thing that clears
+// it — a write this check runs before. Refusing here would take away the
+// agent's sole route out of the state and return config_apply_error on every
+// config tick indefinitely. The log line below is its record.
 func (adapter *RDSAdapter) checkParameterGroupState() agent.ApplyConfigError {
 	name := adapter.State.DBInfo.ParameterGroupName
 	status := adapter.State.DBInfo.ParameterGroupStatus(name)
@@ -285,10 +292,6 @@ func (adapter *RDSAdapter) checkParameterGroupState() agent.ApplyConfigError {
 	adapter.Logger().Infof("Parameter group %q apply status before write: %s", name, applyStatus)
 
 	switch applyStatus {
-	case "failed-to-apply":
-		return &agent.ConfigApplyError{Err: fmt.Errorf(
-			"parameter group %q is in an invalid state (failed-to-apply)", name,
-		)}
 	case "pending-database-upgrade":
 		return &agent.ConfigApplyError{Err: fmt.Errorf(
 			"parameter group %q changes are deferred until the instance is upgraded", name,

@@ -1,9 +1,9 @@
 package rds
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"testing"
 	"time"
 
@@ -84,7 +84,7 @@ func TestStateApplyDebounced(t *testing.T) {
 }
 
 func TestCheckParameterGroupState(t *testing.T) {
-	adapterWith := func(status string) *RDSAdapter {
+	adapterWith := func(status string) (*RDSAdapter, *bytes.Buffer) {
 		group := rdsTypes.DBParameterGroupStatus{DBParameterGroupName: aws.String("my-pg")}
 		if status != "" {
 			group.ParameterApplyStatus = aws.String(status)
@@ -93,28 +93,39 @@ func TestCheckParameterGroupState(t *testing.T) {
 			ParameterGroupName: "my-pg",
 			DBInstance:         rdsTypes.DBInstance{DBParameterGroups: []rdsTypes.DBParameterGroupStatus{group}},
 		}}}
+		var logs bytes.Buffer
 		logger := logrus.New()
-		logger.SetOutput(io.Discard)
+		logger.SetOutput(&logs)
 		a.WithLogger(logger)
-		return a
+		return a, &logs
 	}
 
-	// "applying" and "pending-reboot" say nothing about a write that has not
-	// happened yet, so they must not block the apply.
-	for _, status := range []string{"", "in-sync", "applying", "pending-reboot"} {
-		assert.Nil(t, adapterWith(status).checkParameterGroupState(), "status %q", status)
+	// None of these describe a write that has not happened yet, so none of
+	// them may block the apply. "failed-to-apply" is in the list on purpose:
+	// the corrective write happens after this check and is the only thing
+	// that clears the state, so refusing would strand the agent in it,
+	// returning config_apply_error on every config tick with no way back out.
+	for _, status := range []string{"", "in-sync", "applying", "pending-reboot", "failed-to-apply"} {
+		a, _ := adapterWith(status)
+		assert.Nil(t, a.checkParameterGroupState(), "status %q", status)
 	}
 
-	t.Run("failed-to-apply", func(t *testing.T) {
-		err := adapterWith("failed-to-apply").checkParameterGroupState()
-		require.NotNil(t, err)
-		assert.Contains(t, err.Error(), "failed-to-apply")
-		assert.Equal(t, "config_apply_error", err.ErrorType())
+	t.Run("the pre-write status reaches the log", func(t *testing.T) {
+		// Nothing calls failed-to-apply out separately, so the unconditional
+		// log line is the only trace that the group was in a bad state when
+		// an apply went ahead.
+		a, logs := adapterWith("failed-to-apply")
+		require.Nil(t, a.checkParameterGroupState())
+		assert.Contains(t, logs.String(), "failed-to-apply")
 	})
 
-	t.Run("pending-database-upgrade", func(t *testing.T) {
-		err := adapterWith("pending-database-upgrade").checkParameterGroupState()
+	t.Run("pending-database-upgrade still refuses", func(t *testing.T) {
+		// Unlike failed-to-apply, no write clears this: the instance itself
+		// has to be upgraded first.
+		a, _ := adapterWith("pending-database-upgrade")
+		err := a.checkParameterGroupState()
 		require.NotNil(t, err)
 		assert.Contains(t, err.Error(), "upgraded")
+		assert.Equal(t, "config_apply_error", err.ErrorType())
 	})
 }

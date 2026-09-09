@@ -261,7 +261,11 @@ func FetchAWSConfig(
 
 // ApplyConfig applies the proposed configuration to the RDS instance.
 //
-// The KnobApplication signal chooses between ApplyMethodImmediate and
+// The targets are resolved by the caller, which also verifies them afterwards,
+// so the values written here and the values checked against pg_settings are
+// the same slice rather than two separate resolutions of one proposal.
+//
+// The knobApplication signal chooses between ApplyMethodImmediate and
 // ApplyMethodPendingReboot. If the chosen method mismatches the actual
 // parameter (e.g. immediate apply on a static parameter), AWS surfaces an
 // error from ModifyDBParameterGroup which is returned as-is; we do not
@@ -271,27 +275,23 @@ func FetchAWSConfig(
 // running server has them — the caller must verify that against pg_settings
 // (see RDSAdapter.verifyAppliedSettings).
 func ApplyConfig(
-	proposedConfig *agent.ProposedConfigResponse,
+	targets []targetKnob,
+	knobApplication agent.KnobApplication,
 	clients *AWSClients,
 	parameterGroupName string,
 	databaseIdentifier string,
 	logger *logrus.Logger,
 	ctx context.Context,
 ) error {
-	logger.Infof("Applying Config: %s", proposedConfig.KnobApplication)
+	logger.Infof("Applying Config: %s", knobApplication)
 
 	// Prepare parameters for modification
 	var applyMethod rdsTypes.ApplyMethod
-	switch proposedConfig.KnobApplication {
+	switch knobApplication {
 	case agent.KnobApplicationRestart:
 		applyMethod = rdsTypes.ApplyMethodPendingReboot
 	case agent.KnobApplicationReload:
 		applyMethod = rdsTypes.ApplyMethodImmediate
-	}
-
-	targets, err := targetKnobsToApply(proposedConfig)
-	if err != nil {
-		return fmt.Errorf("failed to get modified parameters: %w", err)
 	}
 
 	// Nothing to change, assume we just go ahead
@@ -314,7 +314,7 @@ func ApplyConfig(
 		Parameters:           awsParameters(targets, applyMethod),
 	}
 
-	_, err = clients.RDSClient.ModifyDBParameterGroup(ctx, args)
+	_, err := clients.RDSClient.ModifyDBParameterGroup(ctx, args)
 	if err != nil {
 		return fmt.Errorf("failed to modify parameter group: %w", err)
 	}
