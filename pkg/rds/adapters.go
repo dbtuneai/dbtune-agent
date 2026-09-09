@@ -220,13 +220,6 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to resolve knobs to apply: %w", targetErr)}
 	}
 
-	// Refuse a reload that cannot deliver the value before writing anything.
-	if _, err := pg.ValidateRestartPolicy(
-		adapter.PGDriver, ctx, targetNames(targets), proposedConfig.KnobApplication,
-	); err != nil {
-		return asApplyConfigError(err)
-	}
-
 	err := ApplyConfig(
 		targets,
 		proposedConfig.KnobApplication,
