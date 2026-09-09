@@ -277,8 +277,7 @@ func (adapter *RDSAdapter) checkParameterGroupState() agent.ApplyConfigError {
 	applyStatus := *status.ParameterApplyStatus
 	adapter.Logger().Infof("Parameter group %q apply status before write: %s", name, applyStatus)
 
-	switch applyStatus {
-	case "pending-database-upgrade":
+	if applyStatus == "pending-database-upgrade" {
 		return &agent.ConfigApplyError{Err: fmt.Errorf(
 			"parameter group %q changes are deferred until the instance is upgraded", name,
 		)}
