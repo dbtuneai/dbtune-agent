@@ -18,7 +18,6 @@ import (
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/sirupsen/logrus"
 )
 
@@ -262,12 +261,15 @@ func FetchAWSConfig(
 
 // ApplyConfig applies the proposed configuration to the RDS instance.
 //
-// We cannot validate trivially against the RDS API which parameters require
-// a restart, so we rely on the KnobApplication signal provided to choose
-// between ApplyMethodImmediate and ApplyMethodPendingReboot. If the chosen
-// method mismatches the actual parameter (e.g. immediate apply on a static
-// parameter), AWS surfaces an error from ModifyDBParameterGroup which is
-// returned as-is; we do not attempt a recovery write.
+// The KnobApplication signal chooses between ApplyMethodImmediate and
+// ApplyMethodPendingReboot. If the chosen method mismatches the actual
+// parameter (e.g. immediate apply on a static parameter), AWS surfaces an
+// error from ModifyDBParameterGroup which is returned as-is; we do not
+// attempt a recovery write.
+//
+// A successful return means RDS stored the values. It does not mean the
+// running server has them — the caller must verify that against pg_settings
+// (see RDSAdapter.verifyAppliedSettings).
 func ApplyConfig(
 	proposedConfig *agent.ProposedConfigResponse,
 	clients *AWSClients,
@@ -287,13 +289,13 @@ func ApplyConfig(
 		applyMethod = rdsTypes.ApplyMethodImmediate
 	}
 
-	modifiedParameters, err := modifiedParametersToApply(proposedConfig, applyMethod)
+	targets, err := targetKnobsToApply(proposedConfig)
 	if err != nil {
 		return fmt.Errorf("failed to get modified parameters: %w", err)
 	}
 
 	// Nothing to change, assume we just go ahead
-	if len(modifiedParameters) == 0 {
+	if len(targets) == 0 {
 		logger.Info("No parameter changes were required")
 		return nil
 	}
@@ -309,20 +311,12 @@ func ApplyConfig(
 	// Modify parameter group
 	args := &rds.ModifyDBParameterGroupInput{
 		DBParameterGroupName: aws.String(parameterGroupName),
-		Parameters:           modifiedParameters,
+		Parameters:           awsParameters(targets, applyMethod),
 	}
 
-	// TODO(eddie): We should actuall verify in the response that it worked
 	_, err = clients.RDSClient.ModifyDBParameterGroup(ctx, args)
 	if err != nil {
 		return fmt.Errorf("failed to modify parameter group: %w", err)
-	}
-
-	// Wait for parameter group changes to be processed
-	logger.Info("Waiting for parameter group changes to be processed...")
-	err = waitRDSInstanceAvailable(clients, databaseIdentifier, parameterGroupName, ctx)
-	if err != nil {
-		return fmt.Errorf("error waiting for parameter group changes to be processed: %w", err)
 	}
 
 	// If restart is required and specified. IsRestartAllowed was already
@@ -346,98 +340,37 @@ func ApplyConfig(
 	return nil
 }
 
-func parameterGroupStatus(
-	rdsInstanceInfo *rdsTypes.DBInstance,
-	parameterGroupName string,
-) *rdsTypes.DBParameterGroupStatus {
-	for _, pg := range rdsInstanceInfo.DBParameterGroups {
-		if aws.ToString(pg.DBParameterGroupName) == parameterGroupName {
-			return &pg
-		}
-	}
-	return nil
-}
-
-func modifiedParametersToApply(
-	proposedConfig *agent.ProposedConfigResponse,
-	applyMethod rdsTypes.ApplyMethod,
-) ([]rdsTypes.Parameter, error) {
-	// TODO(eddie): This is N^2 as FindRecommendedKnob does it's own loop -_-
-	modifiedParameters := make([]rdsTypes.Parameter, 0, len(proposedConfig.KnobsOverrides))
-	for _, knob := range proposedConfig.KnobsOverrides {
-		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
-		if err != nil {
-			return nil, fmt.Errorf("failed to find recommended knob: %w", err)
-		}
-		fmtValue, err := knobConfig.GetSettingValue()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get setting value: %w", err)
-		}
-
-		param := rdsTypes.Parameter{
-			ParameterName:  aws.String(knobConfig.Name),
-			ParameterValue: aws.String(fmtValue),
-			ApplyMethod:    applyMethod,
-		}
-		modifiedParameters = append(modifiedParameters, param)
-	}
-	return modifiedParameters, nil
-}
-
-func waitRDSInstanceAvailable(
+// describeTargetParameters returns the parameter-group entries for exactly the
+// named parameters.
+//
+// Source is deliberately not filtered: every valid parameter of the engine
+// comes back (as engine-default when unset), so a name absent from the
+// response is one this engine does not have, rather than one that is merely
+// unset.
+func describeTargetParameters(
 	clients *AWSClients,
-	databaseIdentifier string,
 	parameterGroupName string,
+	names []string,
 	ctx context.Context,
-) error {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancel()
-
-	// Wait for the parameter apply status to be either pending-reboot or in-sync
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for parameter group changes to be processed")
-		case <-time.After(5 * time.Second):
-			rdsInstanceInfo, err := fetchRDSDBInstance(databaseIdentifier, clients, ctx)
-			if err != nil {
-				continue // Retry
-			}
-
-			parameterGroupStatus := parameterGroupStatus(rdsInstanceInfo, parameterGroupName)
-			if parameterGroupStatus == nil {
-				continue
-			}
-
-			currentParamStatus := parameterGroupStatus.ParameterApplyStatus
-			if currentParamStatus == nil {
-				return fmt.Errorf("parameter group '%s' not found attached to instance '%s'", parameterGroupName, databaseIdentifier)
-			}
-
-			// Pulled from their docs for the `status` string
-			// - applying : The parameter group change is being applied to the database.
-			// - failed-to-apply : The parameter group is in an invalid state.
-			// - in-sync : The parameter group change is synchronized with the database.
-			// - pending-database-upgrade : The parameter group change will be applied after the DB instance is upgraded.
-			// - pending-reboot : The parameter group change will be applied after the DB instance reboots.
-			switch *currentParamStatus {
-			// Waiting
-			case "applying":
-				continue
-			// Successes
-			case "in-sync":
-				return nil
-			case "pending-reboot":
-				return nil
-			case "failed-to-apply":
-				return fmt.Errorf("parameter group is in an invalid state")
-			case "pending-database-upgrade":
-				return fmt.Errorf("parameter group change will be applied after the DB instance is upgraded")
-			default:
-				return fmt.Errorf("unknown parameter apply status: %s", *currentParamStatus)
-			}
-		}
+) ([]rdsTypes.Parameter, error) {
+	input := &rds.DescribeDBParametersInput{
+		DBParameterGroupName: aws.String(parameterGroupName),
+		Filters: []rdsTypes.Filter{{
+			Name:   aws.String("parameter-name"),
+			Values: names,
+		}},
 	}
+
+	var params []rdsTypes.Parameter
+	paginator := rds.NewDescribeDBParametersPaginator(clients.RDSClient, input)
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		params = append(params, page.Parameters...)
+	}
+	return params, nil
 }
 
 func getAverageMetricValue(

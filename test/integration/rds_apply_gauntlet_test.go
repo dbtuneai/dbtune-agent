@@ -292,7 +292,7 @@ func TestApplyConfig_FullScenario(t *testing.T) {
 				if len(dyn) == 0 {
 					t.Skip("no dynamic knobs for this provider")
 				}
-				adapter.State.LastAppliedConfig = time.Time{}
+				adapter.State.LastApplyAttempt = time.Time{}
 				err := adapter.ApplyConfig(context.Background(),
 					buildProposed(dyn, agent.KnobApplicationReload))
 				assertApplyOutcome(t, err, pgName, sc.wantRefused)
@@ -305,7 +305,7 @@ func TestApplyConfig_FullScenario(t *testing.T) {
 				if !sc.wantRefused && !allowReboot {
 					t.Skip("static batch on custom PG reboots the instance; set DBTUNE_TEST_ALLOW_REBOOT=true to run")
 				}
-				adapter.State.LastAppliedConfig = time.Time{}
+				adapter.State.LastApplyAttempt = time.Time{}
 				err := adapter.ApplyConfig(context.Background(),
 					buildProposed(sta, agent.KnobApplicationRestart))
 				assertApplyOutcome(t, err, pgName, sc.wantRefused)
