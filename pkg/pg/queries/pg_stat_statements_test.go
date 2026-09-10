@@ -119,15 +119,22 @@ func TestAverageQueryRuntime_IncludesAllQueriesNotJustCapped(t *testing.T) {
 	}
 
 	// Cap aggressively — only 1 query survives the row/delta cap.
-	rows, _, _, avgRuntime, _ := buildPayloadParts(curr, prev, 1)
+	rows, _, _, totals, _ := buildPayloadParts(curr, prev, 1)
 	if len(rows) != 1 {
 		t.Fatalf("precondition: expected cap to leave 1 row, got %d", len(rows))
 	}
 
 	const want = 20.0
-	if avgRuntime != want {
-		t.Fatalf("avgRuntime = %f, want %f (AQR must use full snapshot, not capped rows)",
-			avgRuntime, want)
+	if got := totals.averageQueryRuntime(); got != want {
+		t.Fatalf("averageQueryRuntime() = %f, want %f (AQR must use full snapshot, not capped rows)",
+			got, want)
+	}
+
+	// The sums must describe the same population as the AQR, so a consumer
+	// summing them over a window reproduces it instead of re-deriving one
+	// from the capped deltas.
+	if totals.Calls != 30 || totals.ExecTime != 600.0 {
+		t.Fatalf("totals = %+v, want {Calls:30 ExecTime:600}", totals)
 	}
 }
 

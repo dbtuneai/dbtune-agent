@@ -123,6 +123,25 @@ type PgStatStatementsPayload struct {
 	Deltas              []PgStatStatementsDelta `json:"deltas,omitempty"`
 	DeltaCount          int                     `json:"delta_count"`
 	AverageQueryRuntime float64                 `json:"average_query_runtime"`
+
+	// Snapshot-wide sums, before the delta cap. AverageQueryRuntime is their
+	// quotient; the deltas above are only the capped subset, so these are the
+	// only totals a consumer can sum over a window.
+	SnapshotTotalExecTime float64 `json:"snapshot_total_exec_time"`
+	SnapshotCalls         int64   `json:"snapshot_calls"`
+}
+
+// pgssTotals are the snapshot-wide sums the AQR is derived from.
+type pgssTotals struct {
+	Calls    int64
+	ExecTime float64
+}
+
+func (t pgssTotals) averageQueryRuntime() float64 {
+	if t.Calls == 0 {
+		return 0.0
+	}
+	return t.ExecTime / float64(t.Calls)
 }
 
 // PgStatStatementsExtVersion is a parsed pg_stat_statements extension version
@@ -553,7 +572,7 @@ func buildPayloadParts(
 	rows []PgStatStatementsRow,
 	deltas []PgStatStatementsDelta,
 	totalDiffs int,
-	avgRuntime float64,
+	totals pgssTotals,
 	nextSnapshot map[string]PgStatStatementsRow,
 ) {
 	// Collapse rows sharing the composite key (toplevel/nested variants of the
@@ -571,8 +590,6 @@ func buildPayloadParts(
 
 	all := make([]ranked, 0, len(curr))
 	nextSnapshot = make(map[string]PgStatStatementsRow, len(curr))
-	var totalCalls int64
-	var totalExecTime float64
 
 	for _, currRow := range curr {
 		entry := ranked{row: currRow}
@@ -595,8 +612,8 @@ func buildPayloadParts(
 			if callsDiff != nil && *callsDiff > 0 &&
 				execDiff != nil && *execDiff > 0 {
 				totalDiffs++
-				totalCalls += int64(*callsDiff)
-				totalExecTime += float64(*execDiff)
+				totals.Calls += int64(*callsDiff)
+				totals.ExecTime += float64(*execDiff)
 				entry.delta = &PgStatStatementsDelta{
 					UserID:        currRow.UserID,
 					DbID:          currRow.DbID,
@@ -609,12 +626,6 @@ func buildPayloadParts(
 		}
 
 		all = append(all, entry)
-	}
-
-	if totalCalls > 0 {
-		avgRuntime = totalExecTime / float64(totalCalls)
-	} else {
-		avgRuntime = 0.0
 	}
 
 	sort.SliceStable(all, func(i, j int) bool {
@@ -633,7 +644,7 @@ func buildPayloadParts(
 			deltas = append(deltas, *entry.delta)
 		}
 	}
-	return rows, deltas, totalDiffs, avgRuntime, nextSnapshot
+	return rows, deltas, totalDiffs, totals, nextSnapshot
 }
 
 // pgStatStatementsExtVersionRegex extracts the major.minor pair from a
@@ -710,7 +721,7 @@ func PgStatStatementsCollector(
 			// (ranked by delta avg exec time), the overall AQR computed
 			// across the FULL snapshot, and the curr snapshot map reused
 			// as prevSnapshot on the next tick.
-			outRows, outDeltas, totalDiffs, avgRuntime, currSnapshot := buildPayloadParts(
+			outRows, outDeltas, totalDiffs, totals, currSnapshot := buildPayloadParts(
 				rows, prevSnapshot, cfg.DiffLimit,
 			)
 
@@ -722,7 +733,9 @@ func PgStatStatementsCollector(
 			if prevSnapshot != nil {
 				payload.Deltas = outDeltas
 				payload.DeltaCount = totalDiffs
-				payload.AverageQueryRuntime = avgRuntime
+				payload.AverageQueryRuntime = totals.averageQueryRuntime()
+				payload.SnapshotTotalExecTime = totals.ExecTime
+				payload.SnapshotCalls = totals.Calls
 			}
 
 			prevSnapshot = currSnapshot
