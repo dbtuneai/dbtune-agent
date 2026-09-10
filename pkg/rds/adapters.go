@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -216,17 +217,33 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		adapter.State.DBInfo.ParameterGroupStatus,
 	)
 
-	targetConfig, targetErr := extractConfigValues(proposedConfig)
-	if targetErr != nil {
-		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to resolve knobs to apply: %w", targetErr)}
+	configs, err := getConfigInfo(
+		proposedConfig, &adapter.AWSClients, adapter.State.DBInfo.ParameterGroupName, ctx)
+	if err != nil {
+		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to resolve knobs to apply: %w", err)}
 	}
 
-	err := ApplyConfig(
-		targetConfig,
-		proposedConfig.KnobApplication,
+	if !slices.ContainsFunc(configs, configInfo.changed) {
+		adapter.Logger().Info("Parameter group already holds the requested values. Exiting apply.")
+		return nil
+	}
+
+	// Prepare parameters for modification
+	reqRestart := proposedConfig.KnobApplication == agent.KnobApplicationRestart
+
+	// Bail before writing if this needs a reboot the agent may not do.
+	if reqRestart && !agent.IsRestartAllowed() {
+		return &agent.RestartNotAllowedError{
+			Message: "restart is not allowed in the agent",
+		}
+	}
+
+	err = ApplyConfig(
+		configs,
 		&adapter.AWSClients,
 		adapter.State.DBInfo.ParameterGroupName,
 		adapter.Config.RDSDatabaseIdentifier,
+		reqRestart,
 		adapter.Logger(),
 		ctx,
 	)
@@ -242,7 +259,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 	}
 
 	// The group holding the values is not proof the server loaded them.
-	if applyErr := adapter.verifyAppliedSettings(ctx, targetConfig); applyErr != nil {
+	if applyErr := adapter.verifyAppliedSettings(ctx, configs); applyErr != nil {
 		return applyErr
 	}
 
@@ -262,7 +279,7 @@ const (
 // written, and classifies the failure otherwise.
 func (adapter *RDSAdapter) verifyAppliedSettings(
 	ctx context.Context,
-	targets []configValue,
+	targets []configInfo,
 ) agent.ApplyConfigError {
 	if len(targets) == 0 {
 		return nil
@@ -309,7 +326,7 @@ func (adapter *RDSAdapter) verifyAppliedSettings(
 // separating a write that never stuck from one the engine never loaded.
 //
 // Failure path only: it costs an API call and cannot judge an apply by itself.
-func (adapter *RDSAdapter) parameterGroupDiagnosis(ctx context.Context, targets []configValue) string {
+func (adapter *RDSAdapter) parameterGroupDiagnosis(ctx context.Context, targets []configInfo) string {
 	name := adapter.State.DBInfo.ParameterGroupName
 
 	ctx, cancel := context.WithTimeout(ctx, paramGroupReadTimeout)

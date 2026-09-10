@@ -11,7 +11,7 @@ import (
 )
 
 func TestGroupValueMismatches(t *testing.T) {
-	targets := []configValue{
+	targets := []configInfo{
 		{Name: "work_mem", Value: "16384", Vartype: "integer"},
 		{Name: "random_page_cost", Value: "1.1", Vartype: "real"},
 	}
@@ -55,7 +55,7 @@ func TestGroupValueMismatches(t *testing.T) {
 }
 
 func TestDiffPGSettings(t *testing.T) {
-	targets := []configValue{
+	targets := []configInfo{
 		{Name: "work_mem", Value: "16384", Vartype: "integer"},
 		{Name: "shared_buffers", Value: "262144", Vartype: "integer"},
 	}
@@ -88,7 +88,7 @@ func TestDiffPGSettings(t *testing.T) {
 
 	t.Run("unknown to this server", func(t *testing.T) {
 		diff := diffPGSettings(
-			[]configValue{{Name: "made_up_guc", Value: "1", Vartype: "integer"}},
+			[]configInfo{{Name: "made_up_guc", Value: "1", Vartype: "integer"}},
 			[]queries.PgSettingsRow{row("work_mem", "16384", "integer")},
 		)
 		assert.Equal(t, []string{"made_up_guc"}, diff.Missing)
@@ -97,7 +97,7 @@ func TestDiffPGSettings(t *testing.T) {
 	t.Run("server vartype wins over the proposal's", func(t *testing.T) {
 		// Proposal says integer, server says real.
 		diff := diffPGSettings(
-			[]configValue{{Name: "random_page_cost", Value: "1.1", Vartype: "integer"}},
+			[]configInfo{{Name: "random_page_cost", Value: "1.1", Vartype: "integer"}},
 			[]queries.PgSettingsRow{row("random_page_cost", "1.1000", "real")},
 		)
 		assert.True(t, diff.applied(), "diff: %s", diff)

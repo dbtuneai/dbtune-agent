@@ -17,7 +17,6 @@ import (
 	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
-	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/sirupsen/logrus"
 )
 
@@ -260,35 +259,17 @@ func FetchAWSConfig(
 }
 
 func ApplyConfig(
-	targetConfig []configValue,
-	knobApplication agent.KnobApplication,
+	targetConfig []configInfo,
 	clients *AWSClients,
 	parameterGroupName string,
 	databaseIdentifier string,
+	reqRestart bool,
 	logger *logrus.Logger,
 	ctx context.Context,
 ) error {
-	logger.Infof("Applying Config: %s", knobApplication)
-
-	// Prepare parameters for modification
-	var applyMethod rdsTypes.ApplyMethod
-	switch knobApplication {
-	case agent.KnobApplicationRestart:
+	applyMethod := rdsTypes.ApplyMethodImmediate
+	if reqRestart {
 		applyMethod = rdsTypes.ApplyMethodPendingReboot
-	case agent.KnobApplicationReload:
-		applyMethod = rdsTypes.ApplyMethodImmediate
-	}
-
-	if len(targetConfig) == 0 {
-		logger.Info("No parameter changes were required")
-		return nil
-	}
-
-	// Bail before writing if this needs a reboot the agent may not do.
-	if applyMethod == rdsTypes.ApplyMethodPendingReboot && !agent.IsRestartAllowed() {
-		return &agent.RestartNotAllowedError{
-			Message: "restart is not allowed in the agent",
-		}
 	}
 
 	args := &rds.ModifyDBParameterGroupInput{
@@ -300,8 +281,8 @@ func ApplyConfig(
 		return fmt.Errorf("failed to modify parameter group: %w", err)
 	}
 
-	// IsRestartAllowed was checked above, before the write.
-	if applyMethod == rdsTypes.ApplyMethodPendingReboot {
+	// The caller refuses a restart it is not allowed to perform, before this write.
+	if reqRestart {
 		// The write is staged asynchronously so we wait before triggering the restart.
 		if err := waitParameterStaged(clients, databaseIdentifier, parameterGroupName, logger, ctx); err != nil {
 			return fmt.Errorf("parameter change not staged for reboot: %w", err)

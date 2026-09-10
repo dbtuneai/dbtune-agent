@@ -2,6 +2,7 @@ package rds
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -14,18 +15,56 @@ import (
 	"github.com/dbtuneai/agent/pkg/pg/queries"
 )
 
-// configValue is one parameter to write and later verify.
-// format of proposedConfig is bloated extract what we need
-type configValue struct {
-	Name    string
-	Value   string
-	Vartype string
+// configInfo is one parameter that we want to update, paired with what the
+// parameter group currently holds for it. We fetch the data early
+type configInfo struct {
+	Name            string
+	Value           string
+	Vartype         string
+	CurrentRDSValue string
+	RequiresReboot  bool
 }
 
-func extractConfigValues(proposedConfig *agent.ProposedConfigResponse) ([]configValue, error) {
-	targets := make([]configValue, 0, len(proposedConfig.KnobsOverrides))
+func (c configInfo) changed() bool {
+	return !valuesEqual(c.Vartype, c.Value, c.CurrentRDSValue)
+}
+
+func getConfigInfo(
+	proposedConfig *agent.ProposedConfigResponse,
+	clients *AWSClients,
+	parameterGroupName string,
+	ctx context.Context,
+) ([]configInfo, error) {
+	configs, err := extractConfigValues(proposedConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	rdsParameters, err := getRDSParameterInfo(clients, parameterGroupName, getConfigNames(configs), ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read parameter group %q: %w", parameterGroupName, err)
+	}
+	group := make(map[string]rdsTypes.Parameter, len(rdsParameters))
+	for _, p := range rdsParameters {
+		group[aws.ToString(p.ParameterName)] = p
+	}
+
+	for i, c := range configs {
+		// Absent from the response means the engine has no such parameter. That
+		// leaves the zero values, which read downstream as a mismatch.
+		p := group[c.Name]
+		configs[i].CurrentRDSValue = aws.ToString(p.ParameterValue)
+		configs[i].RequiresReboot = aws.ToString(p.ApplyType) == "static"
+	}
+	return configs, nil
+}
+
+// extractConfigValues pulls the knobs to write out of the proposal. Kept pure so
+// it stays testable without AWS.
+func extractConfigValues(proposedConfig *agent.ProposedConfigResponse) ([]configInfo, error) {
 	// using KnobsOverrides here is for backwardscompatability
 	// KnobsOverrides and Config holds the same values
+	configs := make([]configInfo, 0, len(proposedConfig.KnobsOverrides))
 	for _, knob := range proposedConfig.KnobsOverrides {
 		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
 		if err != nil {
@@ -35,17 +74,17 @@ func extractConfigValues(proposedConfig *agent.ProposedConfigResponse) ([]config
 		if err != nil {
 			return nil, fmt.Errorf("failed to get setting value: %w", err)
 		}
-		targets = append(targets, configValue{
+		configs = append(configs, configInfo{
 			Name:    knobConfig.Name,
 			Value:   value,
 			Vartype: knobConfig.Vartype,
 		})
 	}
-	return targets, nil
+	return configs, nil
 }
 
 // awsParameters renders the targets as ModifyDBParameterGroup input.
-func awsParameters(targets []configValue, applyMethod rdsTypes.ApplyMethod) []rdsTypes.Parameter {
+func awsParameters(targets []configInfo, applyMethod rdsTypes.ApplyMethod) []rdsTypes.Parameter {
 	params := make([]rdsTypes.Parameter, 0, len(targets))
 	for _, t := range targets {
 		params = append(params, rdsTypes.Parameter{
@@ -57,7 +96,7 @@ func awsParameters(targets []configValue, applyMethod rdsTypes.ApplyMethod) []rd
 	return params
 }
 
-func getConfigNames(config []configValue) []string {
+func getConfigNames(config []configInfo) []string {
 	names := make([]string, len(config))
 	for i, c := range config {
 		names[i] = c.Name
@@ -67,7 +106,7 @@ func getConfigNames(config []configValue) []string {
 
 // builds a map with the targets as keys and fills it up with values from the param group
 // and then it compares that map with the target values.
-func groupValueMismatches(targets []configValue, actual []rdsTypes.Parameter) []string {
+func groupValueMismatches(targets []configInfo, actual []rdsTypes.Parameter) []string {
 	// ParameterValue is omitted when never set, so it reads as "".
 	valueMap := make(map[string]string, len(actual))
 	for _, p := range actual {
@@ -115,7 +154,7 @@ func (d settingsDiff) String() string {
 	return strings.Join(parts, "; ")
 }
 
-func diffPGSettings(targets []configValue, rows []queries.PgSettingsRow) settingsDiff {
+func diffPGSettings(targets []configInfo, rows []queries.PgSettingsRow) settingsDiff {
 	byName := make(map[string]queries.PgSettingsRow, len(rows))
 	for _, r := range rows {
 		byName[string(r.Name)] = r

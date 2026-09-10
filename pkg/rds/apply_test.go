@@ -36,7 +36,7 @@ func TestAsApplyConfigError(t *testing.T) {
 
 func TestAWSParameters(t *testing.T) {
 	params := awsParameters(
-		[]configValue{{Name: "work_mem", Value: "16384"}},
+		[]configInfo{{Name: "work_mem", Value: "16384"}},
 		rdsTypes.ApplyMethodImmediate,
 	)
 	require.Len(t, params, 1)
@@ -58,7 +58,7 @@ func TestExtractConfigValues(t *testing.T) {
 	targets, err := extractConfigValues(proposed)
 	require.NoError(t, err)
 	require.Len(t, targets, 2, "only overridden knobs are applied")
-	assert.Equal(t, configValue{Name: "work_mem", Value: "16384", Vartype: "integer"}, targets[0])
+	assert.Equal(t, configInfo{Name: "work_mem", Value: "16384", Vartype: "integer"}, targets[0])
 	assert.Equal(t, "1.1", targets[1].Value)
 	assert.Equal(t, []string{"work_mem", "random_page_cost"}, getConfigNames(targets))
 
