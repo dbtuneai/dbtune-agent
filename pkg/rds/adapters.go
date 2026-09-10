@@ -210,18 +210,19 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return err
 	}
 
-	// Uses the DBInfo just refreshed; no extra API call.
-	if err := adapter.checkParameterGroupState(); err != nil {
-		return err
-	}
+	adapter.Logger().Infof(
+		"Parameter group %q apply status before write: %s",
+		adapter.State.DBInfo.ParameterGroupName,
+		adapter.State.DBInfo.ParameterGroupStatus,
+	)
 
-	targets, targetErr := targetKnobsToApply(proposedConfig)
+	targetConfig, targetErr := extractConfigValues(proposedConfig)
 	if targetErr != nil {
 		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to resolve knobs to apply: %w", targetErr)}
 	}
 
 	err := ApplyConfig(
-		targets,
+		targetConfig,
 		proposedConfig.KnobApplication,
 		&adapter.AWSClients,
 		adapter.State.DBInfo.ParameterGroupName,
@@ -241,40 +242,10 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 	}
 
 	// The group holding the values is not proof the server loaded them.
-	if applyErr := adapter.verifyAppliedSettings(ctx, targets); applyErr != nil {
+	if applyErr := adapter.verifyAppliedSettings(ctx, targetConfig); applyErr != nil {
 		return applyErr
 	}
 
-	return nil
-}
-
-// checkParameterGroupState rejects an apply RDS has already said it cannot
-// process, from the DBInfo refreshDBInfo just fetched.
-//
-// Only "pending-database-upgrade" is terminal. "in-sync" and "applying" say
-// nothing about a write that has not happened yet, and "pending-reboot" is
-// normal for staged static values.
-//
-// "failed-to-apply" is absent on purpose: only the next valid write clears it,
-// and that write comes after this check. Refusing would strand the agent.
-func (adapter *RDSAdapter) checkParameterGroupState() agent.ApplyConfigError {
-	name := adapter.State.DBInfo.ParameterGroupName
-	status := adapter.State.DBInfo.ParameterGroupStatus(name)
-	if status == nil || status.ParameterApplyStatus == nil {
-		adapter.Logger().Infof("Parameter group %q reports no apply status", name)
-		return nil
-	}
-
-	// Logged either way: context for a later failure, and any status RDS adds
-	// in future surfaces here.
-	applyStatus := *status.ParameterApplyStatus
-	adapter.Logger().Infof("Parameter group %q apply status before write: %s", name, applyStatus)
-
-	if applyStatus == "pending-database-upgrade" {
-		return &agent.ConfigApplyError{Err: fmt.Errorf(
-			"parameter group %q changes are deferred until the instance is upgraded", name,
-		)}
-	}
 	return nil
 }
 
@@ -291,7 +262,7 @@ const (
 // written, and classifies the failure otherwise.
 func (adapter *RDSAdapter) verifyAppliedSettings(
 	ctx context.Context,
-	targets []targetKnob,
+	targets []configValue,
 ) agent.ApplyConfigError {
 	if len(targets) == 0 {
 		return nil
@@ -302,7 +273,7 @@ func (adapter *RDSAdapter) verifyAppliedSettings(
 
 	adapter.Logger().Info("Verifying the new configuration is live in PostgreSQL...")
 
-	diff := settingsDiff{Missing: targetNames(targets)}
+	diff := settingsDiff{Missing: configNames(targets)}
 	for {
 		rows, queryErr := queries.QueryPgSettings(adapter.PGDriver, waitCtx)
 		if queryErr != nil {
@@ -310,7 +281,7 @@ func (adapter *RDSAdapter) verifyAppliedSettings(
 		} else {
 			diff = diffPGSettings(targets, rows)
 			if diff.applied() {
-				adapter.Logger().Infof("Configuration verified live for %s", strings.Join(targetNames(targets), ", "))
+				adapter.Logger().Infof("Configuration verified live for %s", strings.Join(configNames(targets), ", "))
 				return nil
 			}
 			if len(diff.Missing) > 0 {
@@ -337,13 +308,13 @@ func (adapter *RDSAdapter) verifyAppliedSettings(
 // separating a write that never stuck from one the engine never loaded.
 //
 // Failure path only: it costs an API call and cannot judge an apply by itself.
-func (adapter *RDSAdapter) parameterGroupDiagnosis(ctx context.Context, targets []targetKnob) string {
+func (adapter *RDSAdapter) parameterGroupDiagnosis(ctx context.Context, targets []configValue) string {
 	name := adapter.State.DBInfo.ParameterGroupName
 
 	ctx, cancel := context.WithTimeout(ctx, paramGroupReadTimeout)
 	defer cancel()
 
-	actual, err := describeTargetParameters(&adapter.AWSClients, name, targetNames(targets), ctx)
+	actual, err := getRDSParameterInfo(&adapter.AWSClients, name, configNames(targets), ctx)
 	if err != nil {
 		return fmt.Sprintf("could not read parameter group %q back to narrow it down: %v", name, err)
 	}

@@ -271,7 +271,7 @@ func FetchAWSConfig(
 // A successful return means RDS stored the values, not that the server has
 // them. The caller must verify against pg_settings.
 func ApplyConfig(
-	targets []targetKnob,
+	targetConfig []configValue,
 	knobApplication agent.KnobApplication,
 	clients *AWSClients,
 	parameterGroupName string,
@@ -290,7 +290,7 @@ func ApplyConfig(
 		applyMethod = rdsTypes.ApplyMethodImmediate
 	}
 
-	if len(targets) == 0 {
+	if len(targetConfig) == 0 {
 		logger.Info("No parameter changes were required")
 		return nil
 	}
@@ -304,9 +304,8 @@ func ApplyConfig(
 
 	args := &rds.ModifyDBParameterGroupInput{
 		DBParameterGroupName: aws.String(parameterGroupName),
-		Parameters:           awsParameters(targets, applyMethod),
+		Parameters:           awsParameters(targetConfig, applyMethod),
 	}
-
 	_, err := clients.RDSClient.ModifyDBParameterGroup(ctx, args)
 	if err != nil {
 		return fmt.Errorf("failed to modify parameter group: %w", err)
@@ -332,12 +331,7 @@ func ApplyConfig(
 	return nil
 }
 
-// describeTargetParameters returns the group entries for the named parameters.
-//
-// Source is not filtered on purpose: every valid engine parameter comes back,
-// engine-default when unset, so an absent name is one the engine lacks rather
-// than one merely unset.
-func describeTargetParameters(
+func getRDSParameterInfo(
 	clients *AWSClients,
 	parameterGroupName string,
 	names []string,
@@ -345,22 +339,18 @@ func describeTargetParameters(
 ) ([]rdsTypes.Parameter, error) {
 	input := &rds.DescribeDBParametersInput{
 		DBParameterGroupName: aws.String(parameterGroupName),
+		MaxRecords:           aws.Int32(100),
 		Filters: []rdsTypes.Filter{{
 			Name:   aws.String("parameter-name"),
 			Values: names,
 		}},
 	}
 
-	var params []rdsTypes.Parameter
-	paginator := rds.NewDescribeDBParametersPaginator(clients.RDSClient, input)
-	for paginator.HasMorePages() {
-		page, err := paginator.NextPage(ctx)
-		if err != nil {
-			return nil, err
-		}
-		params = append(params, page.Parameters...)
+	out, err := clients.RDSClient.DescribeDBParameters(ctx, input)
+	if err != nil {
+		return nil, err
 	}
-	return params, nil
+	return out.Parameters, nil
 }
 
 func getAverageMetricValue(

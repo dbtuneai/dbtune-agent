@@ -13,17 +13,18 @@ import (
 	"github.com/dbtuneai/agent/pkg/pg/queries"
 )
 
-// targetKnob is one parameter to write and later verify. Values use the
-// pg_settings native unit, which is what RDS parameter groups use too.
-type targetKnob struct {
+// configValue is one parameter to write and later verify.
+// format of proposedConfig is bloated extract what we need
+type configValue struct {
 	Name    string
 	Value   string
 	Vartype string
 }
 
-// targetKnobsToApply resolves the proposal's overridden knobs. All or nothing.
-func targetKnobsToApply(proposedConfig *agent.ProposedConfigResponse) ([]targetKnob, error) {
-	targets := make([]targetKnob, 0, len(proposedConfig.KnobsOverrides))
+func extractConfigValues(proposedConfig *agent.ProposedConfigResponse) ([]configValue, error) {
+	targets := make([]configValue, 0, len(proposedConfig.KnobsOverrides))
+	// using KnobsOverrides here is for backwardscompatability
+	// KnobsOverrides and Config holds the same values
 	for _, knob := range proposedConfig.KnobsOverrides {
 		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
 		if err != nil {
@@ -33,7 +34,7 @@ func targetKnobsToApply(proposedConfig *agent.ProposedConfigResponse) ([]targetK
 		if err != nil {
 			return nil, fmt.Errorf("failed to get setting value: %w", err)
 		}
-		targets = append(targets, targetKnob{
+		targets = append(targets, configValue{
 			Name:    knobConfig.Name,
 			Value:   value,
 			Vartype: knobConfig.Vartype,
@@ -43,7 +44,7 @@ func targetKnobsToApply(proposedConfig *agent.ProposedConfigResponse) ([]targetK
 }
 
 // awsParameters renders the targets as ModifyDBParameterGroup input.
-func awsParameters(targets []targetKnob, applyMethod rdsTypes.ApplyMethod) []rdsTypes.Parameter {
+func awsParameters(targets []configValue, applyMethod rdsTypes.ApplyMethod) []rdsTypes.Parameter {
 	params := make([]rdsTypes.Parameter, 0, len(targets))
 	for _, t := range targets {
 		params = append(params, rdsTypes.Parameter{
@@ -55,9 +56,9 @@ func awsParameters(targets []targetKnob, applyMethod rdsTypes.ApplyMethod) []rds
 	return params
 }
 
-func targetNames(targets []targetKnob) []string {
-	names := make([]string, 0, len(targets))
-	for _, t := range targets {
+func configNames(config []configValue) []string {
+	names := make([]string, 0, len(config))
+	for _, t := range config {
 		names = append(names, t.Name)
 	}
 	return names
@@ -66,7 +67,7 @@ func targetNames(targets []targetKnob) []string {
 // groupValueMismatches reports which requested values the group does not hold.
 // Diagnostic only: the group can hold a value the server never loaded, so use
 // diffPGSettings to judge an apply.
-func groupValueMismatches(targets []targetKnob, actual []rdsTypes.Parameter) []string {
+func groupValueMismatches(targets []configValue, actual []rdsTypes.Parameter) []string {
 	byName := make(map[string]rdsTypes.Parameter, len(actual))
 	for _, p := range actual {
 		byName[aws.ToString(p.ParameterName)] = p
@@ -122,7 +123,7 @@ func (d settingsDiff) String() string {
 
 // diffPGSettings compares the requested values against what the server
 // reports. Only this proves an apply took effect.
-func diffPGSettings(targets []targetKnob, rows []queries.PgSettingsRow) settingsDiff {
+func diffPGSettings(targets []configValue, rows []queries.PgSettingsRow) settingsDiff {
 	byName := make(map[string]queries.PgSettingsRow, len(rows))
 	for _, r := range rows {
 		byName[string(r.Name)] = r

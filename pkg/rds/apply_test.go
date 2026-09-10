@@ -1,7 +1,6 @@
 package rds
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"testing"
@@ -10,7 +9,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,7 +36,7 @@ func TestAsApplyConfigError(t *testing.T) {
 
 func TestAWSParameters(t *testing.T) {
 	params := awsParameters(
-		[]targetKnob{{Name: "work_mem", Value: "16384"}},
+		[]configValue{{Name: "work_mem", Value: "16384"}},
 		rdsTypes.ApplyMethodImmediate,
 	)
 	require.Len(t, params, 1)
@@ -47,7 +45,7 @@ func TestAWSParameters(t *testing.T) {
 	assert.Equal(t, rdsTypes.ApplyMethodImmediate, params[0].ApplyMethod)
 }
 
-func TestTargetKnobsToApply(t *testing.T) {
+func TestExtractConfigValues(t *testing.T) {
 	proposed := &agent.ProposedConfigResponse{
 		KnobsOverrides: []string{"work_mem", "random_page_cost"},
 		Config: []agent.PGConfigRow{
@@ -57,15 +55,15 @@ func TestTargetKnobsToApply(t *testing.T) {
 		},
 	}
 
-	targets, err := targetKnobsToApply(proposed)
+	targets, err := extractConfigValues(proposed)
 	require.NoError(t, err)
 	require.Len(t, targets, 2, "only overridden knobs are applied")
-	assert.Equal(t, targetKnob{Name: "work_mem", Value: "16384", Vartype: "integer"}, targets[0])
+	assert.Equal(t, configValue{Name: "work_mem", Value: "16384", Vartype: "integer"}, targets[0])
 	assert.Equal(t, "1.1", targets[1].Value)
-	assert.Equal(t, []string{"work_mem", "random_page_cost"}, targetNames(targets))
+	assert.Equal(t, []string{"work_mem", "random_page_cost"}, configNames(targets))
 
 	t.Run("unknown knob fails the whole batch", func(t *testing.T) {
-		_, err := targetKnobsToApply(&agent.ProposedConfigResponse{
+		_, err := extractConfigValues(&agent.ProposedConfigResponse{
 			KnobsOverrides: []string{"work_mem", "nope"},
 			Config:         proposed.Config,
 		})
@@ -78,46 +76,4 @@ func TestStateApplyDebounced(t *testing.T) {
 	// Debounced on the attempt, not the success.
 	assert.True(t, (&State{LastApplyAttempt: time.Now()}).ApplyDebounced(time.Minute))
 	assert.False(t, (&State{LastApplyAttempt: time.Now().Add(-2 * time.Minute)}).ApplyDebounced(time.Minute))
-}
-
-func TestCheckParameterGroupState(t *testing.T) {
-	adapterWith := func(status string) (*RDSAdapter, *bytes.Buffer) {
-		group := rdsTypes.DBParameterGroupStatus{DBParameterGroupName: aws.String("my-pg")}
-		if status != "" {
-			group.ParameterApplyStatus = aws.String(status)
-		}
-		a := &RDSAdapter{State: State{DBInfo: &DBInfo{
-			ParameterGroupName: "my-pg",
-			DBInstance:         rdsTypes.DBInstance{DBParameterGroups: []rdsTypes.DBParameterGroupStatus{group}},
-		}}}
-		var logs bytes.Buffer
-		logger := logrus.New()
-		logger.SetOutput(&logs)
-		a.WithLogger(logger)
-		return a, &logs
-	}
-
-	// None of these describe a write that has not happened yet, so none may
-	// block the apply. "failed-to-apply" included: only the next write clears
-	// it, and refusing here would strand the agent.
-	for _, status := range []string{"", "in-sync", "applying", "pending-reboot", "failed-to-apply"} {
-		a, _ := adapterWith(status)
-		assert.Nil(t, a.checkParameterGroupState(), "status %q", status)
-	}
-
-	t.Run("the pre-write status reaches the log", func(t *testing.T) {
-		// The only trace that an apply went ahead on a bad group.
-		a, logs := adapterWith("failed-to-apply")
-		require.Nil(t, a.checkParameterGroupState())
-		assert.Contains(t, logs.String(), "failed-to-apply")
-	})
-
-	t.Run("pending-database-upgrade still refuses", func(t *testing.T) {
-		// No write clears this; the instance has to be upgraded.
-		a, _ := adapterWith("pending-database-upgrade")
-		err := a.checkParameterGroupState()
-		require.NotNil(t, err)
-		assert.Contains(t, err.Error(), "upgraded")
-		assert.Equal(t, "config_apply_error", err.ErrorType())
-	})
 }
