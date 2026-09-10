@@ -60,7 +60,7 @@ func TestExtractConfigValues(t *testing.T) {
 	require.Len(t, targets, 2, "only overridden knobs are applied")
 	assert.Equal(t, configValue{Name: "work_mem", Value: "16384", Vartype: "integer"}, targets[0])
 	assert.Equal(t, "1.1", targets[1].Value)
-	assert.Equal(t, []string{"work_mem", "random_page_cost"}, configNames(targets))
+	assert.Equal(t, []string{"work_mem", "random_page_cost"}, getConfigNames(targets))
 
 	t.Run("unknown knob fails the whole batch", func(t *testing.T) {
 		_, err := extractConfigValues(&agent.ProposedConfigResponse{

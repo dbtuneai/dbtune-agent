@@ -273,7 +273,8 @@ func (adapter *RDSAdapter) verifyAppliedSettings(
 
 	adapter.Logger().Info("Verifying the new configuration is live in PostgreSQL...")
 
-	diff := settingsDiff{Missing: configNames(targets)}
+	names := getConfigNames(targets)
+	diff := settingsDiff{Missing: names}
 	for {
 		rows, queryErr := queries.QueryPgSettings(adapter.PGDriver, waitCtx)
 		if queryErr != nil {
@@ -281,7 +282,7 @@ func (adapter *RDSAdapter) verifyAppliedSettings(
 		} else {
 			diff = diffPGSettings(targets, rows)
 			if diff.applied() {
-				adapter.Logger().Infof("Configuration verified live for %s", strings.Join(configNames(targets), ", "))
+				adapter.Logger().Infof("Configuration verified live for %s", strings.Join(names, ", "))
 				return nil
 			}
 			if len(diff.Missing) > 0 {
@@ -314,7 +315,7 @@ func (adapter *RDSAdapter) parameterGroupDiagnosis(ctx context.Context, targets 
 	ctx, cancel := context.WithTimeout(ctx, paramGroupReadTimeout)
 	defer cancel()
 
-	actual, err := getRDSParameterInfo(&adapter.AWSClients, name, configNames(targets), ctx)
+	actual, err := getRDSParameterInfo(&adapter.AWSClients, name, getConfigNames(targets), ctx)
 	if err != nil {
 		return fmt.Sprintf("could not read parameter group %q back to narrow it down: %v", name, err)
 	}

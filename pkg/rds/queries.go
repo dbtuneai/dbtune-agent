@@ -259,17 +259,6 @@ func FetchAWSConfig(
 	}
 }
 
-// ApplyConfig writes the targets to the instance's parameter group.
-//
-// The caller resolves the targets and verifies them afterwards, so the values
-// written and the values checked against pg_settings are the same slice.
-//
-// knobApplication chooses the apply method. If it mismatches the parameter
-// (e.g. immediate on a static one), the ModifyDBParameterGroup error is
-// returned as-is; there is no recovery write.
-//
-// A successful return means RDS stored the values, not that the server has
-// them. The caller must verify against pg_settings.
 func ApplyConfig(
 	targetConfig []configValue,
 	knobApplication agent.KnobApplication,

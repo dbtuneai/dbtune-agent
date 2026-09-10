@@ -1,6 +1,7 @@
 package rds
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"strconv"
@@ -56,39 +57,32 @@ func awsParameters(targets []configValue, applyMethod rdsTypes.ApplyMethod) []rd
 	return params
 }
 
-func configNames(config []configValue) []string {
-	names := make([]string, 0, len(config))
-	for _, t := range config {
-		names = append(names, t.Name)
+func getConfigNames(config []configValue) []string {
+	names := make([]string, len(config))
+	for i, c := range config {
+		names[i] = c.Name
 	}
 	return names
 }
 
-// groupValueMismatches reports which requested values the group does not hold.
-// Diagnostic only: the group can hold a value the server never loaded, so use
-// diffPGSettings to judge an apply.
+// builds a map with the targets as keys and fills it up with values from the param group
+// and then it compares that map with the target values.
 func groupValueMismatches(targets []configValue, actual []rdsTypes.Parameter) []string {
-	byName := make(map[string]rdsTypes.Parameter, len(actual))
+	// ParameterValue is omitted when never set, so it reads as "".
+	valueMap := make(map[string]string, len(actual))
 	for _, p := range actual {
-		byName[aws.ToString(p.ParameterName)] = p
+		valueMap[aws.ToString(p.ParameterName)] = aws.ToString(p.ParameterValue)
 	}
 
 	var mismatches []string
 	for _, t := range targets {
-		param, ok := byName[t.Name]
-		if !ok {
-			mismatches = append(mismatches, fmt.Sprintf("%s (absent from the group)", t.Name))
-			continue
+		switch current, ok := valueMap[t.Name]; {
+		case !ok:
+			// Absent means the engine lacks the parameter, not that it is unset.
+			mismatches = append(mismatches, t.Name+" (absent from the group)")
+		case !valuesEqual(t.Vartype, t.Value, current):
+			mismatches = append(mismatches, t.Name+" (group has "+cmp.Or(current, "<unset>")+")")
 		}
-		// ParameterValue is omitted when never set, so it reads as "".
-		current := aws.ToString(param.ParameterValue)
-		if valuesEqual(t.Vartype, t.Value, current) {
-			continue
-		}
-		if current == "" {
-			current = "<unset>"
-		}
-		mismatches = append(mismatches, fmt.Sprintf("%s (group has %s)", t.Name, current))
 	}
 	return mismatches
 }
@@ -121,8 +115,6 @@ func (d settingsDiff) String() string {
 	return strings.Join(parts, "; ")
 }
 
-// diffPGSettings compares the requested values against what the server
-// reports. Only this proves an apply took effect.
 func diffPGSettings(targets []configValue, rows []queries.PgSettingsRow) settingsDiff {
 	byName := make(map[string]queries.PgSettingsRow, len(rows))
 	for _, r := range rows {
@@ -132,21 +124,15 @@ func diffPGSettings(targets []configValue, rows []queries.PgSettingsRow) setting
 	var diff settingsDiff
 	for _, t := range targets {
 		row, ok := byName[t.Name]
-		if !ok {
-			diff.Missing = append(diff.Missing, t.Name)
-			continue
-		}
 		// The server's vartype wins over the proposal's.
-		vartype := t.Vartype
-		if row.Vartype != "" {
-			vartype = string(row.Vartype)
+		vartype := cmp.Or(string(row.Vartype), t.Vartype)
+		switch {
+		case !ok:
+			diff.Missing = append(diff.Missing, t.Name)
+		case !valuesEqual(vartype, t.Value, string(row.Setting)):
+			diff.Mismatched = append(diff.Mismatched, fmt.Sprintf(
+				"%s (want %s, server reports %s)", t.Name, t.Value, row.Setting))
 		}
-		if valuesEqual(vartype, t.Value, string(row.Setting)) {
-			continue
-		}
-		diff.Mismatched = append(diff.Mismatched, fmt.Sprintf(
-			"%s (want %s, server reports %s)", t.Name, t.Value, string(row.Setting),
-		))
 	}
 	return diff
 }
