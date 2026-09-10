@@ -302,6 +302,11 @@ func ApplyConfig(
 
 	// IsRestartAllowed was checked above, before the write.
 	if applyMethod == rdsTypes.ApplyMethodPendingReboot {
+		// The write is staged asynchronously so we wait before triggering the restart.
+		if err := waitParameterStaged(clients, databaseIdentifier, parameterGroupName, logger, ctx); err != nil {
+			return fmt.Errorf("parameter change not staged for reboot: %w", err)
+		}
+
 		args := &rds.RebootDBInstanceInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
 		_, err = clients.RDSClient.RebootDBInstance(ctx, args)
 		if err != nil {
@@ -318,6 +323,44 @@ func ApplyConfig(
 	}
 
 	return nil
+}
+
+// waitParameterStaged waits for RDS to report the parameter group change pending a
+// reboot, so the reboot below actually picks it up. Sleeping before the first read
+// helps with the edge case where the status is pending-reboot since previously.
+func waitParameterStaged(
+	clients *AWSClients,
+	databaseIdentifier string,
+	parameterGroupName string,
+	logger *logrus.Logger,
+	ctx context.Context,
+) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	status := ""
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf(
+				"timed out waiting for parameter group %q to reach pending-reboot (last status %q)",
+				parameterGroupName, status)
+		case <-time.After(10 * time.Second):
+		}
+
+		instance, err := fetchRDSDBInstance(databaseIdentifier, clients, ctx)
+		if err != nil {
+			logger.Warnf("Could not read the parameter apply status: %v", err)
+			continue
+		}
+		if len(instance.DBParameterGroups) > 0 {
+			status = aws.ToString(instance.DBParameterGroups[0].ParameterApplyStatus)
+		}
+		if status == "pending-reboot" {
+			return nil
+		}
+		logger.Infof("Waiting for RDS to stage the parameter change (status: %q)", status)
+	}
 }
 
 func getRDSParameterInfo(
