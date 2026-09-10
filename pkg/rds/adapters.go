@@ -189,21 +189,14 @@ func (adapter *RDSAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArr
 }
 
 func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
-	if adapter.State.ApplyDebounced(applyDebounce) {
-		adapter.Logger().Infof("Config was applied less than %s ago, skipping", applyDebounce)
+	if adapter.State.CheckApplyDebounced(1 * time.Minute) {
+		adapter.Logger().Infof("Config was applied less than %s ago, skipping", 1*time.Minute)
 		return nil
 	}
 
 	// Stamped on return, so a refused or failed apply is debounced too.
 	defer func() { adapter.State.LastApplyAttempt = time.Now() }()
 
-	// Fail fast before any AWS call. The check after the refresh catches a
-	// group that rotated to a default since the last system-info tick.
-	if err := defaultParameterGroupError(adapter.State.DBInfo); err != nil {
-		return err
-	}
-
-	// Apply against the group attached now, not the one seen at the last tick.
 	if err := adapter.refreshDBInfo(ctx); err != nil {
 		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to refresh DB info before apply: %w", err)}
 	}
@@ -228,10 +221,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return nil
 	}
 
-	// Prepare parameters for modification
 	reqRestart := proposedConfig.KnobApplication == agent.KnobApplicationRestart
-
-	// Bail before writing if this needs a reboot the agent may not do.
 	if reqRestart && !agent.IsRestartAllowed() {
 		return &agent.RestartNotAllowedError{
 			Message: "restart is not allowed in the agent",
@@ -251,9 +241,14 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return asApplyConfigError(err)
 	}
 
-	// Instance is online, we validate that PostgreSQL is back online also
+	// RDS reports the instance available well before PostgreSQL accepts
+	// connections, so both waits are needed, in this order.
+	if err := waitInstanceAvailable(&adapter.AWSClients, adapter.Config.RDSDatabaseIdentifier, ctx); err != nil {
+		return &agent.ConfigApplyError{Err: fmt.Errorf("error waiting for instance: %w", err)}
+	}
+
 	adapter.Logger().Info("Waiting for PostgreSQL to come back online...")
-	err = pg.WaitPostgresReady(adapter.PGDriver)
+	err = pg.WaitPostgresReady(adapter.PGDriver, ctx)
 	if err != nil {
 		return &agent.ConfigApplyError{Err: fmt.Errorf("error waiting for PostgreSQL to come back online: %w", err)}
 	}

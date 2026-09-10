@@ -102,7 +102,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 // require a restart, so we rely on the KnobApplication signal provided.
 // CloudSQL's flag API does not surface a per-flag restart-required hint
 // post-application, so no mismatch detection is possible here.
-func (adapter *CloudSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
+func (adapter *CloudSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
 	adapter.Logger().Infof("Applying config")
 
 	if proposedConfig.KnobApplication == agent.KnobApplicationRestart && !agent.IsRestartAllowed() {
@@ -136,7 +136,7 @@ func (adapter *CloudSQLAdapter) ApplyConfig(_ context.Context, proposedConfig *a
 		return &agent.ConfigApplyError{Err: err}
 	}
 
-	err = pg.WaitPostgresReady(adapter.PGDriver)
+	err = pg.WaitPostgresReady(adapter.PGDriver, ctx)
 	if err != nil {
 		return &agent.ConfigApplyError{Err: fmt.Errorf("Error waiting for PostgreSQL to come back online: %w", err)}
 	}

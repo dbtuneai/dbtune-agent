@@ -280,7 +280,7 @@ func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig
 			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to restart PostgreSQL service: %w", err)}
 		}
 
-		err = pg.WaitPostgresReady(d.PGDriver)
+		err = pg.WaitPostgresReady(d.PGDriver, ctx)
 		if err != nil {
 			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)}
 		}

@@ -71,9 +71,9 @@ func TestExtractConfigValues(t *testing.T) {
 	})
 }
 
-func TestStateApplyDebounced(t *testing.T) {
-	assert.False(t, (&State{}).ApplyDebounced(time.Minute), "fresh state")
+func TestStateCheckApplyDebounced(t *testing.T) {
+	assert.False(t, (&State{}).CheckApplyDebounced(time.Minute), "fresh state")
 	// Debounced on the attempt, not the success.
-	assert.True(t, (&State{LastApplyAttempt: time.Now()}).ApplyDebounced(time.Minute))
-	assert.False(t, (&State{LastApplyAttempt: time.Now().Add(-2 * time.Minute)}).ApplyDebounced(time.Minute))
+	assert.True(t, (&State{LastApplyAttempt: time.Now()}).CheckApplyDebounced(time.Minute))
+	assert.False(t, (&State{LastApplyAttempt: time.Now().Add(-2 * time.Minute)}).CheckApplyDebounced(time.Minute))
 }

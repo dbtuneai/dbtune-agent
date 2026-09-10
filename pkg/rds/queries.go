@@ -295,15 +295,15 @@ func ApplyConfig(
 		}
 	}
 
-	// Wait for the instance to come back available.
-	waiter := rds.NewDBInstanceAvailableWaiter(clients.RDSClient)
-	dbWaiterArgs := &rds.DescribeDBInstancesInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
-	err = waiter.Wait(ctx, dbWaiterArgs, 15*time.Minute)
-	if err != nil {
-		return fmt.Errorf("error waiting for instance: %w", err)
-	}
-
 	return nil
+}
+
+// waitInstanceAvailable blocks until RDS reports the instance available again.
+// A reload never takes it offline, so this returns on the first poll.
+func waitInstanceAvailable(clients *AWSClients, databaseIdentifier string, ctx context.Context) error {
+	waiter := rds.NewDBInstanceAvailableWaiter(clients.RDSClient)
+	args := &rds.DescribeDBInstancesInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
+	return waiter.Wait(ctx, args, 15*time.Minute)
 }
 
 // waitParameterStaged waits for RDS to report the parameter group change pending a

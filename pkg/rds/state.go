@@ -28,13 +28,8 @@ type State struct {
 	DBInfo             *DBInfo
 }
 
-// applyDebounce is the minimum spacing between parameter group writes. RDS
-// serves stale config reads after an apply, so re-proposals inside it are
-// ignored.
-const applyDebounce = 1 * time.Minute
-
-// ApplyDebounced reports whether an apply was attempted within d.
-func (s *State) ApplyDebounced(d time.Duration) bool {
+// CheckApplyDebounced reports whether an apply was attempted within d.
+func (s *State) CheckApplyDebounced(d time.Duration) bool {
 	return s.LastApplyAttempt.Add(d).After(time.Now())
 }
 
