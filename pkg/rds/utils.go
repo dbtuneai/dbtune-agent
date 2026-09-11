@@ -234,3 +234,49 @@ func parseBool(s string) (bool, bool) {
 	}
 	return false, false
 }
+
+// instanceStatusClass is how waitInstanceServing reads a DBInstanceStatus.
+type instanceStatusClass int
+
+const (
+	// instanceStatusBusy is the control plane still working. Keep polling.
+	instanceStatusBusy instanceStatusClass = iota
+	// instanceStatusServing is the engine accepting connections.
+	instanceStatusServing
+	// instanceStatusTerminal is not coming back without intervention.
+	instanceStatusTerminal
+)
+
+var servingInstanceStatuses = map[string]bool{
+	"available":                       true,
+	"backing-up":                      true,
+	"storage-optimization":            true,
+	"configuring-enhanced-monitoring": true,
+	"configuring-log-exports":         true,
+	"configuring-iam-database-auth":   true,
+}
+
+var terminalInstanceStatuses = map[string]bool{
+	"deleted":                             true,
+	"deleting":                            true,
+	"failed":                              true,
+	"incompatible-restore":                true,
+	"incompatible-parameters":             true,
+	"incompatible-network":                true,
+	"restore-error":                       true,
+	"inaccessible-encryption-credentials": true,
+}
+
+// classifyInstanceStatus maps a DBInstanceStatus onto what the wait should do.
+// Anything unrecognised counts as busy.
+func classifyInstanceStatus(status string) instanceStatusClass {
+	normalized := strings.ToLower(strings.TrimSpace(status))
+	switch {
+	case servingInstanceStatuses[normalized]:
+		return instanceStatusServing
+	case terminalInstanceStatuses[normalized]:
+		return instanceStatusTerminal
+	default:
+		return instanceStatusBusy
+	}
+}

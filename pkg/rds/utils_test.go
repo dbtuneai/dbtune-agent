@@ -220,3 +220,32 @@ func TestChangedRestartParameterInBatch(t *testing.T) {
 		[]configInfo{dynamic, staticUnchanged, staticChanged}, configInfo.isChangedRestartParameter))
 	assert.False(t, slices.ContainsFunc([]configInfo(nil), configInfo.isChangedRestartParameter))
 }
+
+func TestClassifyInstanceStatus(t *testing.T) {
+	cases := []struct {
+		status string
+		want   instanceStatusClass
+	}{
+		{"available", instanceStatusServing},
+		// The engine serves through all of these; the SDK waiter did not accept
+		// them, which is how a fine apply turned into a 15 minute timeout.
+		{"backing-up", instanceStatusServing},
+		{"storage-optimization", instanceStatusServing},
+		{"configuring-enhanced-monitoring", instanceStatusServing},
+		{"Available", instanceStatusServing},
+		{"rebooting", instanceStatusBusy},
+		{"modifying", instanceStatusBusy},
+		{"upgrading", instanceStatusBusy},
+		// A status RDS adds later should cost a wait, not a spurious failure.
+		{"some-future-status", instanceStatusBusy},
+		{"", instanceStatusBusy},
+		{"incompatible-parameters", instanceStatusTerminal},
+		{"failed", instanceStatusTerminal},
+		{"deleting", instanceStatusTerminal},
+	}
+	for _, c := range cases {
+		t.Run(c.status, func(t *testing.T) {
+			assert.Equal(t, c.want, classifyInstanceStatus(c.status))
+		})
+	}
+}

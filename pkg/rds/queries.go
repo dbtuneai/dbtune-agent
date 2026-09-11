@@ -361,12 +361,53 @@ func getRDSParameterInfo(
 	return out.Parameters, nil
 }
 
-// waitInstanceAvailable blocks until RDS reports the instance available again.
-// A reload never takes it offline, so this returns on the first poll.
-func waitInstanceAvailable(clients *AWSClients, databaseIdentifier string, ctx context.Context) error {
-	waiter := rds.NewDBInstanceAvailableWaiter(clients.RDSClient)
-	args := &rds.DescribeDBInstancesInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
-	return waiter.Wait(ctx, args, 15*time.Minute)
+// Timing for the instance wait. A reboot is minutes; past this something else
+// is going on and the error should say what.
+const (
+	instanceWaitTimeout  = 15 * time.Minute
+	instanceWaitInterval = 15 * time.Second
+)
+
+// Replacing the SDK's DBInstanceAvailable waiter, which succeeds only on a
+// literal "available" and so times out on a healthy instance that is merely
+// backing up or optimizing storage.
+func waitInstanceServing(
+	clients *AWSClients,
+	databaseIdentifier string,
+	logger *logrus.Logger,
+	ctx context.Context,
+) error {
+	ctx, cancel := context.WithTimeout(ctx, instanceWaitTimeout)
+	defer cancel()
+
+	status := "unknown"
+	for {
+		instance, err := fetchRDSDBInstance(databaseIdentifier, clients, ctx)
+		if err != nil {
+			logger.Warnf("Could not read the instance status: %v", err)
+		} else {
+			status = aws.ToString(instance.DBInstanceStatus)
+			switch classifyInstanceStatus(status) {
+			case instanceStatusServing:
+				logger.Infof("RDS reports instance %q serving (status: %q)", databaseIdentifier, status)
+				return nil
+			case instanceStatusTerminal:
+				return fmt.Errorf(
+					"instance %q is in state %q and will not come back on its own",
+					databaseIdentifier, status)
+			case instanceStatusBusy:
+				logger.Infof("Waiting for the instance to come back (status: %q)", status)
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf(
+				"gave up after %s waiting for instance %q to come back (last status %q): %w",
+				instanceWaitTimeout, databaseIdentifier, status, ctx.Err())
+		case <-time.After(instanceWaitInterval):
+		}
+	}
 }
 
 func getAverageMetricValue(

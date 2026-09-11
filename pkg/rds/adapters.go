@@ -251,7 +251,9 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 
 	// RDS reports the instance available well before PostgreSQL accepts
 	// connections, so both waits are needed, in this order.
-	if err := waitInstanceAvailable(&adapter.AWSClients, adapter.Config.RDSDatabaseIdentifier, ctx); err != nil {
+	if err := waitInstanceServing(
+		&adapter.AWSClients, adapter.Config.RDSDatabaseIdentifier, adapter.Logger(), ctx,
+	); err != nil {
 		return &agent.ConfigApplyError{Err: fmt.Errorf("error waiting for instance to come back online: %w", err)}
 	}
 
