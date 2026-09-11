@@ -29,41 +29,17 @@ func (c configInfo) changed() bool {
 	return !valuesEqual(c.Vartype, c.Value, c.CurrentRDSValue)
 }
 
+func (c configInfo) isChangedRestartParameter() bool {
+	return c.RequiresReboot && c.changed()
+}
+
 func getConfigInfo(
 	proposedConfig *agent.ProposedConfigResponse,
 	clients *AWSClients,
 	parameterGroupName string,
 	ctx context.Context,
 ) ([]configInfo, error) {
-	configs, err := extractConfigValues(proposedConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	rdsParameters, err := getRDSParameterInfo(clients, parameterGroupName, getConfigNames(configs), ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read parameter group %q: %w", parameterGroupName, err)
-	}
-	group := make(map[string]rdsTypes.Parameter, len(rdsParameters))
-	for _, p := range rdsParameters {
-		group[aws.ToString(p.ParameterName)] = p
-	}
-
-	for i, c := range configs {
-		// Absent from the response means the engine has no such parameter. That
-		// leaves the zero values, which read downstream as a mismatch.
-		p := group[c.Name]
-		configs[i].CurrentRDSValue = aws.ToString(p.ParameterValue)
-		configs[i].RequiresReboot = aws.ToString(p.ApplyType) == "static"
-	}
-	return configs, nil
-}
-
-// extractConfigValues pulls the knobs to write out of the proposal. Kept pure so
-// it stays testable without AWS.
-func extractConfigValues(proposedConfig *agent.ProposedConfigResponse) ([]configInfo, error) {
-	// using KnobsOverrides here is for backwardscompatability
-	// KnobsOverrides and Config holds the same values
+	// extract the data from the proposals
 	configs := make([]configInfo, 0, len(proposedConfig.KnobsOverrides))
 	for _, knob := range proposedConfig.KnobsOverrides {
 		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
@@ -79,6 +55,24 @@ func extractConfigValues(proposedConfig *agent.ProposedConfigResponse) ([]config
 			Value:   value,
 			Vartype: knobConfig.Vartype,
 		})
+	}
+
+	// append the current values from the parameter group
+	rdsParameters, err := getRDSParameterInfo(clients, parameterGroupName, getConfigNames(configs), ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read parameter group %q: %w", parameterGroupName, err)
+	}
+	group := make(map[string]rdsTypes.Parameter, len(rdsParameters))
+	for _, p := range rdsParameters {
+		group[aws.ToString(p.ParameterName)] = p
+	}
+
+	for i, c := range configs {
+		// Absent from the response means the engine has no such parameter. That
+		// leaves the zero values, which read downstream as a mismatch.
+		p := group[c.Name]
+		configs[i].CurrentRDSValue = aws.ToString(p.ParameterValue)
+		configs[i].RequiresReboot = aws.ToString(p.ApplyType) == "static"
 	}
 	return configs, nil
 }

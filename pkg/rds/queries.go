@@ -258,6 +258,10 @@ func FetchAWSConfig(
 	}
 }
 
+// Most circumstantial happens in ApplyConfig in pkg/rds/adapters.go.
+// This function simply applies the config, and reboots if necessary.
+// The reboot is postponed until the parameter group change is staged,
+// so the reboot actually picks it up.
 func ApplyConfig(
 	targetConfig []configInfo,
 	clients *AWSClients,
@@ -281,7 +285,6 @@ func ApplyConfig(
 		return fmt.Errorf("failed to modify parameter group: %w", err)
 	}
 
-	// The caller refuses a restart it is not allowed to perform, before this write.
 	if reqRestart {
 		// The write is staged asynchronously so we wait before triggering the restart.
 		if err := waitParameterStaged(clients, databaseIdentifier, parameterGroupName, logger, ctx); err != nil {
@@ -296,14 +299,6 @@ func ApplyConfig(
 	}
 
 	return nil
-}
-
-// waitInstanceAvailable blocks until RDS reports the instance available again.
-// A reload never takes it offline, so this returns on the first poll.
-func waitInstanceAvailable(clients *AWSClients, databaseIdentifier string, ctx context.Context) error {
-	waiter := rds.NewDBInstanceAvailableWaiter(clients.RDSClient)
-	args := &rds.DescribeDBInstancesInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
-	return waiter.Wait(ctx, args, 15*time.Minute)
 }
 
 // waitParameterStaged waits for RDS to report the parameter group change pending a
@@ -364,6 +359,14 @@ func getRDSParameterInfo(
 		return nil, err
 	}
 	return out.Parameters, nil
+}
+
+// waitInstanceAvailable blocks until RDS reports the instance available again.
+// A reload never takes it offline, so this returns on the first poll.
+func waitInstanceAvailable(clients *AWSClients, databaseIdentifier string, ctx context.Context) error {
+	waiter := rds.NewDBInstanceAvailableWaiter(clients.RDSClient)
+	args := &rds.DescribeDBInstancesInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
+	return waiter.Wait(ctx, args, 15*time.Minute)
 }
 
 func getAverageMetricValue(

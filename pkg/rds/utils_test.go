@@ -1,6 +1,7 @@
 package rds
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -133,4 +134,89 @@ func TestValuesEqual(t *testing.T) {
 		assert.Equal(t, c.equal, valuesEqual(c.vartype, c.want, c.got),
 			"valuesEqual(%q, %q, %q)", c.vartype, c.want, c.got)
 	}
+}
+
+func TestConfigInfoChanged(t *testing.T) {
+	cases := []struct {
+		name    string
+		config  configInfo
+		changed bool
+	}{
+		{
+			name:    "group already holds the value",
+			config:  configInfo{Name: "work_mem", Value: "16384", Vartype: "integer", CurrentRDSValue: "16384"},
+			changed: false,
+		},
+		{
+			name:    "same value, different representation",
+			config:  configInfo{Name: "random_page_cost", Value: "1.1", Vartype: "real", CurrentRDSValue: "1.100"},
+			changed: false,
+		},
+		{
+			name:    "different value",
+			config:  configInfo{Name: "work_mem", Value: "16384", Vartype: "integer", CurrentRDSValue: "4096"},
+			changed: true,
+		},
+		{
+			name: "absent from the group reads as changed",
+			// getConfigInfo leaves the zero value when the group has no such
+			// parameter, so we write it rather than silently skipping it.
+			config:  configInfo{Name: "work_mem", Value: "16384", Vartype: "integer"},
+			changed: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.changed, c.config.changed())
+		})
+	}
+}
+
+func TestConfigInfoIsChangedRestartParameter(t *testing.T) {
+	cases := []struct {
+		name   string
+		config configInfo
+		want   bool
+	}{
+		{
+			name:   "static parameter with a new value",
+			config: configInfo{Name: "shared_buffers", Value: "262144", Vartype: "integer", CurrentRDSValue: "131072", RequiresReboot: true},
+			want:   true,
+		},
+		{
+			name: "static parameter already at the requested value",
+			// Nothing to reboot for: the value is already in the group.
+			config: configInfo{Name: "shared_buffers", Value: "262144", Vartype: "integer", CurrentRDSValue: "262144", RequiresReboot: true},
+			want:   false,
+		},
+		{
+			name:   "dynamic parameter with a new value",
+			config: configInfo{Name: "work_mem", Value: "16384", Vartype: "integer", CurrentRDSValue: "4096"},
+			want:   false,
+		},
+		{
+			name:   "dynamic parameter already at the requested value",
+			config: configInfo{Name: "work_mem", Value: "16384", Vartype: "integer", CurrentRDSValue: "16384"},
+			want:   false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, c.config.isChangedRestartParameter())
+		})
+	}
+}
+
+// The adapter picks the apply method from the batch, not from a single knob:
+// one changed static parameter forces the reboot path for all of them.
+func TestChangedRestartParameterInBatch(t *testing.T) {
+	dynamic := configInfo{Name: "work_mem", Value: "16384", Vartype: "integer", CurrentRDSValue: "4096"}
+	staticUnchanged := configInfo{Name: "shared_buffers", Value: "262144", Vartype: "integer", CurrentRDSValue: "262144", RequiresReboot: true}
+	staticChanged := configInfo{Name: "max_connections", Value: "200", Vartype: "integer", CurrentRDSValue: "100", RequiresReboot: true}
+
+	assert.False(t, slices.ContainsFunc(
+		[]configInfo{dynamic, staticUnchanged}, configInfo.isChangedRestartParameter))
+	assert.True(t, slices.ContainsFunc(
+		[]configInfo{dynamic, staticUnchanged, staticChanged}, configInfo.isChangedRestartParameter))
+	assert.False(t, slices.ContainsFunc([]configInfo(nil), configInfo.isChangedRestartParameter))
 }

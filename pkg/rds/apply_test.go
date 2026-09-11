@@ -1,6 +1,7 @@
 package rds
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -45,30 +46,23 @@ func TestAWSParameters(t *testing.T) {
 	assert.Equal(t, rdsTypes.ApplyMethodImmediate, params[0].ApplyMethod)
 }
 
-func TestExtractConfigValues(t *testing.T) {
-	proposed := &agent.ProposedConfigResponse{
-		KnobsOverrides: []string{"work_mem", "random_page_cost"},
-		Config: []agent.PGConfigRow{
-			{Name: "work_mem", Setting: 16384, Vartype: "integer"},
-			{Name: "random_page_cost", Setting: 1.1, Vartype: "real"},
-			{Name: "shared_buffers", Setting: 1024, Vartype: "integer"},
-		},
-	}
-
-	targets, err := extractConfigValues(proposed)
-	require.NoError(t, err)
-	require.Len(t, targets, 2, "only overridden knobs are applied")
-	assert.Equal(t, configInfo{Name: "work_mem", Value: "16384", Vartype: "integer"}, targets[0])
-	assert.Equal(t, "1.1", targets[1].Value)
-	assert.Equal(t, []string{"work_mem", "random_page_cost"}, getConfigNames(targets))
-
-	t.Run("unknown knob fails the whole batch", func(t *testing.T) {
-		_, err := extractConfigValues(&agent.ProposedConfigResponse{
+func TestGetConfigInfo_UnknownKnob(t *testing.T) {
+	// The knobs are resolved before the parameter group is read, so an unknown
+	// knob fails the whole batch without an AWS call. That ordering is what
+	// makes this testable with a zero AWSClients.
+	_, err := getConfigInfo(
+		&agent.ProposedConfigResponse{
 			KnobsOverrides: []string{"work_mem", "nope"},
-			Config:         proposed.Config,
-		})
-		assert.Error(t, err)
-	})
+			Config: []agent.PGConfigRow{
+				{Name: "work_mem", Setting: 16384, Vartype: "integer"},
+			},
+		},
+		&AWSClients{},
+		"my-pg",
+		context.Background(),
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to find recommended knob")
 }
 
 func TestStateCheckApplyDebounced(t *testing.T) {

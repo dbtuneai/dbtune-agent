@@ -194,12 +194,13 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return nil
 	}
 
-	// Stamped on return, so a refused or failed apply is debounced too.
+	// Stamped on return.
 	defer func() { adapter.State.LastApplyAttempt = time.Now() }()
 
 	if err := adapter.refreshDBInfo(ctx); err != nil {
 		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to refresh DB info before apply: %w", err)}
 	}
+	// Check that we are not connected to the default parameter group.
 	if err := defaultParameterGroupError(adapter.State.DBInfo); err != nil {
 		return err
 	}
@@ -210,6 +211,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		adapter.State.DBInfo.ParameterGroupStatus,
 	)
 
+	// aggregate the data from proposedConfig and the current ParameterGroup
 	configs, err := getConfigInfo(
 		proposedConfig, &adapter.AWSClients, adapter.State.DBInfo.ParameterGroupName, ctx)
 	if err != nil {
@@ -221,10 +223,16 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return nil
 	}
 
-	reqRestart := proposedConfig.KnobApplication == agent.KnobApplicationRestart
-	if reqRestart && !agent.IsRestartAllowed() {
+	containsRestartParameterChange := slices.ContainsFunc(configs, configInfo.isChangedRestartParameter)
+	applyMethodIsRestart := proposedConfig.KnobApplication == agent.KnobApplicationRestart
+	if applyMethodIsRestart && !agent.IsRestartAllowed() {
 		return &agent.RestartNotAllowedError{
 			Message: "restart is not allowed in the agent",
+		}
+	}
+	if containsRestartParameterChange && !applyMethodIsRestart {
+		return &agent.ConfigApplyError{
+			Err: errors.New("a parameter requires a restart to take effect, but the apply method is reload"),
 		}
 	}
 
@@ -233,7 +241,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		&adapter.AWSClients,
 		adapter.State.DBInfo.ParameterGroupName,
 		adapter.Config.RDSDatabaseIdentifier,
-		reqRestart,
+		containsRestartParameterChange,
 		adapter.Logger(),
 		ctx,
 	)
@@ -244,7 +252,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 	// RDS reports the instance available well before PostgreSQL accepts
 	// connections, so both waits are needed, in this order.
 	if err := waitInstanceAvailable(&adapter.AWSClients, adapter.Config.RDSDatabaseIdentifier, ctx); err != nil {
-		return &agent.ConfigApplyError{Err: fmt.Errorf("error waiting for instance: %w", err)}
+		return &agent.ConfigApplyError{Err: fmt.Errorf("error waiting for instance to come back online: %w", err)}
 	}
 
 	adapter.Logger().Info("Waiting for PostgreSQL to come back online...")
@@ -253,7 +261,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return &agent.ConfigApplyError{Err: fmt.Errorf("error waiting for PostgreSQL to come back online: %w", err)}
 	}
 
-	// The group holding the values is not proof the server loaded them.
+	// Check that the values get applied in PostgreSQL.
 	if applyErr := adapter.verifyAppliedSettings(ctx, configs); applyErr != nil {
 		return applyErr
 	}
@@ -267,7 +275,7 @@ const (
 	pgVerifyTimeout  = 90 * time.Second
 	pgVerifyInterval = 5 * time.Second
 	// For the one-off group read on the failure path.
-	paramGroupReadTimeout = 15 * time.Second
+	paramGroupReadTimeout = 30 * time.Second
 )
 
 // verifyAppliedSettings polls pg_settings until the server reports every value
@@ -319,8 +327,7 @@ func (adapter *RDSAdapter) verifyAppliedSettings(
 
 // parameterGroupDiagnosis says whether the group holds the requested values,
 // separating a write that never stuck from one the engine never loaded.
-//
-// Failure path only: it costs an API call and cannot judge an apply by itself.
+// - Failure path only -
 func (adapter *RDSAdapter) parameterGroupDiagnosis(ctx context.Context, targets []configInfo) string {
 	name := adapter.State.DBInfo.ParameterGroupName
 
@@ -333,12 +340,12 @@ func (adapter *RDSAdapter) parameterGroupDiagnosis(ctx context.Context, targets 
 	}
 	if mismatches := groupValueMismatches(targets, actual); len(mismatches) > 0 {
 		return fmt.Sprintf(
-			"parameter group %q does not hold %s, so the write did not stick",
-			name, strings.Join(mismatches, ", "),
+			"parameter group %q does not hold the applied config values:\n%s",
+			name, strings.Join(mismatches, "\n"),
 		)
 	}
 	return fmt.Sprintf(
-		"parameter group %q does hold the requested values, so the engine never loaded them",
+		"parameter group %q does hold the requested values, but they are not live in the database.",
 		name,
 	)
 }
