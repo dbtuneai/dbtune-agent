@@ -171,6 +171,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	// Config management goroutine
 	go runWithTicker(ctx, configTicker, "config", logger, false, guard.Wrap("config", func(ctx context.Context) error {
 		return withHealthGate(hg, logger, func() error {
+			observedAt := time.Now().UTC()
 			config, err := adapter.GetActiveConfig(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to get active configuration: %w", err)
@@ -196,6 +197,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 						logger.Errorf("failed to send error report: %v", sendErr)
 					}
 				} else {
+					observedAt = time.Now().UTC()
 					config, err = adapter.GetActiveConfig(ctx)
 					if err != nil {
 						return err
@@ -205,7 +207,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 
 			// Send active config even on apply failure so the platform's view
 			// of what's running stays in sync.
-			if err := adapter.SendActiveConfig(ctx, config); err != nil {
+			if err := adapter.SendActiveConfig(ctx, config, observedAt); err != nil {
 				return err
 			}
 			return applyErr
