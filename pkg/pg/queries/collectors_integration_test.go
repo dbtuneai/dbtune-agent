@@ -565,7 +565,7 @@ func TestUptimeMinutes_ReturnsData(t *testing.T) {
 
 func TestTransactionCommits_ComputesTPS(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
-		c := TransactionCommitsCollector(inst.pool, noopPrepareCtx)
+		c := TransactionCommitsCollector(inst.pool, noopPrepareCtx, inst.version)
 		ctx := context.Background()
 
 		// First call: establishes baseline — TPS must be 0 (no prior sample).
@@ -622,6 +622,31 @@ func TestTransactionCommits_ComputesTPS(t *testing.T) {
 		}
 		if p2.Rows[0].TPS < 0 {
 			t.Fatalf("expected TPS >= 0, got %f", p2.Rows[0].TPS)
+		}
+
+		// parallel_workers_launched exists only on PG 18+; num_transactions is
+		// xact_commit minus 2 per launched worker there, and plain xact_commit below.
+		for i, p := range []Payload[TransactionCommitsRow]{p1, p2} {
+			row := p.Rows[0]
+			if inst.version < 18 {
+				if row.ParallelWorkersLaunched != nil {
+					t.Fatalf("call %d: expected nil parallel_workers_launched on PG %d, got %d",
+						i+1, inst.version, *row.ParallelWorkersLaunched)
+				}
+				if row.NumTransactions != row.XactCommit {
+					t.Fatalf("call %d: expected num_transactions == xact_commit on PG %d, got %d vs %d",
+						i+1, inst.version, row.NumTransactions, row.XactCommit)
+				}
+				continue
+			}
+			if row.ParallelWorkersLaunched == nil {
+				t.Fatalf("call %d: expected non-nil parallel_workers_launched on PG %d", i+1, inst.version)
+			}
+			want := row.XactCommit - 2*(*row.ParallelWorkersLaunched)
+			if row.NumTransactions != want {
+				t.Fatalf("call %d: num_transactions = %d, want %d (xact_commit %d - 2*%d)",
+					i+1, row.NumTransactions, want, row.XactCommit, *row.ParallelWorkersLaunched)
+			}
 		}
 	})
 }
@@ -2243,7 +2268,7 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 			BackfillBatchSize: PgStatsBackfillBatchSize,
 			IncludeTableData:  true,
 		}),
-		TransactionCommitsCollector(pool, noopPrepareCtx),
+		TransactionCommitsCollector(pool, noopPrepareCtx, pgMajorVersion),
 		UptimeMinutesCollector(pool, noopPrepareCtx),
 		WaitEventsCollector(pool, noopPrepareCtx),
 	}
