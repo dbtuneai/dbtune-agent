@@ -99,6 +99,9 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 	if dbInfo.ClusterParameterGroupName != "" {
 		adapter.Logger().Infof("detected cluster parameter group %q", dbInfo.ClusterParameterGroupName)
 	}
+	// Reads go over the Postgres connection, writes go to this instance's
+	// parameter group. Warn at startup if those are not the same database.
+	VerifyConnectionEndpoint(&dbInfo, pgConfig.ConnectionURL, adapter.Logger())
 	return adapter, nil
 }
 

@@ -41,6 +41,14 @@ type DBInfo struct {
 	// Aurora and Multi-AZ DB clusters, discovered via DescribeDBClusters.
 	// Empty for single-instance RDS (no DBClusterIdentifier on the instance).
 	ClusterParameterGroupName string
+	// InstanceEndpoint is the instance's own DNS endpoint, discovered via
+	// DescribeDBInstances. Empty while an instance is still being created.
+	InstanceEndpoint string
+	// ClusterEndpoints holds the writer, reader and custom endpoints of the
+	// instance's cluster, discovered via DescribeDBClusters. Empty for
+	// single-instance RDS. Used to verify the configured Postgres connection
+	// actually addresses this instance; see VerifyConnectionEndpoint.
+	ClusterEndpoints []string
 }
 
 func FetchDBInfo(
@@ -71,8 +79,15 @@ func FetchDBInfo(
 	}
 
 	clusterParameterGroupName := ""
+	var clusterEndpoints []string
 	if cluster != nil {
 		clusterParameterGroupName = cluster.ParameterGroupName
+		clusterEndpoints = cluster.Endpoints
+	}
+
+	instanceEndpoint := ""
+	if rdsInstanceInfo.Endpoint != nil {
+		instanceEndpoint = aws.ToString(rdsInstanceInfo.Endpoint.Address)
 	}
 
 	// Aurora Serverless v2 uses "db.serverless" which is not a valid EC2 instance type.
@@ -86,6 +101,8 @@ func FetchDBInfo(
 			ServerlessMaxACUs:         cluster.MaxACUs,
 			ParameterGroupName:        parameterGroupName,
 			ClusterParameterGroupName: clusterParameterGroupName,
+			InstanceEndpoint:          instanceEndpoint,
+			ClusterEndpoints:          clusterEndpoints,
 		}, nil
 	}
 
@@ -100,6 +117,8 @@ func FetchDBInfo(
 		EC2InstanceTypeInfo:       *ec2InstanceTypeInfo,
 		ParameterGroupName:        parameterGroupName,
 		ClusterParameterGroupName: clusterParameterGroupName,
+		InstanceEndpoint:          instanceEndpoint,
+		ClusterEndpoints:          clusterEndpoints,
 	}
 	return dbInfo, nil
 }
@@ -237,6 +256,10 @@ func fetchRDSDBInstance(
 type auroraClusterInfo struct {
 	MaxACUs            *float64
 	ParameterGroupName string
+	// Endpoints are the cluster's writer, reader and custom endpoints. All of
+	// them route to instances of this cluster, so any is a legitimate host to
+	// tune through.
+	Endpoints []string
 }
 
 func fetchAuroraClusterInfo(
@@ -257,11 +280,31 @@ func fetchAuroraClusterInfo(
 	cluster := result.DBClusters[0]
 	info := &auroraClusterInfo{
 		ParameterGroupName: aws.ToString(cluster.DBClusterParameterGroup),
+		Endpoints:          clusterEndpoints(&cluster),
 	}
 	if scaling := cluster.ServerlessV2ScalingConfiguration; scaling != nil {
 		info.MaxACUs = scaling.MaxCapacity
 	}
 	return info, nil
+}
+
+// clusterEndpoints collects every DNS name DescribeDBClusters reports for a
+// cluster: the writer endpoint, the reader endpoint and any custom endpoints.
+// CustomEndpoints comes back on the cluster itself, so enumerating them needs
+// no extra API call or IAM permission.
+func clusterEndpoints(cluster *rdsTypes.DBCluster) []string {
+	endpoints := make([]string, 0, 2+len(cluster.CustomEndpoints))
+	for _, endpoint := range []*string{cluster.Endpoint, cluster.ReaderEndpoint} {
+		if address := aws.ToString(endpoint); address != "" {
+			endpoints = append(endpoints, address)
+		}
+	}
+	for _, endpoint := range cluster.CustomEndpoints {
+		if endpoint != "" {
+			endpoints = append(endpoints, endpoint)
+		}
+	}
+	return endpoints
 }
 
 func fetchEC2InstanceTypeInfo(
