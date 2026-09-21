@@ -276,13 +276,15 @@ func ApplyConfig(
 		applyMethod = rdsTypes.ApplyMethodPendingReboot
 	}
 
-	args := &rds.ModifyDBParameterGroupInput{
-		DBParameterGroupName: aws.String(parameterGroupName),
-		Parameters:           awsParameters(targetConfig, applyMethod),
-	}
-	_, err := clients.RDSClient.ModifyDBParameterGroup(ctx, args)
-	if err != nil {
-		return fmt.Errorf("failed to modify parameter group: %w", err)
+	if len(targetConfig) > 0 {
+		args := &rds.ModifyDBParameterGroupInput{
+			DBParameterGroupName: aws.String(parameterGroupName),
+			Parameters:           awsParameters(targetConfig, applyMethod),
+		}
+		_, err := clients.RDSClient.ModifyDBParameterGroup(ctx, args)
+		if err != nil {
+			return fmt.Errorf("failed to modify parameter group: %w", err)
+		}
 	}
 
 	if reqRestart {
@@ -292,8 +294,7 @@ func ApplyConfig(
 		}
 
 		args := &rds.RebootDBInstanceInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
-		_, err = clients.RDSClient.RebootDBInstance(ctx, args)
-		if err != nil {
+		if _, err := clients.RDSClient.RebootDBInstance(ctx, args); err != nil {
 			return fmt.Errorf("failed to reboot RDS instance: %w", err)
 		}
 	}

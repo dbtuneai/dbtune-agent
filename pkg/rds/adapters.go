@@ -218,11 +218,6 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to resolve knobs to apply: %w", err)}
 	}
 
-	if !slices.ContainsFunc(configs, configInfo.changed) {
-		adapter.Logger().Info("Parameter group already holds the requested values. Exiting apply.")
-		return nil
-	}
-
 	containsRestartParameterChange := slices.ContainsFunc(configs, configInfo.isChangedRestartParameter)
 	applyMethodIsRestart := proposedConfig.KnobApplication == agent.KnobApplicationRestart
 	if applyMethodIsRestart && !agent.IsRestartAllowed() {
@@ -241,6 +236,14 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 			changedConfigs = append(changedConfigs, c)
 		}
 	}
+
+	needsRestartFromBefore := applyMethodIsRestart &&
+		adapter.State.DBInfo.ParameterGroupStatus == "pending-reboot"
+
+	if len(changedConfigs) == 0 && !needsRestartFromBefore {
+		adapter.Logger().Info("Parameter group already holds the requested values. Exiting apply.")
+		return nil
+	}
 	adapter.Logger().Infof("Applying %d changed parameters to parameter group %q", len(changedConfigs), adapter.State.DBInfo.ParameterGroupName)
 
 	err = ApplyConfig(
@@ -248,7 +251,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 		&adapter.AWSClients,
 		adapter.State.DBInfo.ParameterGroupName,
 		adapter.Config.RDSDatabaseIdentifier,
-		containsRestartParameterChange,
+		containsRestartParameterChange || needsRestartFromBefore,
 		adapter.Logger(),
 		ctx,
 	)
