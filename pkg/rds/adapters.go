@@ -235,9 +235,16 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 			Err: errors.New("a parameter requires a restart to take effect, but the apply method is reload"),
 		}
 	}
+	changedConfigs := []configInfo{}
+	for _, c := range configs {
+		if c.changed() {
+			changedConfigs = append(changedConfigs, c)
+		}
+	}
+	adapter.Logger().Infof("Applying %d changed parameters to parameter group %q", len(changedConfigs), adapter.State.DBInfo.ParameterGroupName)
 
 	err = ApplyConfig(
-		configs,
+		changedConfigs,
 		&adapter.AWSClients,
 		adapter.State.DBInfo.ParameterGroupName,
 		adapter.Config.RDSDatabaseIdentifier,
