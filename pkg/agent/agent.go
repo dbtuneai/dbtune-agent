@@ -174,9 +174,6 @@ type AgentLooper interface {
 	SendSystemInfo(ctx context.Context, systemInfo []metrics.FlatValue) error
 
 	GetActiveConfig(ctx context.Context) (ConfigArraySchema, error)
-	// SendActiveConfig reports the active configuration to the DBtune server.
-	// observedAt is when pg_settings was read; the server uses it to drop reports
-	// that were captured before a config apply but delivered after it (retries).
 	SendActiveConfig(ctx context.Context, config ConfigArraySchema, observedAt time.Time) error
 	GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error)
 
