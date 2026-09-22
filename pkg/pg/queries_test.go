@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -136,4 +137,68 @@ func TestPGMajorVersion(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// buildSystemInfo must emit the same four keys on every call, including for a
+// version string it could not parse: the backend hashes the key set, so a key
+// that comes and goes reads as the system having changed.
+func TestBuildSystemInfo(t *testing.T) {
+	t.Run("parsed version", func(t *testing.T) {
+		info, err := ParseVersionString("PostgreSQL 16.4 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 11.4.1, 64-bit")
+		require.NoError(t, err)
+
+		got, err := buildSystemInfo(info)
+		require.NoError(t, err)
+
+		assert.Equal(t, map[string]interface{}{
+			"pg_compilation_target": "x86_64-pc-linux-gnu",
+			"pg_arch":               "x86_64",
+			"pg_os":                 "linux",
+			"pg_bits":               "64",
+		}, flatValuesByKey(got))
+	})
+
+	t.Run("unparsed version still emits every key", func(t *testing.T) {
+		got, err := buildSystemInfo(VersionInfo{})
+		require.NoError(t, err)
+
+		assert.Equal(t, map[string]interface{}{
+			"pg_compilation_target": "unknown",
+			"pg_arch":               "unknown",
+			"pg_os":                 "unknown",
+			"pg_bits":               "unknown",
+		}, flatValuesByKey(got))
+	})
+
+	t.Run("msvc build has no target but still knows the os", func(t *testing.T) {
+		info, err := ParseVersionString("PostgreSQL 15.4, compiled by Visual C++ build 1937, 64-bit")
+		require.NoError(t, err)
+
+		got, err := buildSystemInfo(info)
+		require.NoError(t, err)
+
+		assert.Equal(t, map[string]interface{}{
+			"pg_compilation_target": "unknown",
+			"pg_arch":               "unknown",
+			"pg_os":                 "windows",
+			"pg_bits":               "64",
+		}, flatValuesByKey(got))
+	})
+
+	t.Run("every key is a string metric", func(t *testing.T) {
+		got, err := buildSystemInfo(VersionInfo{})
+		require.NoError(t, err)
+
+		for _, fv := range got {
+			assert.Equal(t, metrics.String, fv.Type, fv.Key)
+		}
+	})
+}
+
+func flatValuesByKey(fvs []metrics.FlatValue) map[string]interface{} {
+	byKey := make(map[string]interface{}, len(fvs))
+	for _, fv := range fvs {
+		byKey[fv.Key] = fv.Value
+	}
+	return byKey
 }

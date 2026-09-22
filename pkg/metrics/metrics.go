@@ -260,7 +260,19 @@ var (
 	// The PG stats are fetched from pg_stat_statements (https://www.postgresql.org/docs/current/pgstatstatements.html)
 	// as well as a number of native pg stats views.    (https://www.postgresql.org/docs/current/monitoring-stats.html)
 
-	PGVersion                      = MetricDef{Key: "pg_version", Type: String}
+	PGVersion = MetricDef{Key: "pg_version", Type: String}
+
+	// Build information parsed out of SELECT version(). Unlike the node_os_*
+	// keys above, these describe the machine PostgreSQL was built for rather
+	// than the machine the agent happens to run on. pg_compilation_target is the
+	// verbatim target and so the authoritative one; pg_arch and pg_os are
+	// normalised from it and should be treated as advisory. pg_bits is a string
+	// because it is categorical and has to be able to say "unknown".
+	PGCompilationTarget = MetricDef{Key: "pg_compilation_target", Type: String}
+	PGArch              = MetricDef{Key: "pg_arch", Type: String}
+	PGOS                = MetricDef{Key: "pg_os", Type: String}
+	PGBits              = MetricDef{Key: "pg_bits", Type: String}
+
 	PGMaxConnections               = MetricDef{Key: "pg_max_connections", Type: Int}
 	PGCurrentDatabase              = MetricDef{Key: "pg_current_database", Type: String}
 	PGDatabaseCount                = MetricDef{Key: "pg_database_count", Type: Int}
