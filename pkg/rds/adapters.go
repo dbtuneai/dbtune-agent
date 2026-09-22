@@ -321,15 +321,15 @@ func (adapter *RDSAdapter) verifyAppliedSettings(
 			adapter.Logger().Warnf("Could not read pg_settings while verifying the apply: %v", queryErr)
 		} else {
 			diff = diffPGSettings(targets, rows)
-			if diff.applied() {
-				adapter.Logger().Infof("Configuration verified live for %s", strings.Join(names, ", "))
-				return nil
-			}
 			if len(diff.Missing) > 0 {
 				return &agent.ConfigApplyError{Err: fmt.Errorf(
 					"cannot verify apply: %s unknown to this PostgreSQL server",
 					strings.Join(diff.Missing, ", "),
 				)}
+			}
+			if len(diff.Mismatched) == 0 {
+				adapter.Logger().Infof("Configuration verified live for %s", strings.Join(names, ", "))
+				return nil
 			}
 			adapter.Logger().Infof("Waiting for PostgreSQL to report the new configuration: %s", diff)
 		}

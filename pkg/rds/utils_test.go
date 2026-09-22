@@ -75,7 +75,8 @@ func TestDiffPGSettings(t *testing.T) {
 			row("shared_buffers", "262144", "integer"),
 			row("max_connections", "100", "integer"),
 		})
-		assert.True(t, diff.applied(), "diff: %s", diff)
+		assert.True(t, len(diff.Mismatched) == 0, "diff: %s", diff)
+		assert.True(t, len(diff.Missing) == 0, "diff: %s", diff)
 	})
 
 	t.Run("value never arrived", func(t *testing.T) {
@@ -101,7 +102,8 @@ func TestDiffPGSettings(t *testing.T) {
 			[]configInfo{{Name: "random_page_cost", Value: "1.1", Vartype: "integer"}},
 			[]queries.PgSettingsRow{row("random_page_cost", "1.1000", "real")},
 		)
-		assert.True(t, diff.applied(), "diff: %s", diff)
+		assert.True(t, len(diff.Mismatched) == 0, "diff: %s", diff)
+		assert.True(t, len(diff.Missing) == 0, "diff: %s", diff)
 	})
 }
 

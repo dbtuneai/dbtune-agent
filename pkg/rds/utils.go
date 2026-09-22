@@ -130,10 +130,6 @@ type settingsDiff struct {
 	Mismatched []string
 }
 
-func (d settingsDiff) applied() bool {
-	return len(d.Missing) == 0 && len(d.Mismatched) == 0
-}
-
 func (d settingsDiff) String() string {
 	var parts []string
 	if len(d.Missing) > 0 {
