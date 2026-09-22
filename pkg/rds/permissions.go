@@ -32,7 +32,8 @@ func checkDescribeDBParametersAccess(
 		return nil
 	case isAccessDenied(err):
 		return fmt.Errorf(
-			"missing rds:DescribeDBParameters access on parameter group %q: %w",
+			"missing rds:DescribeDBParameters access on parameter group %q: This additional "+
+				"requirement was added to allow better monitoring during config updates: %w",
 			parameterGroupName, err)
 	case isCredentialError(err):
 		return fmt.Errorf(
