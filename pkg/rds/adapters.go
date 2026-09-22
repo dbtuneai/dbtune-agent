@@ -69,6 +69,14 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 		return nil, fmt.Errorf("failed to describe database instance: %w", err)
 	}
 
+	// Every apply reads the parameter group before it writes anything, so prove
+	// that access now rather than at the first apply.
+	if dbInfo.ParameterGroupName != "" {
+		if err := checkDescribeDBParametersAccess(ctx, clients.RDSClient, dbInfo.ParameterGroupName); err != nil {
+			return nil, err
+		}
+	}
+
 	pgConfig, err := pg.ConfigFromViper(nil)
 	if err != nil {
 		return nil, err
