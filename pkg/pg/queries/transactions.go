@@ -21,9 +21,7 @@ const (
 )
 
 // parallelWorkerCommitsPerWorker is how much every launched parallel worker
-// inflates xact_commit. A worker takes a snapshot and commits on both ends of
-// its lifetime, so each one adds exactly 2 to xact_commit without any user
-// transaction having completed.
+// inflates xact_commit.
 const parallelWorkerCommitsPerWorker = 2
 
 const transactionCommitsQueryTemplate = `
