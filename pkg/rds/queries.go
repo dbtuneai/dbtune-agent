@@ -17,8 +17,6 @@ import (
 	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
-	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/sirupsen/logrus"
 )
 
@@ -260,182 +258,155 @@ func FetchAWSConfig(
 	}
 }
 
-// ApplyConfig applies the proposed configuration to the RDS instance.
-//
-// We cannot validate trivially against the RDS API which parameters require
-// a restart, so we rely on the KnobApplication signal provided to choose
-// between ApplyMethodImmediate and ApplyMethodPendingReboot. If the chosen
-// method mismatches the actual parameter (e.g. immediate apply on a static
-// parameter), AWS surfaces an error from ModifyDBParameterGroup which is
-// returned as-is; we do not attempt a recovery write.
+// Most circumstantial happens in ApplyConfig in pkg/rds/adapters.go.
+// This function simply applies the config, and reboots if necessary.
+// The reboot is postponed until the parameter group change is staged,
+// so the reboot actually picks it up.
 func ApplyConfig(
-	proposedConfig *agent.ProposedConfigResponse,
+	targetConfig []configInfo,
 	clients *AWSClients,
 	parameterGroupName string,
 	databaseIdentifier string,
+	reqRestart bool,
 	logger *logrus.Logger,
 	ctx context.Context,
 ) error {
-	logger.Infof("Applying Config: %s", proposedConfig.KnobApplication)
-
-	// Prepare parameters for modification
-	var applyMethod rdsTypes.ApplyMethod
-	switch proposedConfig.KnobApplication {
-	case agent.KnobApplicationRestart:
+	applyMethod := rdsTypes.ApplyMethodImmediate
+	if reqRestart {
 		applyMethod = rdsTypes.ApplyMethodPendingReboot
-	case agent.KnobApplicationReload:
-		applyMethod = rdsTypes.ApplyMethodImmediate
 	}
 
-	modifiedParameters, err := modifiedParametersToApply(proposedConfig, applyMethod)
-	if err != nil {
-		return fmt.Errorf("failed to get modified parameters: %w", err)
-	}
-
-	// Nothing to change, assume we just go ahead
-	if len(modifiedParameters) == 0 {
-		logger.Info("No parameter changes were required")
-		return nil
-	}
-
-	// If the parameter group would be set to pending-reboot but the agent is
-	// not allowed to restart, bail before modifying the parameter group.
-	if applyMethod == rdsTypes.ApplyMethodPendingReboot && !agent.IsRestartAllowed() {
-		return &agent.RestartNotAllowedError{
-			Message: "restart is not allowed in the agent",
+	if len(targetConfig) > 0 {
+		args := &rds.ModifyDBParameterGroupInput{
+			DBParameterGroupName: aws.String(parameterGroupName),
+			Parameters:           awsParameters(targetConfig, applyMethod),
+		}
+		_, err := clients.RDSClient.ModifyDBParameterGroup(ctx, args)
+		if err != nil {
+			return fmt.Errorf("failed to modify parameter group: %w", err)
 		}
 	}
 
-	// Modify parameter group
-	args := &rds.ModifyDBParameterGroupInput{
-		DBParameterGroupName: aws.String(parameterGroupName),
-		Parameters:           modifiedParameters,
-	}
+	if reqRestart {
+		// The write is staged asynchronously so we wait before triggering the restart.
+		if err := waitParameterStaged(clients, databaseIdentifier, parameterGroupName, logger, ctx); err != nil {
+			return fmt.Errorf("parameter change not staged for reboot: %w", err)
+		}
 
-	// TODO(eddie): We should actuall verify in the response that it worked
-	_, err = clients.RDSClient.ModifyDBParameterGroup(ctx, args)
-	if err != nil {
-		return fmt.Errorf("failed to modify parameter group: %w", err)
-	}
-
-	// Wait for parameter group changes to be processed
-	logger.Info("Waiting for parameter group changes to be processed...")
-	err = waitRDSInstanceAvailable(clients, databaseIdentifier, parameterGroupName, ctx)
-	if err != nil {
-		return fmt.Errorf("error waiting for parameter group changes to be processed: %w", err)
-	}
-
-	// If restart is required and specified. IsRestartAllowed was already
-	// verified above, before modifying the parameter group.
-	if applyMethod == rdsTypes.ApplyMethodPendingReboot {
 		args := &rds.RebootDBInstanceInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
-		_, err = clients.RDSClient.RebootDBInstance(ctx, args)
-		if err != nil {
+		if _, err := clients.RDSClient.RebootDBInstance(ctx, args); err != nil {
 			return fmt.Errorf("failed to reboot RDS instance: %w", err)
 		}
 	}
 
-	// Wait for the instance to become available and PostgreSQL to be online
-	waiter := rds.NewDBInstanceAvailableWaiter(clients.RDSClient)
-	dbWaiterArgs := &rds.DescribeDBInstancesInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
-	err = waiter.Wait(ctx, dbWaiterArgs, 15*time.Minute)
-	if err != nil {
-		return fmt.Errorf("error waiting for instance: %w", err)
-	}
-
 	return nil
 }
 
-func parameterGroupStatus(
-	rdsInstanceInfo *rdsTypes.DBInstance,
-	parameterGroupName string,
-) *rdsTypes.DBParameterGroupStatus {
-	for _, pg := range rdsInstanceInfo.DBParameterGroups {
-		if aws.ToString(pg.DBParameterGroupName) == parameterGroupName {
-			return &pg
-		}
-	}
-	return nil
-}
-
-func modifiedParametersToApply(
-	proposedConfig *agent.ProposedConfigResponse,
-	applyMethod rdsTypes.ApplyMethod,
-) ([]rdsTypes.Parameter, error) {
-	// TODO(eddie): This is N^2 as FindRecommendedKnob does it's own loop -_-
-	modifiedParameters := make([]rdsTypes.Parameter, 0, len(proposedConfig.KnobsOverrides))
-	for _, knob := range proposedConfig.KnobsOverrides {
-		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
-		if err != nil {
-			return nil, fmt.Errorf("failed to find recommended knob: %w", err)
-		}
-		fmtValue, err := knobConfig.GetSettingValue()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get setting value: %w", err)
-		}
-
-		param := rdsTypes.Parameter{
-			ParameterName:  aws.String(knobConfig.Name),
-			ParameterValue: aws.String(fmtValue),
-			ApplyMethod:    applyMethod,
-		}
-		modifiedParameters = append(modifiedParameters, param)
-	}
-	return modifiedParameters, nil
-}
-
-func waitRDSInstanceAvailable(
+// waitParameterStaged waits for RDS to report the parameter group change pending a
+// reboot, so the reboot below actually picks it up. Sleeping before the first read
+// helps with the edge case where the status is pending-reboot since previously.
+func waitParameterStaged(
 	clients *AWSClients,
 	databaseIdentifier string,
 	parameterGroupName string,
+	logger *logrus.Logger,
 	ctx context.Context,
 ) error {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	// Wait for the parameter apply status to be either pending-reboot or in-sync
+	status := ""
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for parameter group changes to be processed")
-		case <-time.After(5 * time.Second):
-			rdsInstanceInfo, err := fetchRDSDBInstance(databaseIdentifier, clients, ctx)
-			if err != nil {
-				continue // Retry
-			}
+			return fmt.Errorf(
+				"timed out waiting for parameter group %q to reach pending-reboot (last status %q)",
+				parameterGroupName, status)
+		case <-time.After(10 * time.Second):
+		}
 
-			parameterGroupStatus := parameterGroupStatus(rdsInstanceInfo, parameterGroupName)
-			if parameterGroupStatus == nil {
-				continue
-			}
+		instance, err := fetchRDSDBInstance(databaseIdentifier, clients, ctx)
+		if err != nil {
+			logger.Warnf("Could not read the parameter apply status: %v", err)
+			continue
+		}
+		if len(instance.DBParameterGroups) > 0 {
+			status = aws.ToString(instance.DBParameterGroups[0].ParameterApplyStatus)
+		}
+		if status == "pending-reboot" {
+			return nil
+		}
+		logger.Infof("Waiting for RDS to stage the parameter change (status: %q)", status)
+	}
+}
 
-			currentParamStatus := parameterGroupStatus.ParameterApplyStatus
-			if currentParamStatus == nil {
-				return fmt.Errorf("parameter group '%s' not found attached to instance '%s'", parameterGroupName, databaseIdentifier)
-			}
+func getRDSParameterInfo(
+	clients *AWSClients,
+	parameterGroupName string,
+	names []string,
+	ctx context.Context,
+) ([]rdsTypes.Parameter, error) {
+	input := &rds.DescribeDBParametersInput{
+		DBParameterGroupName: aws.String(parameterGroupName),
+		MaxRecords:           aws.Int32(100),
+		Filters: []rdsTypes.Filter{{
+			Name:   aws.String("parameter-name"),
+			Values: names,
+		}},
+	}
 
-			// Pulled from their docs for the `status` string
-			// - applying : The parameter group change is being applied to the database.
-			// - failed-to-apply : The parameter group is in an invalid state.
-			// - in-sync : The parameter group change is synchronized with the database.
-			// - pending-database-upgrade : The parameter group change will be applied after the DB instance is upgraded.
-			// - pending-reboot : The parameter group change will be applied after the DB instance reboots.
-			switch *currentParamStatus {
-			// Waiting
-			case "applying":
-				continue
-			// Successes
-			case "in-sync":
+	out, err := clients.RDSClient.DescribeDBParameters(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	return out.Parameters, nil
+}
+
+// Timing for the instance wait. A reboot is minutes; past this something else
+// is going on and the error should say what.
+const (
+	instanceWaitTimeout  = 15 * time.Minute
+	instanceWaitInterval = 15 * time.Second
+)
+
+// Replacing the SDK's DBInstanceAvailable waiter, which succeeds only on a
+// literal "available" and so times out on a healthy instance that is merely
+// backing up or optimizing storage.
+func waitInstanceServing(
+	clients *AWSClients,
+	databaseIdentifier string,
+	logger *logrus.Logger,
+	ctx context.Context,
+) error {
+	ctx, cancel := context.WithTimeout(ctx, instanceWaitTimeout)
+	defer cancel()
+
+	status := "unknown"
+	for {
+		instance, err := fetchRDSDBInstance(databaseIdentifier, clients, ctx)
+		if err != nil {
+			logger.Warnf("Could not read the instance status: %v", err)
+		} else {
+			status = aws.ToString(instance.DBInstanceStatus)
+			switch classifyInstanceStatus(status) {
+			case instanceStatusServing:
+				logger.Infof("RDS reports instance %q serving (status: %q)", databaseIdentifier, status)
 				return nil
-			case "pending-reboot":
-				return nil
-			case "failed-to-apply":
-				return fmt.Errorf("parameter group is in an invalid state")
-			case "pending-database-upgrade":
-				return fmt.Errorf("parameter group change will be applied after the DB instance is upgraded")
-			default:
-				return fmt.Errorf("unknown parameter apply status: %s", *currentParamStatus)
+			case instanceStatusTerminal:
+				return fmt.Errorf(
+					"instance %q is in state %q and will not come back on its own",
+					databaseIdentifier, status)
+			case instanceStatusBusy:
+				logger.Infof("Waiting for the instance to come back (status: %q)", status)
 			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf(
+				"gave up after %s waiting for instance %q to come back (last status %q): %w",
+				instanceWaitTimeout, databaseIdentifier, status, ctx.Err())
+		case <-time.After(instanceWaitInterval):
 		}
 	}
 }

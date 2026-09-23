@@ -20,10 +20,17 @@ import (
 )
 
 type State struct {
-	LastAppliedConfig  time.Time
+	// LastApplyAttempt is the last apply, successful or not. Debouncing on the
+	// attempt keeps a failing apply from retrying every config tick.
+	LastApplyAttempt   time.Time
 	LastGuardrailCheck time.Time
 	LastDBInfoCheck    time.Time
 	DBInfo             *DBInfo
+}
+
+// CheckApplyDebounced reports whether an apply was attempted within d.
+func (s *State) CheckApplyDebounced(d time.Duration) bool {
+	return s.LastApplyAttempt.Add(d).After(time.Now())
 }
 
 type DBInfo struct {
@@ -36,7 +43,8 @@ type DBInfo struct {
 	// ParameterGroupName is the instance-level DB parameter group currently
 	// attached to the instance, discovered via DescribeDBInstances. Empty if
 	// the instance reports no parameter groups (should not happen for RDS/Aurora).
-	ParameterGroupName string
+	ParameterGroupName   string
+	ParameterGroupStatus string
 	// ClusterParameterGroupName is the cluster-level DB parameter group for
 	// Aurora and Multi-AZ DB clusters, discovered via DescribeDBClusters.
 	// Empty for single-instance RDS (no DBClusterIdentifier on the instance).
@@ -57,8 +65,10 @@ func FetchDBInfo(
 	instanceType := strings.TrimPrefix(*instanceClass, "db.")
 
 	parameterGroupName := ""
+	parameterGroupStatus := ""
 	if len(rdsInstanceInfo.DBParameterGroups) > 0 {
 		parameterGroupName = aws.ToString(rdsInstanceInfo.DBParameterGroups[0].DBParameterGroupName)
+		parameterGroupStatus = aws.ToString(rdsInstanceInfo.DBParameterGroups[0].ParameterApplyStatus)
 	}
 
 	var cluster *auroraClusterInfo
@@ -85,6 +95,7 @@ func FetchDBInfo(
 			DBInstance:                *rdsInstanceInfo,
 			ServerlessMaxACUs:         cluster.MaxACUs,
 			ParameterGroupName:        parameterGroupName,
+			ParameterGroupStatus:      parameterGroupStatus,
 			ClusterParameterGroupName: clusterParameterGroupName,
 		}, nil
 	}
@@ -99,6 +110,7 @@ func FetchDBInfo(
 		EC2InstanceType:           ec2types.InstanceType(instanceType),
 		EC2InstanceTypeInfo:       *ec2InstanceTypeInfo,
 		ParameterGroupName:        parameterGroupName,
+		ParameterGroupStatus:      parameterGroupStatus,
 		ClusterParameterGroupName: clusterParameterGroupName,
 	}
 	return dbInfo, nil
@@ -167,15 +179,6 @@ func defaultParameterGroupError(dbInfo *DBInfo) *agent.DefaultParameterGroupErro
 		return nil
 	}
 	return &agent.DefaultParameterGroupError{ParameterGroupName: dbInfo.ParameterGroupName}
-}
-
-func (info *DBInfo) ParameterGroupStatus(name string) *rdsTypes.DBParameterGroupStatus {
-	for _, pg := range info.DBInstance.DBParameterGroups {
-		if aws.ToString(pg.DBParameterGroupName) == name {
-			return &pg
-		}
-	}
-	return nil
 }
 
 func (info *DBInfo) TryIntoFlatValuesSlice() ([]metrics.FlatValue, error) {

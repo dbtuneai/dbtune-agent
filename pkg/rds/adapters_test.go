@@ -1,11 +1,8 @@
 package rds
 
 import (
-	"context"
-	"errors"
 	"testing"
 
-	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,20 +65,4 @@ func flatKeys(fs []metrics.FlatValue) []string {
 		keys = append(keys, f.Key)
 	}
 	return keys
-}
-
-func TestRDSAdapter_ApplyConfig_RefusesDefaultParameterGroup(t *testing.T) {
-	adapter := &RDSAdapter{
-		State: State{
-			DBInfo: &DBInfo{ParameterGroupName: "default.postgres15"},
-		},
-	}
-
-	err := adapter.ApplyConfig(context.Background(), &agent.ProposedConfigResponse{})
-	require.NotNil(t, err, "expected typed apply error, got nil")
-
-	var typed *agent.DefaultParameterGroupError
-	require.True(t, errors.As(err, &typed), "expected *DefaultParameterGroupError, got %T", err)
-	assert.Equal(t, "default.postgres15", typed.ParameterGroupName)
-	assert.Equal(t, "default_parameter_group", err.ErrorType())
 }

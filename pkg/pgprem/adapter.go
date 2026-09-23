@@ -250,7 +250,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 		}
 	}
 
-	if err := pg.WaitPostgresReady(adapter.pgDriver); err != nil {
+	if err := pg.WaitPostgresReady(adapter.pgDriver, ctx); err != nil {
 		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)}
 	}
 	return nil

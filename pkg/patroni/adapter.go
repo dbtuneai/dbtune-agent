@@ -414,7 +414,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 
 		// Wait for PostgreSQL to come back online
 		logger.Info("Waiting for PostgreSQL to be ready after restart...")
-		err = pg.WaitPostgresReady(adapter.PGDriver)
+		err = pg.WaitPostgresReady(adapter.PGDriver, ctx)
 		if err != nil {
 			if failoverErr := adapter.handlePossibleFailoverError(ctx, err, "during restart wait"); failoverErr != nil {
 				return &agent.ConfigApplyError{Err: failoverErr}

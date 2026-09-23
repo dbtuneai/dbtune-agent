@@ -2,7 +2,10 @@ package rds
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -64,6 +67,14 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 	dbInfo, err := FetchDBInfo(config.RDSDatabaseIdentifier, &clients, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to describe database instance: %w", err)
+	}
+
+	// Every apply reads the parameter group before it writes anything, so prove
+	// that access now rather than at the first apply.
+	if dbInfo.ParameterGroupName != "" {
+		if err := checkDescribeDBParametersAccess(ctx, clients.RDSClient, dbInfo.ParameterGroupName); err != nil {
+			return nil, err
+		}
 	}
 
 	pgConfig, err := pg.ConfigFromViper(nil)
@@ -186,57 +197,188 @@ func (adapter *RDSAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArr
 }
 
 func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
-	// If the last applied config is less than 1 minute ago, return
-	if adapter.State.LastAppliedConfig.Add(1 * time.Minute).After(time.Now()) {
-		adapter.Logger().Info("Last applied config is less than 1 minute ago, skipping")
+	if adapter.State.CheckApplyDebounced(1 * time.Minute) {
+		adapter.Logger().Infof("Config was applied less than %s ago, skipping", 1*time.Minute)
 		return nil
 	}
 
-	// Fail fast on a known-default group before any AWS calls. The post-refresh
-	// check below catches the case where the group rotated to a default between
-	// system-info ticks.
-	if err := defaultParameterGroupError(adapter.State.DBInfo); err != nil {
-		return err
-	}
+	// Stamped on return.
+	defer func() { adapter.State.LastApplyAttempt = time.Now() }()
 
-	// Refresh so we apply against the parameter group actually attached right
-	// now, not whatever was observed at the last system-info tick.
 	if err := adapter.refreshDBInfo(ctx); err != nil {
 		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to refresh DB info before apply: %w", err)}
 	}
+	// Check that we are not connected to the default parameter group.
 	if err := defaultParameterGroupError(adapter.State.DBInfo); err != nil {
 		return err
 	}
 
-	err := ApplyConfig(
-		proposedConfig,
+	adapter.Logger().Infof(
+		"Parameter group %q apply status before write: %s",
+		adapter.State.DBInfo.ParameterGroupName,
+		adapter.State.DBInfo.ParameterGroupStatus,
+	)
+
+	// aggregate the data from proposedConfig and the current ParameterGroup
+	configs, err := getConfigInfo(
+		proposedConfig, &adapter.AWSClients, adapter.State.DBInfo.ParameterGroupName, ctx)
+	if err != nil {
+		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to resolve knobs to apply: %w", err)}
+	}
+
+	containsRestartParameterChange := slices.ContainsFunc(configs, configInfo.isChangedRestartParameter)
+	applyMethodIsRestart := proposedConfig.KnobApplication == agent.KnobApplicationRestart
+	if applyMethodIsRestart && !agent.IsRestartAllowed() {
+		return &agent.RestartNotAllowedError{
+			Message: "restart is not allowed in the agent",
+		}
+	}
+	if containsRestartParameterChange && !applyMethodIsRestart {
+		return &agent.ConfigApplyError{
+			Err: errors.New("a parameter requires a restart to take effect, but the apply method is reload"),
+		}
+	}
+	changedConfigs := []configInfo{}
+	for _, c := range configs {
+		if c.changed() {
+			changedConfigs = append(changedConfigs, c)
+		}
+	}
+
+	needsRestartFromBefore := applyMethodIsRestart &&
+		adapter.State.DBInfo.ParameterGroupStatus == "pending-reboot"
+
+	if len(changedConfigs) == 0 && !needsRestartFromBefore {
+		adapter.Logger().Info("Parameter group already holds the requested values. Exiting apply.")
+		return nil
+	}
+	adapter.Logger().Infof("Applying %d changed parameters to parameter group %q", len(changedConfigs), adapter.State.DBInfo.ParameterGroupName)
+
+	err = ApplyConfig(
+		changedConfigs,
 		&adapter.AWSClients,
 		adapter.State.DBInfo.ParameterGroupName,
 		adapter.Config.RDSDatabaseIdentifier,
+		containsRestartParameterChange || needsRestartFromBefore,
 		adapter.Logger(),
 		ctx,
 	)
 	if err != nil {
-		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to apply config: %w", err)}
+		return asApplyConfigError(err)
 	}
 
-	// TODO(eddie): validate if this below comment is the case or
-	// we were not waiting properly for parameter group changes
+	// RDS reports the instance available well before PostgreSQL accepts
+	// connections, so both waits are needed, in this order.
+	if err := waitInstanceServing(
+		&adapter.AWSClients, adapter.Config.RDSDatabaseIdentifier, adapter.Logger(), ctx,
+	); err != nil {
+		return &agent.ConfigApplyError{Err: fmt.Errorf("error waiting for instance to come back online: %w", err)}
+	}
 
-	// RDS has a race-condition/caching issue where the first fetches of config
-	// after a restart are giving back the old config.
-	// This results in re-applying the old recommended config.
-	// To avoid this, we give a buffer of last applied config of 1 minute.
-
-	// Instance is online, we validate that PostgreSQL is back online also
 	adapter.Logger().Info("Waiting for PostgreSQL to come back online...")
-	err = pg.WaitPostgresReady(adapter.PGDriver)
+	err = pg.WaitPostgresReady(adapter.PGDriver, ctx)
 	if err != nil {
 		return &agent.ConfigApplyError{Err: fmt.Errorf("error waiting for PostgreSQL to come back online: %w", err)}
 	}
 
-	adapter.State.LastAppliedConfig = time.Now()
+	// Check that the values get applied in PostgreSQL.
+	if applyErr := adapter.verifyAppliedSettings(ctx, configs); applyErr != nil {
+		return applyErr
+	}
+
 	return nil
+}
+
+// Timing for the pg_settings read-back. RDS propagates an immediate change
+// within about a minute; past that it is not coming.
+const (
+	pgVerifyTimeout  = 90 * time.Second
+	pgVerifyInterval = 5 * time.Second
+	// For the one-off group read on the failure path.
+	paramGroupReadTimeout = 30 * time.Second
+)
+
+// verifyAppliedSettings polls pg_settings until the server reports every value
+// written, and classifies the failure otherwise.
+func (adapter *RDSAdapter) verifyAppliedSettings(
+	ctx context.Context,
+	targets []configInfo,
+) agent.ApplyConfigError {
+	if len(targets) == 0 {
+		return nil
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, pgVerifyTimeout)
+	defer cancel()
+
+	adapter.Logger().Info("Verifying the new configuration is live in PostgreSQL...")
+
+	names := getConfigNames(targets)
+	diff := settingsDiff{Missing: names}
+	for {
+		rows, queryErr := queries.QueryPgSettings(adapter.PGDriver, waitCtx)
+		if queryErr != nil {
+			adapter.Logger().Warnf("Could not read pg_settings while verifying the apply: %v", queryErr)
+		} else {
+			diff = diffPGSettings(targets, rows)
+			if len(diff.Missing) > 0 {
+				return &agent.ConfigApplyError{Err: fmt.Errorf(
+					"cannot verify apply: %s unknown to this PostgreSQL server",
+					strings.Join(diff.Missing, ", "),
+				)}
+			}
+			if len(diff.Mismatched) == 0 {
+				adapter.Logger().Infof("Configuration verified live for %s", strings.Join(names, ", "))
+				return nil
+			}
+			adapter.Logger().Infof("Waiting for PostgreSQL to report the new configuration: %s", diff)
+		}
+
+		select {
+		case <-waitCtx.Done():
+			return &agent.ConfigApplyError{Err: fmt.Errorf(
+				"timed out after %s waiting for PostgreSQL to report the new configuration (%s); %s",
+				pgVerifyTimeout, diff, adapter.parameterGroupDiagnosis(ctx, targets),
+			)}
+		case <-time.After(pgVerifyInterval):
+		}
+	}
+}
+
+// parameterGroupDiagnosis says whether the group holds the requested values,
+// separating a write that never stuck from one the engine never loaded.
+// - Failure path only -
+func (adapter *RDSAdapter) parameterGroupDiagnosis(ctx context.Context, targets []configInfo) string {
+	name := adapter.State.DBInfo.ParameterGroupName
+
+	ctx, cancel := context.WithTimeout(ctx, paramGroupReadTimeout)
+	defer cancel()
+
+	actual, err := getRDSParameterInfo(&adapter.AWSClients, name, getConfigNames(targets), ctx)
+	if err != nil {
+		return fmt.Sprintf("could not read parameter group %q back to narrow it down: %v", name, err)
+	}
+	if mismatches := groupValueMismatches(targets, actual); len(mismatches) > 0 {
+		return fmt.Sprintf(
+			"parameter group %q does not hold the applied config values:\n%s",
+			name, strings.Join(mismatches, "\n"),
+		)
+	}
+	return fmt.Sprintf(
+		"parameter group %q does hold the requested values, but they are not live in the database.",
+		name,
+	)
+}
+
+// asApplyConfigError keeps a typed ApplyConfigError from anywhere in the chain,
+// so the platform gets its wire type. pg.ValidateRestartPolicy returns
+// *agent.RestartNotAllowedError, which wrapping would downgrade.
+func asApplyConfigError(err error) agent.ApplyConfigError {
+	var typed agent.ApplyConfigError
+	if errors.As(err, &typed) {
+		return typed
+	}
+	return &agent.ConfigApplyError{Err: fmt.Errorf("failed to apply config: %w", err)}
 }
 
 func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {

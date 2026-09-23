@@ -300,7 +300,7 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 
 		// Wait for PostgreSQL to accept connections
 		logger.Info("Waiting for PostgreSQL to accept connections...")
-		err = pg.WaitPostgresReady(adapter.PGDriver)
+		err = pg.WaitPostgresReady(adapter.PGDriver, ctx)
 		if err != nil {
 			return &agent.ConfigApplyError{Err: fmt.Errorf("PostgreSQL did not become ready after restart: %w", err)}
 		}
@@ -311,7 +311,7 @@ func (adapter *CNPGAdapter) ApplyConfig(ctx context.Context, proposedConfig *age
 
 		// Wait for PostgreSQL to accept connections and verify health
 		logger.Info("Waiting for PostgreSQL to accept connections after reload...")
-		err = pg.WaitPostgresReady(adapter.PGDriver)
+		err = pg.WaitPostgresReady(adapter.PGDriver, ctx)
 		if err != nil {
 			return &agent.ConfigApplyError{Err: fmt.Errorf("PostgreSQL did not become ready after config reload: %w", err)}
 		}
