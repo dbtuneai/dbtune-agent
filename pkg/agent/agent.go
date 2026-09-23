@@ -53,6 +53,10 @@ type PGConfigRow struct {
 	Unit    interface{} `json:"unit"`
 	Vartype string      `json:"vartype"`
 	Context string      `json:"context"`
+	// Bounds verbatim from pg_settings, in the unit named by Unit. NULL for
+	// bool/string/enum vartypes; the backend owns parsing and conversion.
+	MinVal *string `json:"min_val,omitempty"`
+	MaxVal *string `json:"max_val,omitempty"`
 }
 
 // GetSettingValue returns the setting value in its appropriate type and format

@@ -1,6 +1,7 @@
 package pg
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/dbtuneai/agent/pkg/agent"
@@ -16,7 +17,10 @@ func textPtr(s string) *queries.Text {
 
 func TestSettingsToConfigRows_IntegerVartype(t *testing.T) {
 	settings := []queries.PgSettingsRow{
-		{Name: "work_mem", Setting: "4096", Vartype: "integer", Context: "user", Unit: textPtr("kB")},
+		{
+			Name: "work_mem", Setting: "4096", Vartype: "integer", Context: "user",
+			Unit: textPtr("kB"), MinVal: textPtr("64"), MaxVal: textPtr("2147483647"),
+		},
 	}
 	got := settingsToConfigRows(settings)
 	require.Len(t, got, 1)
@@ -27,6 +31,12 @@ func TestSettingsToConfigRows_IntegerVartype(t *testing.T) {
 	assert.Equal(t, "kB", row.Unit)
 	assert.Equal(t, "integer", row.Vartype)
 	assert.Equal(t, "user", row.Context)
+
+	// Bounds relayed verbatim as strings, in the unit named by Unit.
+	require.NotNil(t, row.MinVal)
+	require.NotNil(t, row.MaxVal)
+	assert.Equal(t, "64", *row.MinVal)
+	assert.Equal(t, "2147483647", *row.MaxVal)
 }
 
 func TestSettingsToConfigRows_RealVartype(t *testing.T) {
@@ -51,6 +61,8 @@ func TestSettingsToConfigRows_StringVartype(t *testing.T) {
 	row := got[0].(agent.PGConfigRow)
 	assert.Equal(t, "UTC", row.Setting) // no InferNumericType for string vartype
 	assert.Equal(t, "string", row.Vartype)
+	assert.Nil(t, row.MinVal) // string vartypes have no bounds in pg_settings
+	assert.Nil(t, row.MaxVal)
 }
 
 func TestSettingsToConfigRows_EnumVartype(t *testing.T) {
@@ -70,6 +82,8 @@ func TestSettingsToConfigRows_BoolVartype(t *testing.T) {
 	row := got[0].(agent.PGConfigRow)
 	// "on" is not a numeric string, so it stays as string
 	assert.Equal(t, "on", row.Setting)
+	assert.Nil(t, row.MinVal) // bool vartypes have no bounds in pg_settings
+	assert.Nil(t, row.MaxVal)
 }
 
 func TestSettingsToConfigRows_NullUnit(t *testing.T) {
@@ -136,4 +150,42 @@ func TestPGMajorVersion(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestSettingsToConfigRows_RealBoundsNotCoerced(t *testing.T) {
+	settings := []queries.PgSettingsRow{
+		{
+			Name: "random_page_cost", Setting: "4", Vartype: "real", Context: "user",
+			MinVal: textPtr("0"), MaxVal: textPtr("1.79769e+308"),
+		},
+	}
+	got := settingsToConfigRows(settings)
+	row := got[0].(agent.PGConfigRow)
+
+	// Unlike Setting, bounds are never routed through InferNumericType.
+	require.NotNil(t, row.MinVal)
+	require.NotNil(t, row.MaxVal)
+	assert.Equal(t, "0", *row.MinVal)
+	assert.Equal(t, "1.79769e+308", *row.MaxVal)
+}
+
+func TestSettingsToConfigRows_BoundsOmittedFromJSONWhenNull(t *testing.T) {
+	settings := []queries.PgSettingsRow{
+		{Name: "jit", Setting: "on", Vartype: "bool", Context: "user"},
+		{
+			Name: "max_wal_size", Setting: "1024", Vartype: "integer", Context: "sighup",
+			Unit: textPtr("MB"), MinVal: textPtr("2"), MaxVal: textPtr("2147483647"),
+		},
+	}
+	got := settingsToConfigRows(settings)
+
+	boolJSON, err := json.Marshal(got[0])
+	require.NoError(t, err)
+	assert.NotContains(t, string(boolJSON), "min_val")
+	assert.NotContains(t, string(boolJSON), "max_val")
+
+	intJSON, err := json.Marshal(got[1])
+	require.NoError(t, err)
+	assert.Contains(t, string(intJSON), `"min_val":"2"`)
+	assert.Contains(t, string(intJSON), `"max_val":"2147483647"`)
 }
