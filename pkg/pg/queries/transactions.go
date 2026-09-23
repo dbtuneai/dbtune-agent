@@ -81,14 +81,22 @@ func TransactionCommitsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMa
 				NumTransactions:         numTransactions,
 			}
 
-			if !prev.timestamp.IsZero() && numTransactions >= prev.count {
+			// numTransactions can dip briefly: workers flush their commits on exit,
+			// but the leader only flushes parallel_workers_launched once it goes
+			// idle. We bound TPS from below by 0 but pay back the negatives as
+			// soon as possible to keep it honest over time.
+			//
+			// if we don't have previous data, we need to update prev.count
+			if prev.timestamp.IsZero() {
+				prev.count = numTransactions
+			} else if numTransactions > prev.count {
 				duration := collectedAt.Sub(prev.timestamp).Seconds()
 				if duration > 0 {
 					row.TPS = float64(numTransactions-prev.count) / duration
 				}
+				// only update prev.count if it would increase it
+				prev.count = numTransactions
 			}
-
-			prev.count = numTransactions
 			prev.timestamp = collectedAt
 
 			data, err := json.Marshal(&Payload[TransactionCommitsRow]{
