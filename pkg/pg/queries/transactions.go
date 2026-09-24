@@ -20,16 +20,33 @@ const (
 	TransactionCommitsInterval = 5 * time.Second
 )
 
-const transactionCommitsQuery = `
-SELECT SUM(xact_commit)::bigint AS server_xact_commits
+// parallelWorkerCommitsPerWorker is how much every launched parallel worker
+// inflates xact_commit.
+const parallelWorkerCommitsPerWorker = 2
+
+const transactionCommitsQueryTemplate = `
+SELECT SUM(xact_commit)::bigint AS server_xact_commits,
+       %s AS server_parallel_workers_launched
 FROM pg_stat_database`
 
-type TransactionCommitsRow struct {
-	XactCommit int64   `json:"xact_commit"`
-	TPS        float64 `json:"tps,omitempty"`
+func transactionCommitsQuery(pgMajorVersion int) string {
+	parallelWorkersLaunched := "NULL::bigint"
+	if pgMajorVersion >= 18 {
+		parallelWorkersLaunched = "SUM(parallel_workers_launched)::bigint"
+	}
+	return fmt.Sprintf(transactionCommitsQueryTemplate, parallelWorkersLaunched)
 }
 
-func TransactionCommitsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
+type TransactionCommitsRow struct {
+	XactCommit              int64   `json:"xact_commit"`
+	ParallelWorkersLaunched *int64  `json:"parallel_workers_launched"`
+	NumTransactions         int64   `json:"num_transactions"`
+	TPS                     float64 `json:"tps,omitempty"`
+}
+
+func TransactionCommitsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
+	query := transactionCommitsQuery(pgMajorVersion)
+
 	var prev struct {
 		count     int64
 		timestamp time.Time
@@ -45,21 +62,39 @@ func TransactionCommitsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) Cata
 			}
 			collectedAt := time.Now().UTC()
 			var xactCommit int64
-			err = utils.QueryRowWithPrefix(pool, ctx, transactionCommitsQuery).Scan(&xactCommit)
+			var parallelWorkersLaunched *int64
+			err = utils.QueryRowWithPrefix(pool, ctx, query).Scan(&xactCommit, &parallelWorkersLaunched)
 			if err != nil {
 				return nil, fmt.Errorf("failed to query %s: %w", TransactionCommitsName, err)
 			}
 
-			row := TransactionCommitsRow{XactCommit: xactCommit}
-
-			if !prev.timestamp.IsZero() && xactCommit >= prev.count {
-				duration := collectedAt.Sub(prev.timestamp).Seconds()
-				if duration > 0 {
-					row.TPS = float64(xactCommit-prev.count) / duration
-				}
+			numTransactions := xactCommit
+			if parallelWorkersLaunched != nil {
+				numTransactions -= parallelWorkerCommitsPerWorker * *parallelWorkersLaunched
 			}
 
-			prev.count = xactCommit
+			row := TransactionCommitsRow{
+				XactCommit:              xactCommit,
+				ParallelWorkersLaunched: parallelWorkersLaunched,
+				NumTransactions:         numTransactions,
+			}
+
+			// numTransactions can dip briefly: workers flush their commits on exit,
+			// but the leader only flushes parallel_workers_launched once it goes
+			// idle. We bound TPS from below by 0 but pay back the negatives as
+			// soon as possible to keep it honest over time.
+			//
+			// if we don't have previous data, we need to update prev.count
+			if prev.timestamp.IsZero() {
+				prev.count = numTransactions
+			} else if numTransactions > prev.count {
+				duration := collectedAt.Sub(prev.timestamp).Seconds()
+				if duration > 0 {
+					row.TPS = float64(numTransactions-prev.count) / duration
+				}
+				// only update prev.count if it would increase it
+				prev.count = numTransactions
+			}
 			prev.timestamp = collectedAt
 
 			data, err := json.Marshal(&Payload[TransactionCommitsRow]{

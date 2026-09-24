@@ -73,7 +73,7 @@ func BuildCatalogCollectors(
 		{queries.PgStatWalCollector(pool, prepareCtx, pgMajorVersion), simpleBase(queries.PgStatWalName)},
 		{queries.PgStatWalReceiverCollector(pool, prepareCtx), simpleBase(queries.PgStatWalReceiverName)},
 		{queries.PgStatioUserTablesCollector(pool, prepareCtx), simpleBase(queries.PgStatioUserTablesName)},
-		{queries.TransactionCommitsCollector(pool, prepareCtx), simpleBase(queries.TransactionCommitsName)},
+		{queries.TransactionCommitsCollector(pool, prepareCtx, pgMajorVersion), simpleBase(queries.TransactionCommitsName)},
 		{queries.UptimeMinutesCollector(pool, prepareCtx), simpleBase(queries.UptimeMinutesName)},
 		{queries.WaitEventsCollector(pool, prepareCtx), simpleBase(queries.WaitEventsName)},
 
