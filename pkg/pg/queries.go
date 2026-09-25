@@ -37,17 +37,27 @@ const PGVersionQuery = `
 SELECT version();
 `
 
+var pgVersionRegex = regexp.MustCompile(`PostgreSQL (\d+)(\.\d+)?`)
+
 // Example: 16.4
 func PGVersion(pgPool *pgxpool.Pool) (string, error) {
 	var pgVersion string
-	versionRegex := regexp.MustCompile(`PostgreSQL (\d+\.\d+)`)
 	err := utils.QueryRowWithPrefix(pgPool, context.Background(), PGVersionQuery).Scan(&pgVersion)
 	if err != nil {
 		return "", err
 	}
-	matches := versionRegex.FindStringSubmatch(pgVersion)
+	return ParsePGVersion(pgVersion)
+}
 
-	return matches[1], nil
+// ParsePGVersion extracts "major.minor" from a version() string. Pre-release
+// servers ("PostgreSQL 18beta1", "18rc1", "19devel") have no minor, so only the
+// major is returned for them.
+func ParsePGVersion(versionString string) (string, error) {
+	matches := pgVersionRegex.FindStringSubmatch(versionString)
+	if matches == nil {
+		return "", fmt.Errorf("unrecognized PostgreSQL version string: %q", versionString)
+	}
+	return matches[1] + matches[2], nil
 }
 
 // PGMajorVersion extracts the integer major version from a version string like "16.4".

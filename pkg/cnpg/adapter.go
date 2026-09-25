@@ -466,7 +466,14 @@ func (adapter *CNPGAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatVa
 	// This ensures we get the fresh context created by recovery completion, not the pre-cancelled one
 	dbCtx := adapter.State.GetOperationsContext()
 
-	// Get PostgreSQL version
+	// Re-query the version so a rolling minor upgrade shows up without an agent
+	// restart. On failure keep the last known value; the max_connections query
+	// below handles failover errors.
+	if pgVersion, err := pg.PGVersion(adapter.PGDriver); err == nil {
+		adapter.PGVersion = pgVersion
+	} else {
+		logger.Warnf("Failed to refresh PostgreSQL version, using last known %s: %v", adapter.PGVersion, err)
+	}
 	pgVersionMetric, err := metrics.PGVersion.AsFlatValue(adapter.PGVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PG version metric: %w", err)
