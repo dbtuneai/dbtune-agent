@@ -27,7 +27,7 @@ type DockerContainerAdapter struct {
 	GuardrailSettings guardrails.Config
 	pgConfig          pg.Config
 	PGDriver          *pgxpool.Pool
-	PGVersion         string
+	PGVersion         pg.Version
 }
 
 func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
@@ -135,7 +135,7 @@ func (d *DockerContainerAdapter) GetSystemInfo(ctx context.Context) ([]metrics.F
 	containerInfo := inspectResult.Container
 
 	// Create metrics
-	version, err := metrics.PGVersion.AsFlatValue(pgVersion)
+	version, err := metrics.PGVersion.AsFlatValue(pgVersion.String())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PostgreSQL version metric: %w", err)
 	}

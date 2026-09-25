@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
-	"strings"
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
@@ -32,43 +31,59 @@ func InferNumericType(setting interface{}) interface{} {
 	return s
 }
 
-// PGVersion returns the version of the PostgreSQL instance
+// PGVersionQuery returns the version() string of the PostgreSQL instance
 const PGVersionQuery = `
 SELECT version();
 `
 
-var pgVersionRegex = regexp.MustCompile(`PostgreSQL (\d+)(\.\d+)?`)
+var pgVersionRegex = regexp.MustCompile(`PostgreSQL (\d+)(?:\.(\d+))?`)
 
-// Example: 16.4
-func PGVersion(pgPool *pgxpool.Pool) (string, error) {
+// Version is a parsed PostgreSQL server version. Pre-release servers
+// ("PostgreSQL 18beta1", "18rc1", "19devel") have no minor, so HasMinor is
+// false for them.
+type Version struct {
+	Major    int
+	Minor    int
+	HasMinor bool
+}
+
+// String renders the version as "major.minor", or just "major" when there is
+// no minor. This is the format sent as the pg_version metric.
+func (v Version) String() string {
+	if !v.HasMinor {
+		return strconv.Itoa(v.Major)
+	}
+	return fmt.Sprintf("%d.%d", v.Major, v.Minor)
+}
+
+// PGVersion queries and parses the version of the PostgreSQL instance.
+func PGVersion(pgPool *pgxpool.Pool) (Version, error) {
 	var pgVersion string
 	err := utils.QueryRowWithPrefix(pgPool, context.Background(), PGVersionQuery).Scan(&pgVersion)
 	if err != nil {
-		return "", err
+		return Version{}, err
 	}
 	return ParsePGVersion(pgVersion)
 }
 
-// ParsePGVersion extracts "major.minor" from a version() string. Pre-release
-// servers ("PostgreSQL 18beta1", "18rc1", "19devel") have no minor, so only the
-// major is returned for them.
-func ParsePGVersion(versionString string) (string, error) {
+// ParsePGVersion extracts the major and minor version from a version() string.
+func ParsePGVersion(versionString string) (Version, error) {
 	matches := pgVersionRegex.FindStringSubmatch(versionString)
 	if matches == nil {
-		return "", fmt.Errorf("unrecognized PostgreSQL version string: %q", versionString)
+		return Version{}, fmt.Errorf("unrecognized PostgreSQL version string: %q", versionString)
 	}
-	return matches[1] + matches[2], nil
-}
-
-// PGMajorVersion extracts the integer major version from a version string like "16.4".
-func PGMajorVersion(version string) (int, error) {
-	parts := strings.Split(version, ".")
-	if len(parts) == 0 || parts[0] == "" {
-		return 0, fmt.Errorf("empty version string")
-	}
-	v, err := strconv.Atoi(parts[0])
+	// The regex only matches digits, so Atoi can only fail on overflow.
+	major, err := strconv.Atoi(matches[1])
 	if err != nil {
-		return 0, fmt.Errorf("parse major version from %q: %w", version, err)
+		return Version{}, fmt.Errorf("parse major version from %q: %w", versionString, err)
+	}
+	v := Version{Major: major}
+	if matches[2] != "" {
+		v.Minor, err = strconv.Atoi(matches[2])
+		if err != nil {
+			return Version{}, fmt.Errorf("parse minor version from %q: %w", versionString, err)
+		}
+		v.HasMinor = true
 	}
 	return v, nil
 }
