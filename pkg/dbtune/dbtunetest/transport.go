@@ -9,10 +9,12 @@ package dbtunetest
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"testing"
+	"time"
 )
 
 const contentTypeJSON = "application/json"
@@ -172,38 +174,57 @@ func postHeartbeat(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-func requireGzipJSON(req *http.Request) *http.Response {
+func requireGzipJSON(req *http.Request) ([]byte, *http.Response) {
 	if req.Header.Get("Content-Type") != contentTypeJSON {
-		return &http.Response{
+		return nil, &http.Response{
 			Status:     "415 Unsupported Media Type",
 			StatusCode: http.StatusUnsupportedMediaType,
 			Body:       io.NopCloser(bytes.NewBufferString(fmt.Sprintf("Expected Content-Type to be application/json, got %s", req.Header.Get("Content-Type")))),
 		}
 	}
 	if req.Header.Get("Content-Encoding") != "gzip" {
-		return &http.Response{
+		return nil, &http.Response{
 			Status:     "400 Bad Request",
 			StatusCode: http.StatusBadRequest,
 			Body:       io.NopCloser(bytes.NewBufferString(fmt.Sprintf("Expected Content-Encoding to be gzip, got %q", req.Header.Get("Content-Encoding")))),
 		}
 	}
+	var body []byte
 	gr, err := gzip.NewReader(req.Body)
 	if err == nil {
-		_, err = io.ReadAll(gr)
+		body, err = io.ReadAll(gr)
 	}
 	if err != nil {
-		return &http.Response{
+		return nil, &http.Response{
 			Status:     "400 Bad Request",
 			StatusCode: http.StatusBadRequest,
 			Body:       io.NopCloser(bytes.NewBufferString(fmt.Sprintf("Expected body to be valid gzip: %s", err))),
 		}
 	}
-	return nil
+	return body, nil
 }
 
 func postActiveConfig(req *http.Request) (*http.Response, error) {
-	if resp := requireGzipJSON(req); resp != nil {
+	body, resp := requireGzipJSON(req)
+	if resp != nil {
 		return resp, nil
+	}
+	var payload struct {
+		ObservedAt string `json:"observed_at"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return &http.Response{
+			Status:     "400 Bad Request",
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(bytes.NewBufferString(fmt.Sprintf("Expected body to be valid JSON: %s", err))),
+		}, nil
+	}
+	if _, err := time.Parse(time.RFC3339Nano, payload.ObservedAt); err != nil {
+		return &http.Response{
+			Status:     "400 Bad Request",
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(bytes.NewBufferString(fmt.Sprintf("Expected observed_at to be RFC3339: %s", err))),
+		}, nil
 	}
 	if !req.URL.Query().Has("uuid") {
 		return &http.Response{
