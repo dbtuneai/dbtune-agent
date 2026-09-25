@@ -137,3 +137,31 @@ func TestPGMajorVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePGVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"release", "PostgreSQL 16.4 on x86_64-pc-linux-gnu, compiled by gcc", "16.4", false},
+		{"rds", "PostgreSQL 12.22 on aarch64-unknown-linux-gnu, compiled by gcc (GCC) 7.3.1, 64-bit", "12.22", false},
+		{"beta", "PostgreSQL 18beta1 on x86_64-pc-linux-gnu", "18", false},
+		{"rc", "PostgreSQL 17rc1 on x86_64-pc-linux-gnu", "17", false},
+		{"devel", "PostgreSQL 19devel on x86_64-pc-linux-gnu", "19", false},
+		{"unrecognized", "not postgres", "", true},
+		{"empty", "", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParsePGVersion(tt.in)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
