@@ -26,7 +26,7 @@ type RDSAdapter struct {
 	State             State
 	AWSClients        AWSClients
 	PGDriver          *pgxpool.Pool
-	PGVersion         string
+	PGVersion         pg.Version
 }
 
 func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
@@ -161,7 +161,7 @@ func (adapter *RDSAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatVal
 		return nil, err
 	}
 
-	version, err := metrics.PGVersion.AsFlatValue(pgVersion)
+	version, err := metrics.PGVersion.AsFlatValue(pgVersion.String())
 	if err != nil {
 		adapter.Logger().Errorf("Failed to create PostgreSQL version metric: %v", err)
 		return nil, err

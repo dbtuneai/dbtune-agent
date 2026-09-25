@@ -32,7 +32,7 @@ type PatroniAdapter struct {
 	PGDriver        *pgxpool.Pool
 	GuardrailConfig guardrails.Config
 	pgConfig        pg.Config
-	PGVersion       string
+	PGVersion       pg.Version
 	HTTPClient      *http.Client
 	State           *State
 }
@@ -727,7 +727,7 @@ func (adapter *PatroniAdapter) GetSystemInfo(ctx context.Context) ([]metrics.Fla
 	if err != nil {
 		return nil, err
 	}
-	version, _ := metrics.PGVersion.AsFlatValue(pgVersion)
+	version, _ := metrics.PGVersion.AsFlatValue(pgVersion.String())
 	hostOS, _ := metrics.NodeOSInfo.AsFlatValue(hostInfo.OS)
 	platform, _ := metrics.NodeOSPlatform.AsFlatValue(hostInfo.Platform)
 	platformVersion, _ := metrics.NodeOSPlatformVer.AsFlatValue(hostInfo.PlatformVersion)

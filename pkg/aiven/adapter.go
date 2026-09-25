@@ -32,7 +32,7 @@ type AivenPostgreSQLAdapter struct {
 	GuardrailSettings guardrails.Config
 	pgConfig          pg.Config
 	PGDriver          *pgPool.Pool
-	PGVersion         string
+	PGVersion         pg.Version
 }
 
 // CreateAivenPostgreSQLAdapter creates a new Aiven PostgreSQL adapter
@@ -169,7 +169,7 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]met
 		adapter.Logger().Errorf("Error creating number of CPUs metric: %v", err)
 		return nil, err
 	}
-	version, err := metrics.PGVersion.AsFlatValue(pgVersion)
+	version, err := metrics.PGVersion.AsFlatValue(pgVersion.String())
 	if err != nil {
 		adapter.Logger().Errorf("Error creating PostgreSQL version metric: %v", err)
 		return nil, err
