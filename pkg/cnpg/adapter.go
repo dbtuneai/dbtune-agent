@@ -442,6 +442,37 @@ func (adapter *CNPGAdapter) GetMetrics(ctx context.Context) ([]metrics.FlatValue
 	return adapter.CommonAgent.GetMetrics(ctx)
 }
 
+// failoverErrorFromQuery returns a FailoverDetectedError if a GetSystemInfo
+// query failed because of a failover, or nil for any other error.
+func (adapter *CNPGAdapter) failoverErrorFromQuery(dbCtx context.Context, err error) error {
+	logger := adapter.Logger()
+
+	// Check if context was cancelled (failover during operation)
+	if dbCtx.Err() == context.Canceled {
+		logger.Infof("[FAILOVER_RECOVERY] GetSystemInfo aborted due to context cancellation")
+		return &FailoverDetectedError{
+			OldPrimary: adapter.State.GetLastKnownPrimary(),
+			NewPrimary: "(context cancelled)",
+			Message:    "operation cancelled due to failover",
+		}
+	}
+
+	// Check if error indicates PostgreSQL failover (before CNPG detects it)
+	errStr := strings.ToLower(err.Error())
+	if strings.Contains(errStr, "database system is shutting down") ||
+		strings.Contains(errStr, "database system is starting up") ||
+		strings.Contains(errStr, "cannot execute") && strings.Contains(errStr, "recovery") {
+		logger.Warnf("[FAILOVER_RECOVERY] PostgreSQL failover detected in GetSystemInfo: %v", err)
+		return &FailoverDetectedError{
+			OldPrimary: adapter.State.GetLastKnownPrimary(),
+			NewPrimary: "(PostgreSQL shutting down)",
+			Message:    err.Error(),
+		}
+	}
+
+	return nil
+}
+
 func (adapter *CNPGAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
 	logger := adapter.Logger()
 	var flatValues []metrics.FlatValue
@@ -466,15 +497,15 @@ func (adapter *CNPGAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatVa
 	// This ensures we get the fresh context created by recovery completion, not the pre-cancelled one
 	dbCtx := adapter.State.GetOperationsContext()
 
-	// Re-query the version so a rolling minor upgrade shows up without an agent
-	// restart. On failure keep the last known value; the max_connections query
-	// below handles failover errors.
-	if pgVersion, err := pg.PGVersion(adapter.PGDriver); err == nil {
-		adapter.PGVersion = pgVersion
-	} else {
-		logger.Warnf("Failed to refresh PostgreSQL version, using last known %s: %v", adapter.PGVersion, err)
+	// Get PostgreSQL version (queried each cycle so rolling minor upgrades show up)
+	pgVersion, err := pg.PGVersion(adapter.PGDriver)
+	if err != nil {
+		if failoverErr := adapter.failoverErrorFromQuery(dbCtx, err); failoverErr != nil {
+			return []metrics.FlatValue{}, failoverErr
+		}
+		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
-	pgVersionMetric, err := metrics.PGVersion.AsFlatValue(adapter.PGVersion)
+	pgVersionMetric, err := metrics.PGVersion.AsFlatValue(pgVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PG version metric: %w", err)
 	}
@@ -483,29 +514,9 @@ func (adapter *CNPGAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatVa
 	// Get max_connections from PostgreSQL
 	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
 	if err != nil {
-		// Check if context was cancelled (failover during operation)
-		if dbCtx.Err() == context.Canceled {
-			logger.Infof("[FAILOVER_RECOVERY] GetSystemInfo aborted due to context cancellation")
-			return []metrics.FlatValue{}, &FailoverDetectedError{
-				OldPrimary: adapter.State.GetLastKnownPrimary(),
-				NewPrimary: "(context cancelled)",
-				Message:    "operation cancelled due to failover",
-			}
+		if failoverErr := adapter.failoverErrorFromQuery(dbCtx, err); failoverErr != nil {
+			return []metrics.FlatValue{}, failoverErr
 		}
-
-		// Check if error indicates PostgreSQL failover (before CNPG detects it)
-		errStr := strings.ToLower(err.Error())
-		if strings.Contains(errStr, "database system is shutting down") ||
-			strings.Contains(errStr, "database system is starting up") ||
-			strings.Contains(errStr, "cannot execute") && strings.Contains(errStr, "recovery") {
-			logger.Warnf("[FAILOVER_RECOVERY] PostgreSQL failover detected in GetSystemInfo: %v", err)
-			return []metrics.FlatValue{}, &FailoverDetectedError{
-				OldPrimary: adapter.State.GetLastKnownPrimary(),
-				NewPrimary: "(PostgreSQL shutting down)",
-				Message:    err.Error(),
-			}
-		}
-
 		return nil, fmt.Errorf("failed to get max_connections: %w", err)
 	}
 	maxConnectionsMetric, err := metrics.PGMaxConnections.AsFlatValue(maxConnections)
