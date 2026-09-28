@@ -24,7 +24,7 @@ type DefaultPostgreSQLAdapter struct {
 	pgDriver        *pgPool.Pool
 	pgConfig        pg.Config
 	GuardrailConfig guardrails.Config
-	PGVersion       string
+	PGVersion       pg.Version
 }
 
 func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
@@ -142,7 +142,7 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(_ context.Context) ([]met
 	if err != nil {
 		return nil, err
 	}
-	version, _ := metrics.PGVersion.AsFlatValue(pgVersion)
+	version, _ := metrics.PGVersion.AsFlatValue(pgVersion.String())
 	hostOS, _ := metrics.NodeOSInfo.AsFlatValue(hostInfo.OS)
 	platform, _ := metrics.NodeOSPlatform.AsFlatValue(hostInfo.Platform)
 	platformVersion, _ := metrics.NodeOSPlatformVer.AsFlatValue(hostInfo.PlatformVersion)

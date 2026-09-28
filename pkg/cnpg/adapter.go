@@ -46,7 +46,7 @@ type CNPGAdapter struct {
 	GuardrailSettings guardrails.Config
 	Config            Config
 	PGDriver          *pgxpool.Pool
-	PGVersion         string
+	PGVersion         pg.Version
 	K8sClient         kubernetes.Client
 	State             *State
 }
@@ -505,7 +505,7 @@ func (adapter *CNPGAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatVa
 		}
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
-	pgVersionMetric, err := metrics.PGVersion.AsFlatValue(pgVersion)
+	pgVersionMetric, err := metrics.PGVersion.AsFlatValue(pgVersion.String())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PG version metric: %w", err)
 	}

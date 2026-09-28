@@ -26,7 +26,7 @@ type CloudSQLAdapter struct {
 	CloudSQLAdminClient   *SqlAdminClient
 	GuardrailSettings     *guardrails.Config
 	pgConfig              pg.Config
-	PGVersion             string
+	PGVersion             pg.Version
 }
 
 func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
@@ -184,7 +184,7 @@ func (adapter *CloudSQLAdapter) GetSystemInfo(_ context.Context) ([]metrics.Flat
 		return nil, err
 	}
 
-	version, err := metrics.PGVersion.AsFlatValue(pgVersion)
+	version, err := metrics.PGVersion.AsFlatValue(pgVersion.String())
 	if err != nil {
 		adapter.Logger().Errorf("Error creating PostgreSQL version metric: %v", err)
 		return nil, err

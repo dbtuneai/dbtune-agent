@@ -111,47 +111,22 @@ func TestSettingsToConfigRows_Empty(t *testing.T) {
 	assert.Empty(t, got)
 }
 
-func TestPGMajorVersion(t *testing.T) {
-	tests := []struct {
-		name    string
-		in      string
-		want    int
-		wantErr bool
-	}{
-		{"minor suffix", "16.4", 16, false},
-		{"major only", "17", 17, false},
-		{"three parts", "13.14.2", 13, false},
-		{"empty", "", 0, true},
-		{"non-numeric", "abc", 0, true},
-		{"leading dot", ".16", 0, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := PGMajorVersion(tt.in)
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
-			assert.NoError(t, err)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
 func TestParsePGVersion(t *testing.T) {
 	tests := []struct {
-		name    string
-		in      string
-		want    string
-		wantErr bool
+		name       string
+		in         string
+		want       Version
+		wantString string
+		wantErr    bool
 	}{
-		{"release", "PostgreSQL 16.4 on x86_64-pc-linux-gnu, compiled by gcc", "16.4", false},
-		{"rds", "PostgreSQL 12.22 on aarch64-unknown-linux-gnu, compiled by gcc (GCC) 7.3.1, 64-bit", "12.22", false},
-		{"beta", "PostgreSQL 18beta1 on x86_64-pc-linux-gnu", "18", false},
-		{"rc", "PostgreSQL 17rc1 on x86_64-pc-linux-gnu", "17", false},
-		{"devel", "PostgreSQL 19devel on x86_64-pc-linux-gnu", "19", false},
-		{"unrecognized", "not postgres", "", true},
-		{"empty", "", "", true},
+		{"release", "PostgreSQL 16.4 on x86_64-pc-linux-gnu, compiled by gcc", Version{Major: 16, Minor: 4, HasMinor: true}, "16.4", false},
+		{"rds", "PostgreSQL 12.22 on aarch64-unknown-linux-gnu, compiled by gcc (GCC) 7.3.1, 64-bit", Version{Major: 12, Minor: 22, HasMinor: true}, "12.22", false},
+		{"zero minor", "PostgreSQL 17.0 on x86_64-pc-linux-gnu", Version{Major: 17, Minor: 0, HasMinor: true}, "17.0", false},
+		{"beta", "PostgreSQL 18beta1 on x86_64-pc-linux-gnu", Version{Major: 18}, "18", false},
+		{"rc", "PostgreSQL 17rc1 on x86_64-pc-linux-gnu", Version{Major: 17}, "17", false},
+		{"devel", "PostgreSQL 19devel on x86_64-pc-linux-gnu", Version{Major: 19}, "19", false},
+		{"unrecognized", "not postgres", Version{}, "", true},
+		{"empty", "", Version{}, "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -162,6 +137,7 @@ func TestParsePGVersion(t *testing.T) {
 			}
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.wantString, got.String())
 		})
 	}
 }

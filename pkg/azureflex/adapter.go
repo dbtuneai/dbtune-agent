@@ -29,7 +29,7 @@ type AzureFlexAdapter struct {
 	PGDriver        *pgxpool.Pool
 	GuardrailConfig guardrails.Config
 	pgConfig        pg.Config
-	PGVersion       string
+	PGVersion       pg.Version
 }
 
 func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
@@ -288,7 +288,7 @@ func (adapter *AzureFlexAdapter) GetSystemInfo(ctx context.Context) ([]metrics.F
 		return nil, err
 	}
 
-	version, err := metrics.PGVersion.AsFlatValue(pgVersion)
+	version, err := metrics.PGVersion.AsFlatValue(pgVersion.String())
 	if err != nil {
 		return nil, fmt.Errorf("Failed to convert version: %w", err)
 	}
