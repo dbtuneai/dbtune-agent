@@ -174,7 +174,7 @@ type AgentLooper interface {
 	SendSystemInfo(ctx context.Context, systemInfo []metrics.FlatValue) error
 
 	GetActiveConfig(ctx context.Context) (ConfigArraySchema, error)
-	SendActiveConfig(ctx context.Context, config ConfigArraySchema) error
+	SendActiveConfig(ctx context.Context, config ConfigArraySchema, observedAt time.Time) error
 	GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error)
 
 	// ApplyConfig applies the configuration to the PostgresSQL server
@@ -739,17 +739,22 @@ func (a *CommonAgent) SendSystemInfo(ctx context.Context, systemInfo []metrics.F
 	return nil
 }
 
-func (a *CommonAgent) SendActiveConfig(ctx context.Context, config ConfigArraySchema) error {
+func (a *CommonAgent) SendActiveConfig(ctx context.Context, config ConfigArraySchema, observedAt time.Time) error {
 	a.Logger().Println("Sending active configuration to server")
 
 	type Payload struct {
-		Config ConfigArraySchema `json:"config"`
-		Hash   string            `json:"hash"`
+		Config     ConfigArraySchema `json:"config"`
+		Hash       string            `json:"hash"`
+		ObservedAt string            `json:"observed_at"`
 	}
 
 	hash, _ := metrics.HashJSON(config)
 
-	jsonData, err := json.Marshal(Payload{Config: config, Hash: hash})
+	jsonData, err := json.Marshal(Payload{
+		Config:     config,
+		Hash:       hash,
+		ObservedAt: observedAt.UTC().Format(time.RFC3339Nano),
+	})
 	if err != nil {
 		return err
 	}

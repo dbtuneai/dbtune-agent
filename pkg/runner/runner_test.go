@@ -63,8 +63,8 @@ func (m *MockAgentLooper) GetActiveConfig(ctx context.Context) (agent.ConfigArra
 	return args.Get(0).(agent.ConfigArraySchema), args.Error(1)
 }
 
-func (m *MockAgentLooper) SendActiveConfig(ctx context.Context, config agent.ConfigArraySchema) error {
-	args := m.Called(ctx, config)
+func (m *MockAgentLooper) SendActiveConfig(ctx context.Context, config agent.ConfigArraySchema, observedAt time.Time) error {
+	args := m.Called(ctx, config, observedAt)
 	return args.Error(0)
 }
 
@@ -241,7 +241,7 @@ func TestRunner(t *testing.T) {
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
-	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
 	mockAgent.expectNoCatalogCollectors()
@@ -312,7 +312,7 @@ func TestRunnerWhenGetProposedConfigReturnsAConfigThenApplyConfigShouldBeCalled(
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
 	mockAgent.expectNoCatalogCollectors()
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
-	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(mockRecommendation, nil)
 	mockAgent.On("ApplyConfig", mock.Anything, mockRecommendation).Return(nil)
 
@@ -347,7 +347,7 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
 	mockAgent.expectNoCatalogCollectors()
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
-	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 
 	// Run the Runner in a goroutine with a timeout
@@ -410,7 +410,7 @@ func TestRunnerApplyConfigFailure_SendsErrorAndActiveConfig(t *testing.T) {
 				return p.ErrorType == tc.expectedErrorType &&
 					strings.HasPrefix(p.ErrorMessage, "Failed to apply configuration: ")
 			})).Return(nil)
-			mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+			mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 			defer cancel()
@@ -421,7 +421,7 @@ func TestRunnerApplyConfigFailure_SendsErrorAndActiveConfig(t *testing.T) {
 			mockAgent.AssertCalled(t, "SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
 				return p.ErrorType == tc.expectedErrorType
 			}))
-			mockAgent.AssertCalled(t, "SendActiveConfig", mock.Anything, mock.Anything)
+			mockAgent.AssertCalled(t, "SendActiveConfig", mock.Anything, mock.Anything, mock.Anything)
 		})
 	}
 }
@@ -534,7 +534,7 @@ func TestRunnerCatalogLoop(t *testing.T) {
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
-	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
 	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{okCollector, errCollector})
@@ -575,7 +575,7 @@ func TestRunnerCatalogLoop_NilDataSkipsSend(t *testing.T) {
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
-	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
 	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{nilCollector})
@@ -603,7 +603,7 @@ func setupMinimalAgent(t *testing.T) (*MockAgentLooper, *logrus.Logger) {
 	m.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	m.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
 	m.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
-	m.On("SendActiveConfig", mock.Anything, mock.Anything).Return(nil)
+	m.On("SendActiveConfig", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	m.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 	m.On("Guardrails", mock.Anything).Return(nil)
 	return m, logger

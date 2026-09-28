@@ -237,7 +237,7 @@ func TestCommonAgent_SendActiveConfig_Succeeds(t *testing.T) {
 	agent := CreateCommonAgentForTests(transport)
 	config := ConfigArraySchema{}
 
-	err := agent.SendActiveConfig(context.Background(), config)
+	err := agent.SendActiveConfig(context.Background(), config, time.Now())
 	assert.NoError(t, err)
 
 	transport.ActionWasCalled(t, "/api/v1/agent/configurations", http.MethodPost)
