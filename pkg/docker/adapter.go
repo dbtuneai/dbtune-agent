@@ -152,18 +152,7 @@ func (d *DockerContainerAdapter) GetSystemInfo(ctx context.Context) ([]metrics.F
 	}
 
 	// CPU info
-	var cpuCount float64
-	switch {
-	case containerInfo.HostConfig.NanoCPUs > 0:
-		// Convert from nano CPUs to actual CPU count
-		cpuCount = float64(containerInfo.HostConfig.NanoCPUs) / 1e9
-	case containerInfo.HostConfig.CPUQuota > 0 && containerInfo.HostConfig.CPUPeriod > 0:
-		// Convert from quota/period to CPU count
-		cpuCount = float64(containerInfo.HostConfig.CPUQuota) / float64(containerInfo.HostConfig.CPUPeriod)
-	default:
-		// If no limits set, use the number of CPUs available to the container
-		cpuCount = float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
-	}
+	cpuCount := CalculateDockerCPUCount(containerInfo.HostConfig, statsJSON.CPUStats)
 	cpuMetric, err := metrics.NodeCPUCount.AsFlatValue(max(int64(cpuCount), 1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CPU count metric: %w", err)
