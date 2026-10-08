@@ -15,8 +15,13 @@ import (
 // DockerHardwareInfo collects hardware metrics from a Docker container using the Docker API
 func DockerHardwareInfo(dockerClient *client.Client, containerName string) func(ctx context.Context, state *agent.MetricsState) error {
 	return func(ctx context.Context, state *agent.MetricsState) error {
-		// Get container stats
-		stats, err := dockerClient.ContainerStats(ctx, containerName, client.ContainerStatsOptions{Stream: false})
+		// Get container stats. IncludePreviousSample makes the daemon take two
+		// samples one second apart; without it PreCPUStats is empty and the CPU
+		// percentage becomes a cumulative average since the container started.
+		stats, err := dockerClient.ContainerStats(ctx, containerName, client.ContainerStatsOptions{
+			Stream:                false,
+			IncludePreviousSample: true,
+		})
 		if err != nil {
 			return err
 		}
