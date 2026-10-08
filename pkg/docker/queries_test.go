@@ -66,18 +66,21 @@ func TestCalculateDockerCPUCount(t *testing.T) {
 }
 
 func TestCountCpuset(t *testing.T) {
-	tests := map[string]int{
-		"":            0,
-		"0":           1,
-		"0-3":         4,
-		"0-3,8,10-11": 7,
-		" 0, 2 ":      2,
-		"3-1":         0,
-		"a-b":         0,
+	tests := []struct {
+		in   string
+		want int
+	}{
+		{"", 0},
+		{"0", 1},
+		{"0-3", 4},
+		{"0-3,8,10-11", 7},
+		{" 0, 2 ", 2},
+		{"3-1", 0},
+		{"a-b", 0},
 	}
-	for in, want := range tests {
-		if got := countCpuset(in); got != want {
-			t.Errorf("countCpuset(%q) = %d, want %d", in, got, want)
+	for _, tt := range tests {
+		if got := countCpuset(tt.in); got != tt.want {
+			t.Errorf("countCpuset(%q) = %d, want %d", tt.in, got, tt.want)
 		}
 	}
 }
