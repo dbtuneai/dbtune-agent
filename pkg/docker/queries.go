@@ -25,34 +25,37 @@ func CalculateDockerCPUPercent(previousCPU, previousSystem uint64, v *container.
 	return cpuPercent
 }
 
-// CalculateDockerCPUCount returns the number of CPUs the container can use.
-// An explicit --cpus or quota/period limit wins; otherwise it falls back to the
-// CPUs the container can see, honouring --cpuset-cpus. PercpuUsage is empty on
-// cgroup v2, so OnlineCPUs is preferred to count available CPUs.
+// CalculateDockerCPUCount returns the number of CPUs the container can use:
+// the CPUs it can see, lowered by any --cpus, quota/period or --cpuset-cpus
+// limit. PercpuUsage is empty on cgroup v2, so OnlineCPUs is preferred to count
+// available CPUs.
 func CalculateDockerCPUCount(hostConfig *container.HostConfig, cpuStats container.CPUStats) float64 {
-	available := float64(cpuStats.OnlineCPUs)
-	if available == 0 {
-		available = float64(len(cpuStats.CPUUsage.PercpuUsage))
+	cpus := float64(cpuStats.OnlineCPUs)
+	if cpus == 0 {
+		cpus = float64(len(cpuStats.CPUUsage.PercpuUsage))
 	}
-	if hostConfig != nil {
-		if n := countCpuset(hostConfig.CpusetCpus); n > 0 && (available == 0 || float64(n) < available) {
-			available = float64(n)
-		}
+	if hostConfig == nil {
+		return cpus
 	}
 
-	var limit float64
+	// --cpus and --cpu-quota/--cpu-period are mutually exclusive
 	switch {
-	case hostConfig == nil:
 	case hostConfig.NanoCPUs > 0:
-		limit = float64(hostConfig.NanoCPUs) / 1e9
+		cpus = applyCPULimit(cpus, float64(hostConfig.NanoCPUs)/1e9)
 	case hostConfig.CPUQuota > 0 && hostConfig.CPUPeriod > 0:
-		limit = float64(hostConfig.CPUQuota) / float64(hostConfig.CPUPeriod)
+		cpus = applyCPULimit(cpus, float64(hostConfig.CPUQuota)/float64(hostConfig.CPUPeriod))
 	}
 
-	if limit > 0 && (available == 0 || limit < available) {
+	// --cpuset-cpus can restrict further
+	return applyCPULimit(cpus, float64(countCpuset(hostConfig.CpusetCpus)))
+}
+
+// applyCPULimit lowers cpus to limit, treating 0 on either side as unknown.
+func applyCPULimit(cpus, limit float64) float64 {
+	if limit > 0 && (cpus == 0 || limit < cpus) {
 		return limit
 	}
-	return available
+	return cpus
 }
 
 // countCpuset counts the CPUs in a cpuset list such as "0-3,8,10-11".
