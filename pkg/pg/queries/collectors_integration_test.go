@@ -312,7 +312,7 @@ var skipUnchangedCollectorNames = map[string]bool{
 	PgStatDatabaseConflictsName:   true,
 	PgStatProgressAnalyzeName:     true,
 	PgStatProgressCreateIndexName: true,
-	PgStatProgressVacuumName:      true,
+	VacuumActivityName:            true,
 	PgStatSubscriptionStatsName:   true,
 	CapabilitiesName:              true,
 }
@@ -2248,7 +2248,6 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		PgStatIOCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatProgressAnalyzeCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatProgressCreateIndexCollector(pool, noopPrepareCtx),
-		PgStatProgressVacuumCollector(pool, noopPrepareCtx),
 		PgStatRecoveryPrefetchCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatReplicationCollector(pool, noopPrepareCtx),
 		PgStatReplicationSlotsCollector(pool, noopPrepareCtx, pgMajorVersion),
@@ -2273,6 +2272,8 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		}),
 		TransactionCommitsCollector(pool, noopPrepareCtx, pgMajorVersion),
 		UptimeMinutesCollector(pool, noopPrepareCtx, logrus.New()),
+		VacuumActivityCollector(pool, noopPrepareCtx, pgMajorVersion),
+		VacuumFinishedCollector(pool, noopPrepareCtx, pgMajorVersion),
 		WaitEventsCollector(pool, noopPrepareCtx),
 	}
 }

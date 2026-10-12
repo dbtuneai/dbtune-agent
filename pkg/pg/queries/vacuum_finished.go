@@ -1,0 +1,166 @@
+package queries
+
+// https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ALL-TABLES-VIEW
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
+	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	VacuumFinishedName     = "vacuum_finished"
+	VacuumFinishedInterval = 1 * time.Minute
+
+	// vacuumFinishedOverlap starts each window slightly before the previous
+	// one ended. last_vacuum/last_autovacuum are stamped just before being
+	// written to shared stats, so a vacuum stamped before the previous until
+	// can become visible after it was read. Completions in the overlap may be
+	// reported twice; the backend dedupes on (relid, last_vacuum,
+	// last_autovacuum).
+	vacuumFinishedOverlap = 10 * time.Second
+)
+
+// VacuumFinishedRow holds the pg_stat_all_tables vacuum stats of a relation
+// whose vacuum timestamps advanced. The counters and page counts are read at
+// collection time, not at the end of the vacuum.
+type VacuumFinishedRow struct {
+	RelID               *Oid             `json:"relid" db:"relid"`
+	ParentRelID         *Oid             `json:"parent_relid" db:"parent_relid"`
+	SchemaName          *Name            `json:"schemaname" db:"schemaname"`
+	RelName             *Name            `json:"relname" db:"relname"`
+	LastVacuum          *TimestampTZ     `json:"last_vacuum" db:"last_vacuum"`
+	LastAutovacuum      *TimestampTZ     `json:"last_autovacuum" db:"last_autovacuum"`
+	VacuumCount         *Bigint          `json:"vacuum_count" db:"vacuum_count"`
+	AutovacuumCount     *Bigint          `json:"autovacuum_count" db:"autovacuum_count"`
+	TotalVacuumTime     *DoublePrecision `json:"total_vacuum_time" db:"total_vacuum_time"`
+	TotalAutovacuumTime *DoublePrecision `json:"total_autovacuum_time" db:"total_autovacuum_time"`
+	NDeadTup            *Bigint          `json:"n_dead_tup" db:"n_dead_tup"`
+	NLiveTup            *Bigint          `json:"n_live_tup" db:"n_live_tup"`
+	RelPages            *Integer         `json:"relpages" db:"relpages"`
+	RelAllVisible       *Integer         `json:"relallvisible" db:"relallvisible"`
+	RelAllFrozen        *Integer         `json:"relallfrozen" db:"relallfrozen"`
+}
+
+// VacuumFinishedPayload holds every relation with a vacuum that finished in
+// [Since, Until), both on the server's clock, plus possibly some that
+// finished just after Until. It is sent every tick, even when empty, so the
+// backend can tell that a window passed with no completions: a vacuum that
+// left vacuum_activity before Until and has no row here was cancelled. A
+// window whose payload failed to send is not retried; the backend sees the gap
+// as a Since later than the last Until it received (less the overlap).
+type VacuumFinishedPayload struct {
+	CollectedAt time.Time           `json:"collected_at"`
+	Since       time.Time           `json:"since"`
+	Until       time.Time           `json:"until"`
+	Rows        []VacuumFinishedRow `json:"rows"`
+}
+
+// TOAST tables are vacuumed as relations of their own; pt is the owning table.
+// reltoastrelid is not indexed, so this is a join (one hashed scan of pg_class)
+// rather than a correlated subquery, which would scan pg_class once per TOAST
+// row. pg_depend can't replace it: catalogs' TOAST tables are pinned and have
+// no entries there.
+const vacuumFinishedParentJoin = `LEFT JOIN pg_class pt ON c.relkind = 't' AND pt.reltoastrelid = c.oid`
+
+// The query reads pg_class and the pg_stat_get_* functions directly rather
+// than pg_stat_all_tables: that view joins pg_index and groups every relation
+// to sum index scans (~60 ms of extra work per tick at 40k relations). Only the
+// two timestamp lookups run per relation; the remaining stats are fetched for
+// matching rows only. Partitioned tables are left out because vacuum stats are
+// only reported for their leaf partitions.
+//
+// %s: the version-dependent counter columns, then the parent join.
+const vacuumFinishedQuery = `SELECT
+	c.oid AS relid,
+	pt.oid AS parent_relid,
+	n.nspname AS schemaname,
+	c.relname,
+	pg_stat_get_last_vacuum_time(c.oid) AS last_vacuum,
+	pg_stat_get_last_autovacuum_time(c.oid) AS last_autovacuum,
+	pg_stat_get_vacuum_count(c.oid) AS vacuum_count,
+	pg_stat_get_autovacuum_count(c.oid) AS autovacuum_count,
+	pg_stat_get_dead_tuples(c.oid) AS n_dead_tup,
+	pg_stat_get_live_tuples(c.oid) AS n_live_tup,
+	c.relpages,
+	c.relallvisible,
+	%s
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+%s
+WHERE c.relkind IN ('r', 't', 'm')
+	AND (pg_stat_get_last_vacuum_time(c.oid) >= $1
+		OR pg_stat_get_last_autovacuum_time(c.oid) >= $1)`
+
+func vacuumFinishedColumns(pgMajorVersion int) string {
+	if pgMajorVersion >= 18 {
+		return `pg_stat_get_total_vacuum_time(c.oid) AS total_vacuum_time,
+	pg_stat_get_total_autovacuum_time(c.oid) AS total_autovacuum_time,
+	c.relallfrozen`
+	}
+	return `NULL::double precision AS total_vacuum_time,
+	NULL::double precision AS total_autovacuum_time,
+	NULL::integer AS relallfrozen`
+}
+
+// VacuumFinishedCollector reports the relations, including TOAST and catalog
+// tables, whose vacuum finished since the previous tick. PG15+ only.
+//
+// Each window starts where the previous one ended (less the overlap) and ends
+// at the server's now(), so agent clock skew cannot drop or replay
+// completions. The first window starts one overlap before the first tick.
+func VacuumFinishedCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
+	query := fmt.Sprintf(vacuumFinishedQuery, vacuumFinishedColumns(pgMajorVersion), vacuumFinishedParentJoin)
+	scanner := pgxutil.NewScanner[VacuumFinishedRow]()
+	var lastUntil time.Time
+
+	return CatalogCollector{
+		Name:     VacuumFinishedName,
+		Interval: VacuumFinishedInterval,
+		Collect: func(ctx context.Context) (*CollectResult, error) {
+			if pgMajorVersion < vacuumActivityMinPGVersion {
+				return nil, nil
+			}
+			ctx, err := prepareCtx(ctx)
+			if err != nil {
+				return nil, err
+			}
+
+			collectedAt := time.Now().UTC()
+			var until time.Time
+			if err := utils.QueryRowWithPrefix(pool, ctx, `SELECT now()`).Scan(&until); err != nil {
+				return nil, fmt.Errorf("failed to read server time for %s: %w", VacuumFinishedName, err)
+			}
+			since := lastUntil
+			if since.IsZero() {
+				since = until
+			}
+			since = since.Add(-vacuumFinishedOverlap)
+
+			rows, err := CollectView(func() (pgx.Rows, error) {
+				return utils.QueryWithPrefix(pool, ctx, query, since)
+			}, VacuumFinishedName, scanner)
+			if err != nil {
+				return nil, err
+			}
+			lastUntil = until
+
+			data, err := json.Marshal(&VacuumFinishedPayload{
+				CollectedAt: collectedAt,
+				Since:       since.UTC(),
+				Until:       until.UTC(),
+				Rows:        rows,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal %s: %w", VacuumFinishedName, err)
+			}
+			return &CollectResult{JSON: data}, nil
+		},
+	}
+}

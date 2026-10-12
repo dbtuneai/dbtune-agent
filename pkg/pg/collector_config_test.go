@@ -432,6 +432,20 @@ collectors:
 			wantErrContains: "unknown collector",
 		},
 		{
+			name: "retired collector YAML accepted",
+			yaml: "collectors:\n  pg_stat_progress_vacuum:\n    enabled: false",
+			check: func(t *testing.T, cfg CollectorsConfig) {
+				assert.True(t, cfg.PgClass.Base.IsEnabled())
+			},
+		},
+		{
+			name:    "retired collector env var accepted (strict, default)",
+			envVars: map[string]string{"DBT_COLLECTOR_PG_STAT_PROGRESS_VACUUM_ENABLED": "false"},
+			check: func(t *testing.T, cfg CollectorsConfig) {
+				assert.True(t, cfg.PgClass.Base.IsEnabled())
+			},
+		},
+		{
 			name:            "unknown env var collector rejected (strict, default)",
 			envVars:         map[string]string{"DBT_COLLECTOR_TOTALLY_FAKE_ENABLED": "true"},
 			wantErrContains: "does not match any known collector",
