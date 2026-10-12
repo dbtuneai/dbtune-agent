@@ -38,7 +38,6 @@ var scannerBackedTypes = []interface{}{
 	PgStatIORow{},
 	PgStatProgressAnalyzeRow{},
 	PgStatProgressCreateIndexRow{},
-	PgStatProgressVacuumRow{},
 	PgStatRecoveryPrefetchRow{},
 	PgStatReplicationRow{},
 	PgStatReplicationSlotsRow{},
@@ -54,6 +53,8 @@ var scannerBackedTypes = []interface{}{
 	PgStatWalReceiverRow{},
 	PgStatioUserIndexesRow{},
 	PgStatioUserTablesRow{},
+	VacuumActivityRunningRow{},
+	VacuumFinishedRow{},
 	WaitEventRow{},
 }
 
