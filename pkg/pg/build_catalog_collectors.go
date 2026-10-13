@@ -86,7 +86,6 @@ func BuildCatalogCollectors(
 		{queries.TransactionCommitsCollector(pool, prepareCtx, pgMajorVersion), simpleBase(queries.TransactionCommitsName)},
 		{queries.UptimeMinutesCollector(pool, prepareCtx, logger), simpleBase(queries.UptimeMinutesName)},
 		{queries.VacuumActivityCollector(pool, prepareCtx, pgMajorVersion), simpleBase(queries.VacuumActivityName)},
-		{queries.VacuumFinishedCollector(pool, prepareCtx, pgMajorVersion), simpleBase(queries.VacuumFinishedName)},
 		{queries.WaitEventsCollector(pool, prepareCtx), simpleBase(queries.WaitEventsName)},
 
 		// Typed collectors

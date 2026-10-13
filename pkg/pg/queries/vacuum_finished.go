@@ -2,31 +2,6 @@ package queries
 
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ALL-TABLES-VIEW
 
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"time"
-
-	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-)
-
-const (
-	VacuumFinishedName     = "vacuum_finished"
-	VacuumFinishedInterval = 1 * time.Minute
-
-	// vacuumFinishedOverlap starts each window slightly before the previous
-	// one ended. last_vacuum/last_autovacuum are stamped just before being
-	// written to shared stats, so a vacuum stamped before the previous until
-	// can become visible after it was read. Completions in the overlap may be
-	// reported twice; the backend dedupes on (relid, last_vacuum,
-	// last_autovacuum).
-	vacuumFinishedOverlap = 10 * time.Second
-)
-
 // VacuumFinishedRow holds the pg_stat_all_tables vacuum stats of a relation
 // whose vacuum timestamps advanced. The counters and page counts are read at
 // collection time, not at the end of the vacuum.
@@ -46,20 +21,6 @@ type VacuumFinishedRow struct {
 	RelPages            *Integer         `json:"relpages" db:"relpages"`
 	RelAllVisible       *Integer         `json:"relallvisible" db:"relallvisible"`
 	RelAllFrozen        *Integer         `json:"relallfrozen" db:"relallfrozen"`
-}
-
-// VacuumFinishedPayload holds every relation with a vacuum that finished in
-// [Since, Until), both on the server's clock, plus possibly some that
-// finished just after Until. It is sent every tick, even when empty, so the
-// backend can tell that a window passed with no completions: a vacuum that
-// left vacuum_activity before Until and has no row here was cancelled. A
-// window whose payload failed to send is not retried; the backend sees the gap
-// as a Since later than the last Until it received (less the overlap).
-type VacuumFinishedPayload struct {
-	CollectedAt time.Time           `json:"collected_at"`
-	Since       time.Time           `json:"since"`
-	Until       time.Time           `json:"until"`
-	Rows        []VacuumFinishedRow `json:"rows"`
 }
 
 // TOAST tables are vacuumed as relations of their own; pt is the owning table.
@@ -107,60 +68,4 @@ func vacuumFinishedColumns(pgMajorVersion int) string {
 	return `NULL::double precision AS total_vacuum_time,
 	NULL::double precision AS total_autovacuum_time,
 	NULL::integer AS relallfrozen`
-}
-
-// VacuumFinishedCollector reports the relations, including TOAST and catalog
-// tables, whose vacuum finished since the previous tick. PG15+ only.
-//
-// Each window starts where the previous one ended (less the overlap) and ends
-// at the server's now(), so agent clock skew cannot drop or replay
-// completions. The first window starts one overlap before the first tick.
-func VacuumFinishedCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
-	query := fmt.Sprintf(vacuumFinishedQuery, vacuumFinishedColumns(pgMajorVersion), vacuumFinishedParentJoin)
-	scanner := pgxutil.NewScanner[VacuumFinishedRow]()
-	var lastUntil time.Time
-
-	return CatalogCollector{
-		Name:     VacuumFinishedName,
-		Interval: VacuumFinishedInterval,
-		Collect: func(ctx context.Context) (*CollectResult, error) {
-			if pgMajorVersion < vacuumActivityMinPGVersion {
-				return nil, nil
-			}
-			ctx, err := prepareCtx(ctx)
-			if err != nil {
-				return nil, err
-			}
-
-			collectedAt := time.Now().UTC()
-			var until time.Time
-			if err := utils.QueryRowWithPrefix(pool, ctx, `SELECT now()`).Scan(&until); err != nil {
-				return nil, fmt.Errorf("failed to read server time for %s: %w", VacuumFinishedName, err)
-			}
-			since := lastUntil
-			if since.IsZero() {
-				since = until
-			}
-			since = since.Add(-vacuumFinishedOverlap)
-
-			rows, err := CollectView(func() (pgx.Rows, error) {
-				return utils.QueryWithPrefix(pool, ctx, query, since)
-			}, VacuumFinishedName, scanner)
-			if err != nil {
-				return nil, err
-			}
-			lastUntil = until
-
-			data, err := json.Marshal(&VacuumFinishedPayload{
-				CollectedAt: collectedAt,
-				Since:       since.UTC(),
-				Until:       until.UTC(),
-				Rows:        rows,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal %s: %w", VacuumFinishedName, err)
-			}
-			return &CollectResult{JSON: data}, nil
-		},
-	}
 }

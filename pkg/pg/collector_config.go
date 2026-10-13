@@ -140,8 +140,7 @@ var collectors = []collectorDef{
 	simpleCollector(queries.PgStatProgressAnalyzeName),
 	simpleCollector(queries.PgStatProgressCreateIndexName),
 	simpleCollector(queries.VacuumActivityName),
-	simpleCollector(queries.VacuumFinishedName),
-	// Retired: replaced by vacuum_activity and vacuum_finished. Still
+	// Retired: replaced by vacuum_activity. Still
 	// registered so existing config naming it keeps loading; nothing is built.
 	simpleCollector("pg_stat_progress_vacuum"),
 	simpleCollector(queries.PgStatRecoveryPrefetchName),
