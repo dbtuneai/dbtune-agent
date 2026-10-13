@@ -37,18 +37,21 @@ func collectUntil[P any](t *testing.T, ctx context.Context, c CatalogCollector, 
 }
 
 func findRunning(p VacuumActivityPayload, relid Oid) *VacuumActivityRunningRow {
-	for i := range p.Rows {
-		if p.Rows[i].RelID != nil && *p.Rows[i].RelID == relid {
-			return &p.Rows[i]
+	for i := range p.Running {
+		if p.Running[i].RelID != nil && *p.Running[i].RelID == relid {
+			return &p.Running[i]
 		}
 	}
 	return nil
 }
 
-func findFinished(p VacuumFinishedPayload, relid Oid) *VacuumFinishedRow {
-	for i := range p.Rows {
-		if p.Rows[i].RelID != nil && *p.Rows[i].RelID == relid {
-			return &p.Rows[i]
+func findFinished(p VacuumActivityPayload, relid Oid) *VacuumFinishedRow {
+	if p.Finished == nil {
+		return nil
+	}
+	for i := range p.Finished.Rows {
+		if p.Finished.Rows[i].RelID != nil && *p.Finished.Rows[i].RelID == relid {
+			return &p.Finished.Rows[i]
 		}
 	}
 	return nil
@@ -73,11 +76,19 @@ func TestVacuumActivity_RunningThenFinished(t *testing.T) {
 			t.Fatalf("relid: %v", err)
 		}
 
-		running := VacuumActivityCollector(inst.pool, noopPrepareCtx, inst.version)
-		finished := VacuumFinishedCollector(inst.pool, noopPrepareCtx, inst.version)
+		// A window every tick, so the one after the vacuum ends is immediate.
+		c := newVacuumActivityCollector(inst.pool, noopPrepareCtx, inst.version, 0)
 		// The first tick opens the window; nothing finished before it is reported.
-		if _, err := finished.Collect(ctx); err != nil {
+		first, err := c.Collect(ctx)
+		if err != nil {
 			t.Fatalf("Collect() error: %v", err)
+		}
+		var opened VacuumActivityPayload
+		if err := json.Unmarshal(first.JSON, &opened); err != nil {
+			t.Fatalf("failed to parse payload: %v", err)
+		}
+		if opened.Finished == nil || !opened.Finished.WindowEnd.Equal(opened.ObservedAt) {
+			t.Fatalf("first payload should open a window ending at observed_at, got %+v", opened.Finished)
 		}
 
 		// An open cursor pins the first heap page; VACUUM (FREEZE) must wait
@@ -103,7 +114,7 @@ func TestVacuumActivity_RunningThenFinished(t *testing.T) {
 			vacuumDone <- err
 		}()
 
-		active := collectUntil(t, ctx, running, func(p VacuumActivityPayload) bool {
+		active := collectUntil(t, ctx, c, func(p VacuumActivityPayload) bool {
 			return findRunning(p, relid) != nil
 		})
 		if active.ObservedAt.IsZero() {
@@ -134,25 +145,30 @@ func TestVacuumActivity_RunningThenFinished(t *testing.T) {
 			t.Fatalf("vacuum: %v", err)
 		}
 
-		gone := collectUntil(t, ctx, running, func(p VacuumActivityPayload) bool {
+		// The vacuum is stamped before it leaves the progress view, so the
+		// window ending at the tick that no longer sees it has its completion.
+		gone := collectUntil(t, ctx, c, func(p VacuumActivityPayload) bool {
 			return findRunning(p, relid) == nil
 		})
-
-		// The vacuum left vacuum_activity by gone.ObservedAt, so its completion
-		// is in the first vacuum_finished window that reaches that time.
-		window := collectUntil(t, ctx, finished, func(p VacuumFinishedPayload) bool {
-			return !p.Until.Before(gone.ObservedAt)
-		})
-		done := findFinished(window, relid)
+		if gone.Finished == nil {
+			t.Fatal("payload where the vacuum ended has no finished window")
+		}
+		if !gone.Finished.WindowEnd.Equal(gone.ObservedAt) {
+			t.Errorf("window_end %v != observed_at %v", gone.Finished.WindowEnd, gone.ObservedAt)
+		}
+		if !gone.Finished.WindowStart.Before(active.ObservedAt) {
+			t.Errorf("window_start %v does not reach back before the last sighting %v", gone.Finished.WindowStart, active.ObservedAt)
+		}
+		done := findFinished(gone, relid)
 		if done == nil {
-			t.Fatalf("no completion in window [%v, %v) covering %v", window.Since, window.Until, gone.ObservedAt)
+			t.Fatalf("no completion in window [%v, %v)", gone.Finished.WindowStart, gone.Finished.WindowEnd)
 		}
 		if done.LastVacuum == nil || done.VacuumCount == nil || *done.VacuumCount < 1 {
 			t.Fatalf("expected last_vacuum and vacuum_count >= 1, got %v / %v", done.LastVacuum, done.VacuumCount)
 		}
 		lastVacuum := time.Time(*done.LastVacuum)
-		if lastVacuum.Before(window.Since) || lastVacuum.After(gone.ObservedAt) {
-			t.Errorf("last_vacuum %v outside [since %v, observed_at %v]", lastVacuum, window.Since, gone.ObservedAt)
+		if lastVacuum.Before(gone.Finished.WindowStart) || lastVacuum.After(gone.ObservedAt) {
+			t.Errorf("last_vacuum %v outside [window_start %v, observed_at %v]", lastVacuum, gone.Finished.WindowStart, gone.ObservedAt)
 		}
 		if (done.TotalVacuumTime != nil) != (inst.version >= 18) {
 			t.Errorf("total_vacuum_time = %v on PG%d", done.TotalVacuumTime, inst.version)
@@ -160,13 +176,14 @@ func TestVacuumActivity_RunningThenFinished(t *testing.T) {
 	})
 }
 
-func TestVacuumFinished_ToastReportsParent(t *testing.T) {
+func TestVacuumActivity_ToastReportsParent(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
 		if inst.version < vacuumActivityMinPGVersion {
 			t.Skipf("vacuum collectors require PG%d+", vacuumActivityMinPGVersion)
 		}
 		ctx := context.Background()
-		c := VacuumFinishedCollector(inst.pool, noopPrepareCtx, inst.version)
+		// A window every tick: this vacuum is too short to be seen running.
+		c := newVacuumActivityCollector(inst.pool, noopPrepareCtx, inst.version, 0)
 		// The first tick opens the window; nothing finished before it is reported.
 		if _, err := c.Collect(ctx); err != nil {
 			t.Fatalf("Collect() error: %v", err)
@@ -188,7 +205,7 @@ func TestVacuumFinished_ToastReportsParent(t *testing.T) {
 			t.Fatalf("relids: %v", err)
 		}
 
-		p := collectUntil(t, ctx, c, func(p VacuumFinishedPayload) bool {
+		p := collectUntil(t, ctx, c, func(p VacuumActivityPayload) bool {
 			return findFinished(p, toast) != nil && findFinished(p, parent) != nil
 		})
 		row := findFinished(p, toast)

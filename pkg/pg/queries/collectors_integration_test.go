@@ -2270,7 +2270,6 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 		TransactionCommitsCollector(pool, noopPrepareCtx, pgMajorVersion),
 		UptimeMinutesCollector(pool, noopPrepareCtx),
 		VacuumActivityCollector(pool, noopPrepareCtx, pgMajorVersion),
-		VacuumFinishedCollector(pool, noopPrepareCtx, pgMajorVersion),
 		WaitEventsCollector(pool, noopPrepareCtx),
 	}
 }
