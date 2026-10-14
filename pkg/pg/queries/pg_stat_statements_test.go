@@ -1,6 +1,7 @@
 package queries
 
 import (
+	"encoding/json"
 	"math"
 	"strings"
 	"testing"
@@ -669,5 +670,53 @@ func TestBuildPayloadParts_DedupsDeltasAndAggregatesBaseline(t *testing.T) {
 	}
 	if got := float64(deref(deltas2[0].TotalExecTime)); !approxEq(got, 60) {
 		t.Errorf("delta total_exec_time = %g, want 60 (240-180)", got)
+	}
+}
+
+func mkTempRow(calls int64, tempBlksWritten int64) PgStatStatementsRow {
+	r := mkRow(1, calls, float64(calls)*10)
+	r.TempBlksWritten = ptrOf(Bigint(tempBlksWritten))
+	return r
+}
+
+func TestBuildPayloadParts_TempBlksWrittenDiff(t *testing.T) {
+	prev := snapshotOf([]PgStatStatementsRow{mkTempRow(10, 100)})
+	_, deltas, _, _, _ := buildPayloadParts([]PgStatStatementsRow{mkTempRow(15, 130)}, prev, 500)
+	if len(deltas) != 1 {
+		t.Fatalf("expected 1 delta, got %d", len(deltas))
+	}
+	if got := deltas[0].TempBlksWritten; got == nil || int64(*got) != 30 {
+		t.Errorf("temp_blks_written delta = %v, want 30", got)
+	}
+}
+
+// A counter going backwards (pg_stat_statements_reset) must yield nil so the
+// field is omitted from JSON rather than reported as 0.
+func TestBuildPayloadParts_TempBlksWrittenResetIsNil(t *testing.T) {
+	prev := snapshotOf([]PgStatStatementsRow{mkTempRow(10, 100)})
+	_, deltas, _, _, _ := buildPayloadParts([]PgStatStatementsRow{mkTempRow(15, 20)}, prev, 500)
+	if len(deltas) != 1 {
+		t.Fatalf("expected 1 delta, got %d", len(deltas))
+	}
+	if got := deltas[0].TempBlksWritten; got != nil {
+		t.Errorf("temp_blks_written delta = %d, want nil", *got)
+	}
+	b, err := json.Marshal(deltas[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "temp_blks_written") {
+		t.Errorf("temp_blks_written must be omitted from JSON, got %s", b)
+	}
+}
+
+func TestBuildPayloadParts_TempBlksWrittenNewRowIsCurrentValue(t *testing.T) {
+	prev := snapshotOf([]PgStatStatementsRow{mkRow(2, 1, 1)})
+	_, deltas, _, _, _ := buildPayloadParts([]PgStatStatementsRow{mkTempRow(5, 42)}, prev, 500)
+	if len(deltas) != 1 {
+		t.Fatalf("expected 1 delta, got %d", len(deltas))
+	}
+	if got := deltas[0].TempBlksWritten; got == nil || int64(*got) != 42 {
+		t.Errorf("temp_blks_written delta = %v, want 42", got)
 	}
 }

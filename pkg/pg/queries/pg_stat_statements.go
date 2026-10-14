@@ -114,6 +114,8 @@ type PgStatStatementsDelta struct {
 
 	Calls         *Bigint          `json:"calls" db:"calls"`
 	TotalExecTime *DoublePrecision `json:"total_exec_time" db:"total_exec_time"`
+
+	TempBlksWritten *Bigint `json:"temp_blks_written,omitempty"`
 }
 
 // PgStatStatementsPayload is the JSON body POSTed to /api/v1/agent/pg_stat_statements.
@@ -615,11 +617,12 @@ func buildPayloadParts(
 				totals.Calls += int64(*callsDiff)
 				totals.ExecTime += float64(*execDiff)
 				entry.delta = &PgStatStatementsDelta{
-					UserID:        currRow.UserID,
-					DbID:          currRow.DbID,
-					QueryID:       currRow.QueryID,
-					Calls:         callsDiff,
-					TotalExecTime: execDiff,
+					UserID:          currRow.UserID,
+					DbID:            currRow.DbID,
+					QueryID:         currRow.QueryID,
+					Calls:           callsDiff,
+					TotalExecTime:   execDiff,
+					TempBlksWritten: ptrDiff(zeroPtr(prevRow.TempBlksWritten, exists), currRow.TempBlksWritten),
 				}
 				entry.sortKey = float64(*execDiff) / float64(*callsDiff)
 			}
