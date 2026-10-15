@@ -37,9 +37,12 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 		keyValue = *configKey
 	}
 
+	// Created first so config parsing can log through the agent's logger.
+	commonAgent := agent.CreateCommonAgent()
+
 	var err error
 	var config Config
-	config, err = ConfigFromViper(keyValue)
+	config, err = ConfigFromViper(keyValue, commonAgent.Logger())
 	if err != nil {
 		return nil, fmt.Errorf("failed to bind config from key %s: %w", keyValue, err)
 	}
@@ -87,7 +90,6 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 		return nil, fmt.Errorf("failed to create PG driver: %w", err)
 	}
 
-	commonAgent := agent.CreateCommonAgent()
 	// PGVersion
 	PGVersion, err := pg.PGVersion(dbpool)
 	if err != nil {
@@ -118,7 +120,7 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	catalog, err := pg.StandardCatalogCollectors(rdsAdapter.PGDriver, rdsAdapter.PGVersion)
+	catalog, err := pg.StandardCatalogCollectors(rdsAdapter.PGDriver, rdsAdapter.PGVersion, rdsAdapter.Logger())
 	if err != nil {
 		return nil, err
 	}
@@ -470,7 +472,7 @@ func CreateAuroraRDSAdapter() (*AuroraRDSAdapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AuroraRDS adapter: %w", err)
 	}
-	cc, err := pg.CollectorsConfigFromViper()
+	cc, err := pg.CollectorsConfigFromViper(rdsAdapter.Logger())
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse collectors config: %w", err)
 	}
@@ -483,7 +485,7 @@ func CreateAuroraRDSAdapter() (*AuroraRDSAdapter, error) {
 	disabled := false
 	cc.Simple[queries.PgStatWalName] = collectorconfig.BaseConfig{Enabled: &disabled}
 	cc.Simple[queries.PgStatWalReceiverName] = collectorconfig.BaseConfig{Enabled: &disabled}
-	catalog, err := pg.CatalogCollectorsForVersion(rdsAdapter.PGDriver, rdsAdapter.PGVersion, cc)
+	catalog, err := pg.CatalogCollectorsForVersion(rdsAdapter.PGDriver, rdsAdapter.PGVersion, cc, rdsAdapter.Logger())
 	if err != nil {
 		return nil, err
 	}

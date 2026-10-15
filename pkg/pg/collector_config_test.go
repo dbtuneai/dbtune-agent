@@ -1,12 +1,15 @@
 package pg
 
 import (
+	"io"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
+	"github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,7 +68,7 @@ func TestAllTypedCollectorDefaults(t *testing.T) {
 	viper.Reset()
 	defer viper.Reset()
 
-	cfg, err := CollectorsConfigFromViper()
+	cfg, err := CollectorsConfigFromViper(discardLogger())
 	require.NoError(t, err)
 
 	assert.Equal(t, 500, cfg.PgStatStatements.Extra.DiffLimit)
@@ -107,7 +110,7 @@ func runConfigTests(t *testing.T, tests []configTestCase) {
 				t.Setenv(k, v)
 			}
 
-			cfg, err := CollectorsConfigFromViper()
+			cfg, err := CollectorsConfigFromViper(discardLogger())
 			if tt.wantErrContains != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantErrContains)
@@ -577,4 +580,26 @@ func TestNoUnhandledEnvPrefixConflicts(t *testing.T) {
 			}
 		}
 	}
+}
+
+// discardLogger is a logger for tests that don't check log output.
+func discardLogger() *logrus.Logger {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	return logger
+}
+
+func TestCollectorsConfigFromViper_UnknownEnvVarWarnsThroughLogger(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("DBT_COLLECTOR_STRICT_ENV", "false")
+	t.Setenv("DBT_COLLECTOR_TOTALLY_FAKE_ENABLED", "true")
+
+	logger, hook := test.NewNullLogger()
+	_, err := CollectorsConfigFromViper(logger)
+	require.NoError(t, err)
+
+	require.Len(t, hook.AllEntries(), 1)
+	assert.Equal(t, logrus.WarnLevel, hook.LastEntry().Level)
+	assert.Equal(t, "ignoring unrecognized collector env var DBT_COLLECTOR_TOTALLY_FAKE_ENABLED", hook.LastEntry().Message)
 }

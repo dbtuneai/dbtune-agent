@@ -37,7 +37,7 @@ func newEmptyCfg() CollectorsConfig {
 func TestBuildCatalogCollectors_DefaultIncludesAll(t *testing.T) {
 	cfg := newEmptyCfg()
 	// PG 17+ so all version-gated simple collectors stay in.
-	cs, err := BuildCatalogCollectors(nil, 17, cfg, nil)
+	cs, err := BuildCatalogCollectors(nil, 17, cfg, nil, discardLogger())
 	require.NoError(t, err)
 
 	// 35 simple entries + 7 typed entries in the reference build list
@@ -53,7 +53,7 @@ func TestBuildCatalogCollectors_DisableOne(t *testing.T) {
 	cfg := newEmptyCfg()
 	cfg.Simple[queries.PgStatWalName] = collectorconfig.BaseConfig{Enabled: &disabled}
 
-	cs, err := BuildCatalogCollectors(nil, 17, cfg, nil)
+	cs, err := BuildCatalogCollectors(nil, 17, cfg, nil, discardLogger())
 	require.NoError(t, err)
 	assert.Equal(t, 0, countByName(cs, queries.PgStatWalName), "disabled collector should be dropped")
 	// Other collectors unaffected.
@@ -66,7 +66,7 @@ func TestBuildCatalogCollectors_IntervalOverride(t *testing.T) {
 	secs := 600
 	cfg.Simple[queries.PgStatArchiverName] = collectorconfig.BaseConfig{IntervalSeconds: &secs}
 
-	cs, err := BuildCatalogCollectors(nil, 17, cfg, nil)
+	cs, err := BuildCatalogCollectors(nil, 17, cfg, nil, discardLogger())
 	require.NoError(t, err)
 	archiver := findByName(cs, queries.PgStatArchiverName)
 	if assert.NotNil(t, archiver, "archiver collector must be present") {
@@ -82,7 +82,7 @@ func TestBuildCatalogCollectors_IntervalBelowMinimumFailsFast(t *testing.T) {
 	secs := 1
 	cfg.Simple[queries.PgStatArchiverName] = collectorconfig.BaseConfig{IntervalSeconds: &secs}
 
-	cs, err := BuildCatalogCollectors(nil, 17, cfg, nil)
+	cs, err := BuildCatalogCollectors(nil, 17, cfg, nil, discardLogger())
 	require.Error(t, err, "build must fail when interval is below the collector default")
 	assert.Nil(t, cs)
 	assert.Contains(t, err.Error(), queries.PgStatArchiverName, "error must name the offending collector")

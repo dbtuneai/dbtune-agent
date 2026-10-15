@@ -14,12 +14,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sirupsen/logrus"
 )
 
 type UptimeMinutesRow struct {
@@ -62,6 +62,7 @@ type clusterIdentity struct {
 // Not safe for concurrent use — each collector runs in a single goroutine.
 type clusterIdentityCache struct {
 	pool          *pgxpool.Pool
+	logger        *logrus.Logger
 	cached        *clusterIdentity
 	lastAttempt   time.Time
 	lastStartTime time.Time
@@ -85,8 +86,7 @@ func (c *clusterIdentityCache) get(ctx context.Context, postmasterStartTime time
 	err := utils.QueryRowWithPrefix(c.pool, ctx, clusterIdentityQuery).Scan(&systemIdentifier, &timelineID)
 	if err != nil {
 		if !c.loggedFailure {
-			slog.Warn("cluster identity unavailable; omitting system_identifier/timeline_id from server_uptime",
-				"error", err)
+			c.logger.Warnf("cluster identity unavailable; omitting system_identifier/timeline_id from server_uptime: %v", err)
 			c.loggedFailure = true
 		}
 		c.cached = nil
@@ -107,8 +107,8 @@ func formatSystemIdentifier(v int64) string {
 	return strconv.FormatUint(uint64(v), 10) //nolint:gosec // intentional bit reinterpretation
 }
 
-func UptimeMinutesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
-	identity := &clusterIdentityCache{pool: pool}
+func UptimeMinutesCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, logger *logrus.Logger) CatalogCollector {
+	identity := &clusterIdentityCache{pool: pool, logger: logger}
 	return CatalogCollector{
 		Name:     UptimeMinutesName,
 		Interval: UptimeMinutesInterval,

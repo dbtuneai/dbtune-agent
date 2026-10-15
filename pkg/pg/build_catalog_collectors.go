@@ -7,6 +7,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sirupsen/logrus"
 )
 
 // noopPrepareCtx is a PrepareCtx that passes through unchanged.
@@ -21,6 +22,7 @@ func BuildCatalogCollectors(
 	pgMajorVersion int,
 	cfg CollectorsConfig,
 	prepareCtx queries.PrepareCtx,
+	logger *logrus.Logger,
 ) ([]queries.CatalogCollector, error) {
 	if prepareCtx == nil {
 		prepareCtx = noopPrepareCtx
@@ -74,7 +76,7 @@ func BuildCatalogCollectors(
 		{queries.PgStatWalReceiverCollector(pool, prepareCtx), simpleBase(queries.PgStatWalReceiverName)},
 		{queries.PgStatioUserTablesCollector(pool, prepareCtx), simpleBase(queries.PgStatioUserTablesName)},
 		{queries.TransactionCommitsCollector(pool, prepareCtx, pgMajorVersion), simpleBase(queries.TransactionCommitsName)},
-		{queries.UptimeMinutesCollector(pool, prepareCtx), simpleBase(queries.UptimeMinutesName)},
+		{queries.UptimeMinutesCollector(pool, prepareCtx, logger), simpleBase(queries.UptimeMinutesName)},
 		{queries.WaitEventsCollector(pool, prepareCtx), simpleBase(queries.WaitEventsName)},
 
 		// Typed collectors

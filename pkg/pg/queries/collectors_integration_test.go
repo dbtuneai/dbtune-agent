@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
+	"github.com/sirupsen/logrus"
 	"github.com/testcontainers/testcontainers-go"
 	tclog "github.com/testcontainers/testcontainers-go/log"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -530,7 +531,7 @@ func TestDatabaseSize_ReturnsData(t *testing.T) {
 
 func TestUptimeMinutes_ReturnsData(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
-		c := UptimeMinutesCollector(inst.pool, noopPrepareCtx)
+		c := UptimeMinutesCollector(inst.pool, noopPrepareCtx, logrus.New())
 		result, err := c.Collect(context.Background())
 		if err != nil {
 			t.Fatalf("Collect() error: %v", err)
@@ -2269,7 +2270,7 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 			IncludeTableData:  true,
 		}),
 		TransactionCommitsCollector(pool, noopPrepareCtx, pgMajorVersion),
-		UptimeMinutesCollector(pool, noopPrepareCtx),
+		UptimeMinutesCollector(pool, noopPrepareCtx, logrus.New()),
 		WaitEventsCollector(pool, noopPrepareCtx),
 	}
 }

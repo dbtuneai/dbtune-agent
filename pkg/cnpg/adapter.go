@@ -120,7 +120,7 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 	// Initialize operations context for cancellation support
 	adapter.State.CreateOperationsContext()
 
-	collectors, err := pg.StandardCatalogCollectors(dbpool, pgVersion)
+	collectors, err := pg.StandardCatalogCollectors(dbpool, pgVersion, commonAgent.Logger())
 	if err != nil {
 		return nil, err
 	}
