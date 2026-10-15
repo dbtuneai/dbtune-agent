@@ -610,6 +610,7 @@ func buildPayloadParts(
 			prevRow, exists := prev[key]
 			callsDiff := ptrDiff(zeroPtr(prevRow.Calls, exists), currRow.Calls)
 			execDiff := ptrDiff(zeroPtr(prevRow.TotalExecTime, exists), currRow.TotalExecTime)
+			tempBlksDiff := ptrDiff(zeroPtr(prevRow.TempBlksWritten, exists), currRow.TempBlksWritten)
 
 			if callsDiff != nil && *callsDiff > 0 &&
 				execDiff != nil && *execDiff > 0 {
@@ -622,7 +623,7 @@ func buildPayloadParts(
 					QueryID:         currRow.QueryID,
 					Calls:           callsDiff,
 					TotalExecTime:   execDiff,
-					TempBlksWritten: ptrDiff(zeroPtr(prevRow.TempBlksWritten, exists), currRow.TempBlksWritten),
+					TempBlksWritten: tempBlksDiff,
 				}
 				entry.sortKey = float64(*execDiff) / float64(*callsDiff)
 			}
