@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sirupsen/logrus"
 )
 
 // postgresStatuses runs the Postgres checker once and returns each
@@ -70,7 +71,7 @@ func TestPostgresCapabilities_GrantAndRevoke(t *testing.T) {
 		})
 
 		// Through the collector, so a grant is shown to reach the payload.
-		collector := CapabilitiesCollector(PostgresCapabilityChecker(pool, noopPrepareCtx))
+		collector := CapabilitiesCollector(logrus.New(), PostgresCapabilityChecker(pool, noopPrepareCtx))
 		statusOf := func(p *CapabilitiesPayload, name string) CapabilityStatus {
 			t.Helper()
 			for _, c := range p.Capabilities {

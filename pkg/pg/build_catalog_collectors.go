@@ -51,7 +51,7 @@ func BuildCatalogCollectors(
 	entries := []entry{
 		// Simple collectors
 		{queries.AutovacuumCountCollector(pool, prepareCtx), simpleBase(queries.AutovacuumCountName)},
-		{queries.CapabilitiesCollector(checkers...), simpleBase(queries.CapabilitiesName)},
+		{queries.CapabilitiesCollector(logger, checkers...), simpleBase(queries.CapabilitiesName)},
 		{queries.ConnectionStatsCollector(pool, prepareCtx), simpleBase(queries.ConnectionStatsName)},
 		{queries.DDLCollector(pool, prepareCtx), simpleBase(queries.DDLCollectorName)},
 		{queries.DatabaseSizeCollector(pool, prepareCtx), simpleBase(queries.DatabaseSizeName)},

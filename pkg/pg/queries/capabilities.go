@@ -14,8 +14,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -67,7 +68,7 @@ type CapabilitiesPayload struct {
 // CapabilitiesCollector runs the checkers at startup and every
 // CapabilitiesInterval. A payload is sent when any capability changes, plus a
 // heartbeat every skipUnchangedMultiplier intervals.
-func CapabilitiesCollector(checkers ...CapabilityChecker) CatalogCollector {
+func CapabilitiesCollector(logger *logrus.Logger, checkers ...CapabilityChecker) CatalogCollector {
 	tracker := newSkipTracker(skipUnchangedMultiplier)
 	var prev map[string]Capability
 
@@ -92,7 +93,7 @@ func CapabilitiesCollector(checkers ...CapabilityChecker) CatalogCollector {
 			for _, c := range caps {
 				cur[c.Name] = c
 			}
-			logCapabilityChanges(prev, caps)
+			logCapabilityChanges(logger, prev, caps)
 			prev = cur
 
 			hashed, err := json.Marshal(caps)
@@ -114,7 +115,7 @@ func CapabilitiesCollector(checkers ...CapabilityChecker) CatalogCollector {
 // logCapabilityChanges logs each capability whose status differs from the
 // previous tick (prev is nil on the first). An ok capability is only logged
 // when it recovers, so a healthy agent logs nothing.
-func logCapabilityChanges(prev map[string]Capability, cur []Capability) {
+func logCapabilityChanges(logger *logrus.Logger, prev map[string]Capability, cur []Capability) {
 	for _, c := range cur {
 		before, seen := prev[c.Name]
 		if seen && before.Status == c.Status {
@@ -122,15 +123,12 @@ func logCapabilityChanges(prev map[string]Capability, cur []Capability) {
 		}
 		switch c.Status {
 		case CapabilityMissing:
-			slog.Warn(fmt.Sprintf("missing capability %s: %s. Fix with: %s", c.Name, c.Impact, c.Fix),
-				"collector", CapabilitiesName)
+			logger.Warnf("missing capability %s: %s. Fix with: %s", c.Name, c.Impact, c.Fix)
 		case CapabilityUnknown:
-			slog.Info(fmt.Sprintf("can't check capability %s: %s", c.Name, c.Error),
-				"collector", CapabilitiesName)
+			logger.Infof("can't check capability %s: %s", c.Name, c.Error)
 		case CapabilityOK:
 			if seen {
-				slog.Info(fmt.Sprintf("capability %s is now available", c.Name),
-					"collector", CapabilitiesName)
+				logger.Infof("capability %s is now available", c.Name)
 			}
 		}
 	}
