@@ -11,16 +11,19 @@ import (
 // StandardCatalogCollectors loads CollectorsConfig from viper and builds the
 // default catalog collector set for the given pool and PG version.
 // Use CatalogCollectorsForVersion when you need to mutate the config first.
-func StandardCatalogCollectors(pool *pgxpool.Pool, pgVersion Version, logger *logrus.Logger) ([]queries.CatalogCollector, error) {
+//
+// extraCheckers are the adapter's own capability checks (cloud API
+// permissions, ...), run by the capabilities collector after the Postgres one.
+func StandardCatalogCollectors(pool *pgxpool.Pool, pgVersion Version, logger *logrus.Logger, extraCheckers ...queries.CapabilityChecker) ([]queries.CatalogCollector, error) {
 	cfg, err := CollectorsConfigFromViper(logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse collectors config: %w", err)
 	}
-	return CatalogCollectorsForVersion(pool, pgVersion, cfg, logger)
+	return CatalogCollectorsForVersion(pool, pgVersion, cfg, logger, extraCheckers...)
 }
 
 // CatalogCollectorsForVersion builds the catalog collector set with a
 // pre-loaded/adjusted CollectorsConfig.
-func CatalogCollectorsForVersion(pool *pgxpool.Pool, pgVersion Version, cfg CollectorsConfig, logger *logrus.Logger) ([]queries.CatalogCollector, error) {
-	return BuildCatalogCollectors(pool, pgVersion.Major, cfg, nil, logger)
+func CatalogCollectorsForVersion(pool *pgxpool.Pool, pgVersion Version, cfg CollectorsConfig, logger *logrus.Logger, extraCheckers ...queries.CapabilityChecker) ([]queries.CatalogCollector, error) {
+	return BuildCatalogCollectors(pool, pgVersion.Major, cfg, nil, logger, extraCheckers...)
 }

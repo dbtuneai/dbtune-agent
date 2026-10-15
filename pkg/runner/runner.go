@@ -32,6 +32,8 @@ const catalogStagger = 200 * time.Millisecond
 // Declared as var rather than a const slice so tests can swap it
 // out without exporting the symbol.
 var bootstrapCollectorNames = []string{
+	// First, so a missing capability is logged before the data it hides.
+	queries.CapabilitiesName,
 	queries.PgIndexInventoryName,
 	queries.PgAttributeName,
 	queries.PgClassName,

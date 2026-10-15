@@ -187,6 +187,11 @@ func TestMain(m *testing.M) {
 			`CREATE ROLE monitor LOGIN PASSWORD 'monitor'`,
 			`GRANT pg_monitor TO monitor`,
 			`GRANT CONNECT ON DATABASE testdb TO monitor`,
+			// pg_monitor grants no table privileges, and pg_stats only shows
+			// columns the role can SELECT, so without this the pg_stats
+			// collector sees no rows for the fixtures. Tables created later
+			// by individual tests are not covered.
+			`GRANT SELECT ON ALL TABLES IN SCHEMA public TO monitor`,
 		}
 		for _, sql := range monitorSetup {
 			if _, err := adminPool.Exec(ctx, sql); err != nil {
@@ -196,18 +201,13 @@ func TestMain(m *testing.M) {
 			}
 		}
 
-		// Build a connection string for the monitor role.
-		monitorConnStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to get monitor connection string for postgres %d: %v\n", v, err)
-			cleanup()
-			os.Exit(1)
-		}
-		// Replace user=test&password=test with user=monitor&password=monitor.
-		monitorConnStr = strings.Replace(monitorConnStr, "user=test", "user=monitor", 1)
-		monitorConnStr = strings.Replace(monitorConnStr, "password=test", "password=monitor", 1)
+		// Same connection as the admin pool, as the monitor role. The
+		// connection string is a URL, so set the user on the parsed config.
+		monitorCfg := adminPool.Config().Copy()
+		monitorCfg.ConnConfig.User = "monitor"
+		monitorCfg.ConnConfig.Password = "monitor"
 
-		monitorPool, err := pgxpool.New(ctx, monitorConnStr)
+		monitorPool, err := pgxpool.NewWithConfig(ctx, monitorCfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to create monitor pool for postgres %d: %v\n", v, err)
 			cleanup()

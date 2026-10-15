@@ -17,12 +17,15 @@ func noopPrepareCtx(ctx context.Context) (context.Context, error) { return ctx, 
 // per-collector config from CollectorsConfig (enabled filter, interval overrides).
 // A nil pool is allowed for construction-only callers (e.g. tests); the pointer
 // is only dereferenced when a collector's Collect is invoked.
+//
+// The capabilities collector runs the Postgres checker, then extraCheckers.
 func BuildCatalogCollectors(
 	pool *pgxpool.Pool,
 	pgMajorVersion int,
 	cfg CollectorsConfig,
 	prepareCtx queries.PrepareCtx,
 	logger *logrus.Logger,
+	extraCheckers ...queries.CapabilityChecker,
 ) ([]queries.CatalogCollector, error) {
 	if prepareCtx == nil {
 		prepareCtx = noopPrepareCtx
@@ -43,9 +46,12 @@ func BuildCatalogCollectors(
 		return collectorconfig.BaseConfig{}
 	}
 
+	checkers := append([]queries.CapabilityChecker{queries.PostgresCapabilityChecker(pool, prepareCtx)}, extraCheckers...)
+
 	entries := []entry{
 		// Simple collectors
 		{queries.AutovacuumCountCollector(pool, prepareCtx), simpleBase(queries.AutovacuumCountName)},
+		{queries.CapabilitiesCollector(checkers...), simpleBase(queries.CapabilitiesName)},
 		{queries.ConnectionStatsCollector(pool, prepareCtx), simpleBase(queries.ConnectionStatsName)},
 		{queries.DDLCollector(pool, prepareCtx), simpleBase(queries.DDLCollectorName)},
 		{queries.DatabaseSizeCollector(pool, prepareCtx), simpleBase(queries.DatabaseSizeName)},
