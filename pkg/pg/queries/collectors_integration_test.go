@@ -314,6 +314,7 @@ var skipUnchangedCollectorNames = map[string]bool{
 	PgStatProgressCreateIndexName: true,
 	PgStatProgressVacuumName:      true,
 	PgStatSubscriptionStatsName:   true,
+	CapabilitiesName:              true,
 }
 
 // TestCollectors_SkipUnchanged verifies that collectors with dedup enabled
@@ -2225,6 +2226,7 @@ func TestAutovacuumCount_ReturnsData(t *testing.T) {
 func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector {
 	return []CatalogCollector{
 		AutovacuumCountCollector(pool, noopPrepareCtx),
+		CapabilitiesCollector(logrus.New(), PostgresCapabilityChecker(pool, noopPrepareCtx)),
 		ConnectionStatsCollector(pool, noopPrepareCtx),
 		DatabaseSizeCollector(pool, noopPrepareCtx),
 		PgAttributeCollector(pool, noopPrepareCtx),

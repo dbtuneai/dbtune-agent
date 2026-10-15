@@ -52,7 +52,6 @@ func TestPostgresCapabilities_GrantAndRevoke(t *testing.T) {
 		for _, sql := range []string{
 			`DROP ROLE IF EXISTS cap_unprivileged`,
 			`CREATE ROLE cap_unprivileged LOGIN PASSWORD 'cap_unprivileged'`,
-			`GRANT CONNECT ON DATABASE testdb TO cap_unprivileged`,
 		} {
 			if _, err := inst.admin.Exec(ctx, sql); err != nil {
 				t.Fatalf("fixture %q: %v", sql, err)
