@@ -54,6 +54,7 @@ var scannerBackedTypes = []interface{}{
 	PgStatWalReceiverRow{},
 	PgStatioUserIndexesRow{},
 	PgStatioUserTablesRow{},
+	PostgresRolePrivileges{},
 	WaitEventRow{},
 }
 
