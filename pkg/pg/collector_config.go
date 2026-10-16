@@ -183,6 +183,9 @@ var envConflictResolutions = map[[2]string]string{
 // environment variables with pattern DBT_COLLECTOR_{NAME}_{FIELD},
 // validates, and returns the config.
 func CollectorsConfigFromViper(logger *logrus.Logger) (CollectorsConfig, error) {
+	if logger == nil {
+		logger = logrus.StandardLogger()
+	}
 	registry := make(map[string]*collectorDef, len(collectors))
 	for i := range collectors {
 		registry[collectors[i].Name] = &collectors[i]

@@ -603,3 +603,15 @@ func TestCollectorsConfigFromViper_UnknownEnvVarWarnsThroughLogger(t *testing.T)
 	assert.Equal(t, logrus.WarnLevel, hook.LastEntry().Level)
 	assert.Equal(t, "ignoring unrecognized collector env var DBT_COLLECTOR_TOTALLY_FAKE_ENABLED", hook.LastEntry().Message)
 }
+
+func TestCollectorsConfigFromViper_NilLoggerFallsBackToStandardLogger(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("DBT_COLLECTOR_STRICT_ENV", "false")
+	t.Setenv("DBT_COLLECTOR_TOTALLY_FAKE_ENABLED", "true")
+
+	require.NotPanics(t, func() {
+		_, err := CollectorsConfigFromViper(nil)
+		require.NoError(t, err)
+	})
+}

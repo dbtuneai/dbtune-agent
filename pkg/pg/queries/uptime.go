@@ -86,7 +86,7 @@ func (c *clusterIdentityCache) get(ctx context.Context, postmasterStartTime time
 	err := utils.QueryRowWithPrefix(c.pool, ctx, clusterIdentityQuery).Scan(&systemIdentifier, &timelineID)
 	if err != nil {
 		if !c.loggedFailure {
-			c.logger.Warnf("cluster identity unavailable; omitting system_identifier/timeline_id from server_uptime: %v", err)
+			c.logger.Infof("cluster identity unavailable; omitting system_identifier/timeline_id from server_uptime: %v", err)
 			c.loggedFailure = true
 		}
 		c.cached = nil

@@ -27,6 +27,9 @@ func BuildCatalogCollectors(
 	if prepareCtx == nil {
 		prepareCtx = noopPrepareCtx
 	}
+	if logger == nil {
+		logger = logrus.StandardLogger()
+	}
 
 	type entry struct {
 		collector queries.CatalogCollector
