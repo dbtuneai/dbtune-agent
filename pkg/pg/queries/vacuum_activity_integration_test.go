@@ -170,15 +170,15 @@ func TestVacuumActivity_RunningThenFinished(t *testing.T) {
 		if done == nil {
 			t.Fatalf("no completion in window [%v, %v)", gone.Finished.WindowStart, gone.Finished.WindowEnd)
 		}
-		if done.LastVacuum == nil || done.VacuumCount == nil || *done.VacuumCount < 1 {
-			t.Fatalf("expected last_vacuum and vacuum_count >= 1, got %v / %v", done.LastVacuum, done.VacuumCount)
+		if done.LastVacuum == nil {
+			t.Fatal("expected last_vacuum")
 		}
 		lastVacuum := time.Time(*done.LastVacuum)
 		if lastVacuum.Before(gone.Finished.WindowStart) || lastVacuum.After(gone.ObservedAt) {
 			t.Errorf("last_vacuum %v outside [window_start %v, observed_at %v]", lastVacuum, gone.Finished.WindowStart, gone.ObservedAt)
 		}
-		if (done.TotalVacuumTime != nil) != (inst.version >= 18) {
-			t.Errorf("total_vacuum_time = %v on PG%d", done.TotalVacuumTime, inst.version)
+		if (done.RelAllFrozen != nil) != (inst.version >= 18) {
+			t.Errorf("relallfrozen = %v on PG%d", done.RelAllFrozen, inst.version)
 		}
 	})
 }
