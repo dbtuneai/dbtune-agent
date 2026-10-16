@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/cespare/xxhash/v2"
@@ -142,7 +143,8 @@ FROM pg_stat_progress_vacuum p
 LEFT JOIN pg_stat_activity a ON a.pid = p.pid
 LEFT JOIN pg_class c ON c.oid = p.relid
 LEFT JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE p.datname = current_database()`
+WHERE p.datname = current_database()
+ORDER BY p.pid`
 
 // vacuumProgressColumns covers the PG17 rename of num_dead_tuples to
 // num_dead_item_ids and PG18's delay_time. delay_time stays 0 unless
@@ -222,10 +224,14 @@ func newVacuumActivityCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMaj
 					return utils.QueryWithPrefix(pool, ctx, finishedQuery, windowStart)
 				}, VacuumActivityName, finishedScanner)
 				if err != nil {
-					return nil, err
+					// Still send the running half; the window isn't advanced, so
+					// the next tick asks for it again.
+					slog.Warn("failed to read finished vacuums, sending running vacuums only",
+						"collector", VacuumActivityName, "error", err)
+				} else {
+					finished = &VacuumFinishedWindow{WindowStart: windowStart.UTC(), WindowEnd: observedAt.UTC(), Rows: rows}
+					prevWindowEnd = observedAt
 				}
-				finished = &VacuumFinishedWindow{WindowStart: windowStart.UTC(), WindowEnd: observedAt.UTC(), Rows: rows}
-				prevWindowEnd = observedAt
 			}
 
 			// Skip sending running if nothing has changed.
