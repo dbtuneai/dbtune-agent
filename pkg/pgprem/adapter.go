@@ -81,7 +81,7 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 		GuardrailConfig: guardrailSettings,
 		PGVersion:       PGVersion,
 	}
-	collectors, err := pg.StandardCatalogCollectors(dbpool, PGVersion)
+	collectors, err := pg.StandardCatalogCollectors(dbpool, PGVersion, commonAgent.Logger())
 	if err != nil {
 		return nil, err
 	}

@@ -2,10 +2,10 @@ package rds
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 
 	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
 
@@ -22,7 +22,7 @@ type Config struct {
 	RDSDatabaseIdentifier string `mapstructure:"RDS_DATABASE_IDENTIFIER" validate:"required"`
 }
 
-func ConfigFromViper(keyValue string) (Config, error) {
+func ConfigFromViper(keyValue string, logger *logrus.Logger) (Config, error) {
 	// Create a new Viper instance for Aurora configuration if the sub-config doesn't exist
 	dbtuneConfig := viper.Sub(keyValue)
 	if dbtuneConfig == nil {
@@ -61,7 +61,7 @@ func ConfigFromViper(keyValue string) (Config, error) {
 		return Config{}, fmt.Errorf("RDS_DATABASE_IDENTIFIER is required")
 	}
 
-	warnDeprecatedParameterGroup(dbtuneConfig)
+	warnDeprecatedParameterGroup(dbtuneConfig, logger)
 
 	return rdsConfig, nil
 }
@@ -70,14 +70,12 @@ func ConfigFromViper(keyValue string) (Config, error) {
 // still supplies the removed RDS_PARAMETER_GROUP_NAME config key or
 // DBT_RDS_PARAMETER_GROUP_NAME env var. The value is ignored; the agent now
 // auto-discovers the parameter group via DescribeDBInstances.
-func warnDeprecatedParameterGroup(v *viper.Viper) {
+func warnDeprecatedParameterGroup(v *viper.Viper, logger *logrus.Logger) {
 	if v.IsSet("RDS_PARAMETER_GROUP_NAME") {
-		slog.Warn("RDS_PARAMETER_GROUP_NAME is deprecated and ignored; the parameter group is auto-discovered",
-			"source", "config")
+		logger.Warn("RDS_PARAMETER_GROUP_NAME (config) is deprecated and ignored; the parameter group is auto-discovered")
 	}
 	if os.Getenv("DBT_RDS_PARAMETER_GROUP_NAME") != "" {
-		slog.Warn("DBT_RDS_PARAMETER_GROUP_NAME is deprecated and ignored; the parameter group is auto-discovered",
-			"source", "env")
+		logger.Warn("DBT_RDS_PARAMETER_GROUP_NAME (env) is deprecated and ignored; the parameter group is auto-discovered")
 	}
 }
 

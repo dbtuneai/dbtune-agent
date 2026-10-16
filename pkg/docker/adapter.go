@@ -73,7 +73,7 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 		PGDriver:          dbpool,
 		PGVersion:         PGVersion,
 	}
-	catalogCollectors, err := pg.StandardCatalogCollectors(dbpool, PGVersion)
+	catalogCollectors, err := pg.StandardCatalogCollectors(dbpool, PGVersion, commonAgent.Logger())
 	if err != nil {
 		return nil, err
 	}

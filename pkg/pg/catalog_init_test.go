@@ -11,7 +11,7 @@ import (
 
 func TestCatalogCollectorsForVersion_Valid(t *testing.T) {
 	cfg := newEmptyCfg()
-	cs, err := CatalogCollectorsForVersion(nil, Version{Major: 16, Minor: 4, HasMinor: true}, cfg)
+	cs, err := CatalogCollectorsForVersion(nil, Version{Major: 16, Minor: 4, HasMinor: true}, cfg, discardLogger())
 	require.NoError(t, err)
 	assert.Greater(t, len(cs), 0, "should return collectors for valid version")
 }
@@ -24,7 +24,7 @@ func TestCatalogCollectorsForVersion_AuroraDisablesPgStatWal(t *testing.T) {
 	cfg.Simple[queries.PgStatWalName] = collectorconfig.BaseConfig{Enabled: &disabled}
 	cfg.Simple[queries.PgStatWalReceiverName] = collectorconfig.BaseConfig{Enabled: &disabled}
 
-	cs, err := CatalogCollectorsForVersion(nil, Version{Major: 16, Minor: 4, HasMinor: true}, cfg)
+	cs, err := CatalogCollectorsForVersion(nil, Version{Major: 16, Minor: 4, HasMinor: true}, cfg, discardLogger())
 	require.NoError(t, err)
 	assert.Nil(t, findByName(cs, queries.PgStatWalName), "pg_stat_wal must be absent for Aurora")
 	assert.Nil(t, findByName(cs, queries.PgStatWalReceiverName), "pg_stat_wal_receiver must be absent for Aurora")

@@ -78,7 +78,7 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 		State:           &State{},
 	}
 
-	collectors, err := pg.StandardCatalogCollectors(pgPool, pgVersion)
+	collectors, err := pg.StandardCatalogCollectors(pgPool, pgVersion, common.Logger())
 	if err != nil {
 		return nil, err
 	}

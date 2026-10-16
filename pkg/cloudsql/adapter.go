@@ -86,7 +86,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		PGVersion:         PGVersion,
 	}
 
-	collectors, err := pg.StandardCatalogCollectors(pgPool, PGVersion)
+	collectors, err := pg.StandardCatalogCollectors(pgPool, PGVersion, commonAgent.Logger())
 	if err != nil {
 		return nil, err
 	}

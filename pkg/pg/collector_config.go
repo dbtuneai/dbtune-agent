@@ -2,13 +2,13 @@ package pg
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"slices"
 	"strings"
 
 	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
 
@@ -182,7 +182,10 @@ var envConflictResolutions = map[[2]string]string{
 // CollectorsConfigFromViper reads the collectors YAML section, overlays
 // environment variables with pattern DBT_COLLECTOR_{NAME}_{FIELD},
 // validates, and returns the config.
-func CollectorsConfigFromViper() (CollectorsConfig, error) {
+func CollectorsConfigFromViper(logger *logrus.Logger) (CollectorsConfig, error) {
+	if logger == nil {
+		logger = logrus.StandardLogger()
+	}
 	registry := make(map[string]*collectorDef, len(collectors))
 	for i := range collectors {
 		registry[collectors[i].Name] = &collectors[i]
@@ -226,7 +229,7 @@ func CollectorsConfigFromViper() (CollectorsConfig, error) {
 					strings.ToUpper(suffix),
 				)
 			}
-			slog.Warn("ignoring unrecognized collector env var", "key", "DBT_COLLECTOR_"+strings.ToUpper(suffix))
+			logger.Warnf("ignoring unrecognized collector env var DBT_COLLECTOR_%s", strings.ToUpper(suffix))
 			continue
 		case 1:
 			matchedName = matches[0]
