@@ -39,24 +39,27 @@ const (
 // VacuumActivityRunningRow is a pg_stat_progress_vacuum row joined to the
 // vacuuming backend in pg_stat_activity and the relation in pg_class.
 type VacuumActivityRunningRow struct {
-	PID              *Integer         `json:"pid" db:"pid"`
-	RelID            *Oid             `json:"relid" db:"relid"`
-	SchemaName       *Name            `json:"schemaname" db:"schemaname"`
-	RelName          *Name            `json:"relname" db:"relname"`
-	Phase            *Text            `json:"phase" db:"phase"`
-	HeapBlksTotal    *Bigint          `json:"heap_blks_total" db:"heap_blks_total"`
-	HeapBlksScanned  *Bigint          `json:"heap_blks_scanned" db:"heap_blks_scanned"`
-	HeapBlksVacuumed *Bigint          `json:"heap_blks_vacuumed" db:"heap_blks_vacuumed"`
-	IndexVacuumCount *Bigint          `json:"index_vacuum_count" db:"index_vacuum_count"`
-	IndexesTotal     *Bigint          `json:"indexes_total" db:"indexes_total"`
-	MaxDeadTuples    *Bigint          `json:"max_dead_tuples" db:"max_dead_tuples"`
-	NumDeadTuples    *Bigint          `json:"num_dead_tuples" db:"num_dead_tuples"`
-	NumDeadItemIDs   *Bigint          `json:"num_dead_item_ids" db:"num_dead_item_ids"`
-	DelayTime        *DoublePrecision `json:"delay_time" db:"delay_time"`
-	BackendType      *Text            `json:"backend_type" db:"backend_type"`
-	XactStart        *TimestampTZ     `json:"xact_start" db:"xact_start"`
-	WaitEventType    *Text            `json:"wait_event_type" db:"wait_event_type"`
-	WaitEvent        *Text            `json:"wait_event" db:"wait_event"`
+	PID              *Integer `json:"pid" db:"pid"`
+	RelID            *Oid     `json:"relid" db:"relid"`
+	SchemaName       *Name    `json:"schemaname" db:"schemaname"`
+	RelName          *Name    `json:"relname" db:"relname"`
+	Phase            *Text    `json:"phase" db:"phase"`
+	HeapBlksTotal    *Bigint  `json:"heap_blks_total" db:"heap_blks_total"`
+	HeapBlksScanned  *Bigint  `json:"heap_blks_scanned" db:"heap_blks_scanned"`
+	HeapBlksVacuumed *Bigint  `json:"heap_blks_vacuumed" db:"heap_blks_vacuumed"`
+	IndexVacuumCount *Bigint  `json:"index_vacuum_count" db:"index_vacuum_count"`
+	IndexesTotal     *Bigint  `json:"indexes_total" db:"indexes_total"`
+	NumDeadTuples    *Bigint  `json:"num_dead_tuples" db:"num_dead_tuples"`
+	NumDeadItemIDs   *Bigint  `json:"num_dead_item_ids" db:"num_dead_item_ids"`
+	// DelayTime is nil when track_cost_delay_timing is off; see vacuumProgressColumns.
+	DelayTime *DoublePrecision `json:"delay_time" db:"delay_time"`
+	// NDeadTup is the relation's n_dead_tup, which Postgres only updates when a
+	// vacuum finishes, so while one runs it is the count before it.
+	NDeadTup      *Bigint      `json:"n_dead_tup" db:"n_dead_tup"`
+	BackendType   *Text        `json:"backend_type" db:"backend_type"`
+	XactStart     *TimestampTZ `json:"xact_start" db:"xact_start"`
+	WaitEventType *Text        `json:"wait_event_type" db:"wait_event_type"`
+	WaitEvent     *Text        `json:"wait_event" db:"wait_event"`
 	// IsWraparound and WithAnalyze are nil when unknown; see vacuumActivityFlags.
 	IsWraparound *Boolean `json:"is_wraparound" db:"is_wraparound"`
 	WithAnalyze  *Boolean `json:"with_analyze" db:"with_analyze"`
@@ -111,7 +114,11 @@ const vacuumActivityFlags = `CASE
 
 // The owning table of a TOAST relation is not looked up here: reltoastrelid is
 // not indexed, so it would scan all of pg_class every tick a vacuum runs. The
-// backend resolves it from pg_class (reltoastrelid) or from the finished rows.
+// backend takes it from the finished rows.
+//
+// n_dead_tup comes from pg_stat_get_dead_tuples rather than a join to
+// pg_stat_all_tables: that view groups over every table, so a join would
+// rebuild it for the whole database each tick.
 //
 // %s: the version-dependent progress columns, then vacuumActivityFlags.
 const vacuumActivityRunningQuery = `SELECT
@@ -125,6 +132,7 @@ const vacuumActivityRunningQuery = `SELECT
 	p.heap_blks_vacuumed,
 	p.index_vacuum_count,
 	%s,
+	pg_stat_get_dead_tuples(p.relid) AS n_dead_tup,
 	a.backend_type,
 	a.xact_start,
 	a.wait_event_type,
@@ -136,20 +144,22 @@ LEFT JOIN pg_class c ON c.oid = p.relid
 LEFT JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE p.datname = current_database()`
 
-// vacuumProgressColumns covers the PG17 rename of the dead-tuple columns
-// (max_dead_tuples -> max_dead_tuple_bytes, num_dead_tuples ->
-// num_dead_item_ids) and PG18's delay_time.
+// vacuumProgressColumns covers the PG17 rename of num_dead_tuples to
+// num_dead_item_ids and PG18's delay_time. delay_time stays 0 unless
+// track_cost_delay_timing is on, so it is NULL then rather than a measured 0.
+// The setting is read in the agent's session, which normally matches the
+// server's.
 func vacuumProgressColumns(pgMajorVersion int) string {
 	switch {
 	case pgMajorVersion >= 18:
-		return `p.indexes_total, NULL::bigint AS max_dead_tuples, NULL::bigint AS num_dead_tuples,
-	p.num_dead_item_ids, p.delay_time`
+		return `p.indexes_total, NULL::bigint AS num_dead_tuples, p.num_dead_item_ids,
+	CASE WHEN current_setting('track_cost_delay_timing')::boolean THEN p.delay_time END AS delay_time`
 	case pgMajorVersion >= 17:
-		return `p.indexes_total, NULL::bigint AS max_dead_tuples, NULL::bigint AS num_dead_tuples,
-	p.num_dead_item_ids, NULL::double precision AS delay_time`
+		return `p.indexes_total, NULL::bigint AS num_dead_tuples, p.num_dead_item_ids,
+	NULL::double precision AS delay_time`
 	default:
-		return `NULL::bigint AS indexes_total, p.max_dead_tuples, p.num_dead_tuples,
-	NULL::bigint AS num_dead_item_ids, NULL::double precision AS delay_time`
+		return `NULL::bigint AS indexes_total, p.num_dead_tuples, NULL::bigint AS num_dead_item_ids,
+	NULL::double precision AS delay_time`
 	}
 }
 
