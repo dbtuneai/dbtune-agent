@@ -137,6 +137,13 @@ func TestVacuumActivity_RunningThenFinished(t *testing.T) {
 		if row.WithAnalyze != nil {
 			t.Errorf("with_analyze = %v, want nil", *row.WithAnalyze)
 		}
+		if row.NDeadTup == nil {
+			t.Error("expected n_dead_tup")
+		}
+		// track_cost_delay_timing is off by default, so nothing was measured.
+		if row.DelayTime != nil {
+			t.Errorf("delay_time = %v, want nil", *row.DelayTime)
+		}
 
 		if _, err := pinner.Exec(ctx, `COMMIT`); err != nil {
 			t.Fatalf("commit: %v", err)
