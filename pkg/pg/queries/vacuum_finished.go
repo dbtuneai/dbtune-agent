@@ -3,24 +3,20 @@ package queries
 // https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ALL-TABLES-VIEW
 
 // VacuumFinishedRow holds the pg_stat_all_tables vacuum stats of a relation
-// whose vacuum timestamps advanced. The counters and page counts are read at
+// whose vacuum timestamps advanced. The tuple and page counts are read at
 // collection time, not at the end of the vacuum.
 type VacuumFinishedRow struct {
-	RelID               *Oid             `json:"relid" db:"relid"`
-	ParentRelID         *Oid             `json:"parent_relid" db:"parent_relid"`
-	SchemaName          *Name            `json:"schemaname" db:"schemaname"`
-	RelName             *Name            `json:"relname" db:"relname"`
-	LastVacuum          *TimestampTZ     `json:"last_vacuum" db:"last_vacuum"`
-	LastAutovacuum      *TimestampTZ     `json:"last_autovacuum" db:"last_autovacuum"`
-	VacuumCount         *Bigint          `json:"vacuum_count" db:"vacuum_count"`
-	AutovacuumCount     *Bigint          `json:"autovacuum_count" db:"autovacuum_count"`
-	TotalVacuumTime     *DoublePrecision `json:"total_vacuum_time" db:"total_vacuum_time"`
-	TotalAutovacuumTime *DoublePrecision `json:"total_autovacuum_time" db:"total_autovacuum_time"`
-	NDeadTup            *Bigint          `json:"n_dead_tup" db:"n_dead_tup"`
-	NLiveTup            *Bigint          `json:"n_live_tup" db:"n_live_tup"`
-	RelPages            *Integer         `json:"relpages" db:"relpages"`
-	RelAllVisible       *Integer         `json:"relallvisible" db:"relallvisible"`
-	RelAllFrozen        *Integer         `json:"relallfrozen" db:"relallfrozen"`
+	RelID          *Oid         `json:"relid" db:"relid"`
+	ParentRelID    *Oid         `json:"parent_relid" db:"parent_relid"`
+	SchemaName     *Name        `json:"schemaname" db:"schemaname"`
+	RelName        *Name        `json:"relname" db:"relname"`
+	LastVacuum     *TimestampTZ `json:"last_vacuum" db:"last_vacuum"`
+	LastAutovacuum *TimestampTZ `json:"last_autovacuum" db:"last_autovacuum"`
+	NDeadTup       *Bigint      `json:"n_dead_tup" db:"n_dead_tup"`
+	NLiveTup       *Bigint      `json:"n_live_tup" db:"n_live_tup"`
+	RelPages       *Integer     `json:"relpages" db:"relpages"`
+	RelAllVisible  *Integer     `json:"relallvisible" db:"relallvisible"`
+	RelAllFrozen   *Integer     `json:"relallfrozen" db:"relallfrozen"`
 }
 
 // TOAST tables are vacuumed as relations of their own; pt is the owning table.
@@ -37,7 +33,7 @@ const vacuumFinishedParentJoin = `LEFT JOIN pg_class pt ON c.relkind = 't' AND p
 // matching rows only. Partitioned tables are left out because vacuum stats are
 // only reported for their leaf partitions.
 //
-// %s: the version-dependent counter columns, then the parent join.
+// %s: the relallfrozen column (PG18+), then the parent join.
 const vacuumFinishedQuery = `SELECT
 	c.oid AS relid,
 	pt.oid AS parent_relid,
@@ -45,8 +41,6 @@ const vacuumFinishedQuery = `SELECT
 	c.relname,
 	pg_stat_get_last_vacuum_time(c.oid) AS last_vacuum,
 	pg_stat_get_last_autovacuum_time(c.oid) AS last_autovacuum,
-	pg_stat_get_vacuum_count(c.oid) AS vacuum_count,
-	pg_stat_get_autovacuum_count(c.oid) AS autovacuum_count,
 	pg_stat_get_dead_tuples(c.oid) AS n_dead_tup,
 	pg_stat_get_live_tuples(c.oid) AS n_live_tup,
 	c.relpages,
@@ -61,11 +55,7 @@ WHERE c.relkind IN ('r', 't', 'm')
 
 func vacuumFinishedColumns(pgMajorVersion int) string {
 	if pgMajorVersion >= 18 {
-		return `pg_stat_get_total_vacuum_time(c.oid) AS total_vacuum_time,
-	pg_stat_get_total_autovacuum_time(c.oid) AS total_autovacuum_time,
-	c.relallfrozen`
+		return `c.relallfrozen`
 	}
-	return `NULL::double precision AS total_vacuum_time,
-	NULL::double precision AS total_autovacuum_time,
-	NULL::integer AS relallfrozen`
+	return `NULL::integer AS relallfrozen`
 }

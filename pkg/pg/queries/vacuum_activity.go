@@ -56,11 +56,9 @@ type VacuumActivityRunningRow struct {
 	DelayTime *DoublePrecision `json:"delay_time" db:"delay_time"`
 	// NDeadTup is the relation's n_dead_tup, which Postgres only updates when a
 	// vacuum finishes, so while one runs it is the count before it.
-	NDeadTup      *Bigint      `json:"n_dead_tup" db:"n_dead_tup"`
-	BackendType   *Text        `json:"backend_type" db:"backend_type"`
-	XactStart     *TimestampTZ `json:"xact_start" db:"xact_start"`
-	WaitEventType *Text        `json:"wait_event_type" db:"wait_event_type"`
-	WaitEvent     *Text        `json:"wait_event" db:"wait_event"`
+	NDeadTup    *Bigint      `json:"n_dead_tup" db:"n_dead_tup"`
+	BackendType *Text        `json:"backend_type" db:"backend_type"`
+	XactStart   *TimestampTZ `json:"xact_start" db:"xact_start"`
 	// IsWraparound and WithAnalyze are nil when unknown; see vacuumActivityFlags.
 	IsWraparound *Boolean `json:"is_wraparound" db:"is_wraparound"`
 	WithAnalyze  *Boolean `json:"with_analyze" db:"with_analyze"`
@@ -136,8 +134,6 @@ const vacuumActivityRunningQuery = `SELECT
 	pg_stat_get_dead_tuples(p.relid) AS n_dead_tup,
 	a.backend_type,
 	a.xact_start,
-	a.wait_event_type,
-	a.wait_event,
 	%s
 FROM pg_stat_progress_vacuum p
 LEFT JOIN pg_stat_activity a ON a.pid = p.pid
