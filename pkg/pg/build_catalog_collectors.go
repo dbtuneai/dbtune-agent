@@ -62,7 +62,6 @@ func BuildCatalogCollectors(
 		{queries.PgStatIOCollector(pool, prepareCtx, pgMajorVersion), simpleBase(queries.PgStatIOName)},
 		{queries.PgStatProgressAnalyzeCollector(pool, prepareCtx, pgMajorVersion), simpleBase(queries.PgStatProgressAnalyzeName)},
 		{queries.PgStatProgressCreateIndexCollector(pool, prepareCtx), simpleBase(queries.PgStatProgressCreateIndexName)},
-		{queries.PgStatProgressVacuumCollector(pool, prepareCtx), simpleBase(queries.PgStatProgressVacuumName)},
 		{queries.PgStatRecoveryPrefetchCollector(pool, prepareCtx, pgMajorVersion), simpleBase(queries.PgStatRecoveryPrefetchName)},
 		{queries.PgStatReplicationCollector(pool, prepareCtx), simpleBase(queries.PgStatReplicationName)},
 		{queries.PgStatReplicationSlotsCollector(pool, prepareCtx, pgMajorVersion), simpleBase(queries.PgStatReplicationSlotsName)},
@@ -75,6 +74,7 @@ func BuildCatalogCollectors(
 		{queries.PgStatioUserTablesCollector(pool, prepareCtx), simpleBase(queries.PgStatioUserTablesName)},
 		{queries.TransactionCommitsCollector(pool, prepareCtx, pgMajorVersion), simpleBase(queries.TransactionCommitsName)},
 		{queries.UptimeMinutesCollector(pool, prepareCtx), simpleBase(queries.UptimeMinutesName)},
+		{queries.VacuumActivityCollector(pool, prepareCtx, pgMajorVersion), simpleBase(queries.VacuumActivityName)},
 		{queries.WaitEventsCollector(pool, prepareCtx), simpleBase(queries.WaitEventsName)},
 
 		// Typed collectors
