@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sirupsen/logrus"
 )
 
 // collectUntil ticks the collector until done accepts a payload. Skipped
@@ -117,7 +118,7 @@ func TestVacuumActivity_RunningThenFinished(t *testing.T) {
 		}
 
 		// A window every tick, so the one after the vacuum ends is immediate.
-		c := newVacuumActivityCollector(inst.pool, noopPrepareCtx, inst.version, 0)
+		c := newVacuumActivityCollector(inst.pool, noopPrepareCtx, inst.version, logrus.New(), 0)
 		// The first tick opens the window; nothing finished before it is reported.
 		first, err := c.Collect(ctx)
 		if err != nil {
@@ -204,7 +205,7 @@ func TestVacuumActivity_ToastReportsParent(t *testing.T) {
 		}
 		ctx := context.Background()
 		// A window every tick: this vacuum is too short to be seen running.
-		c := newVacuumActivityCollector(inst.pool, noopPrepareCtx, inst.version, 0)
+		c := newVacuumActivityCollector(inst.pool, noopPrepareCtx, inst.version, logrus.New(), 0)
 		// The first tick opens the window; nothing finished before it is reported.
 		if _, err := c.Collect(ctx); err != nil {
 			t.Fatalf("Collect() error: %v", err)
@@ -307,7 +308,7 @@ func TestVacuumActivity_FinishedIntervalAndUnchangedSkip(t *testing.T) {
 		}
 
 		// Only the first tick is due a window during the test.
-		c := newVacuumActivityCollector(inst.pool, noopPrepareCtx, inst.version, time.Hour)
+		c := newVacuumActivityCollector(inst.pool, noopPrepareCtx, inst.version, logrus.New(), time.Hour)
 		first, err := c.Collect(ctx)
 		if err != nil {
 			t.Fatalf("Collect() error: %v", err)
@@ -421,7 +422,7 @@ func TestVacuumActivity_FinishedQueryFails(t *testing.T) {
 			return &p
 		}
 
-		c := newVacuumActivityCollector(pool, noopPrepareCtx, inst.version, 0)
+		c := newVacuumActivityCollector(pool, noopPrepareCtx, inst.version, logrus.New(), 0)
 
 		// The running half is still sent when the finished query fails.
 		if p := collect(c); p == nil {

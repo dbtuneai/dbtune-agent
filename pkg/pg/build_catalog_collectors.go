@@ -85,7 +85,7 @@ func BuildCatalogCollectors(
 		{queries.PgStatioUserTablesCollector(pool, prepareCtx), simpleBase(queries.PgStatioUserTablesName)},
 		{queries.TransactionCommitsCollector(pool, prepareCtx, pgMajorVersion), simpleBase(queries.TransactionCommitsName)},
 		{queries.UptimeMinutesCollector(pool, prepareCtx, logger), simpleBase(queries.UptimeMinutesName)},
-		{queries.VacuumActivityCollector(pool, prepareCtx, pgMajorVersion), simpleBase(queries.VacuumActivityName)},
+		{queries.VacuumActivityCollector(pool, prepareCtx, pgMajorVersion, logger), simpleBase(queries.VacuumActivityName)},
 		{queries.WaitEventsCollector(pool, prepareCtx), simpleBase(queries.WaitEventsName)},
 
 		// Typed collectors

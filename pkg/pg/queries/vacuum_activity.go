@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/cespare/xxhash/v2"
@@ -14,6 +13,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -168,11 +168,11 @@ func vacuumProgressColumns(pgMajorVersion int) string {
 // Both halves are read in one tick and sent in one ordered stream, so the
 // backend can settle every run from the payloads alone. Window bounds are the
 // server's now(), so agent clock skew cannot drop or replay completions.
-func VacuumActivityCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int) CatalogCollector {
-	return newVacuumActivityCollector(pool, prepareCtx, pgMajorVersion, vacuumFinishedInterval)
+func VacuumActivityCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int, logger *logrus.Logger) CatalogCollector {
+	return newVacuumActivityCollector(pool, prepareCtx, pgMajorVersion, logger, vacuumFinishedInterval)
 }
 
-func newVacuumActivityCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int, finishedInterval time.Duration) CatalogCollector {
+func newVacuumActivityCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMajorVersion int, logger *logrus.Logger, finishedInterval time.Duration) CatalogCollector {
 	runningQuery := fmt.Sprintf(vacuumActivityRunningQuery, vacuumProgressColumns(pgMajorVersion), vacuumActivityFlags)
 	finishedQuery := fmt.Sprintf(vacuumFinishedQuery, vacuumFinishedColumns(pgMajorVersion), vacuumFinishedParentJoin)
 	runningScanner := pgxutil.NewScanner[VacuumActivityRunningRow]()
@@ -222,8 +222,8 @@ func newVacuumActivityCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx, pgMaj
 				if err != nil {
 					// Still send the running half; the window isn't advanced, so
 					// the next tick asks for it again.
-					slog.Warn("failed to read finished vacuums, sending running vacuums only",
-						"collector", VacuumActivityName, "error", err)
+					logger.Warnf("%s: failed to read finished vacuums, sending running vacuums only: %v",
+						VacuumActivityName, err)
 				} else {
 					finished = &VacuumFinishedWindow{WindowStart: windowStart.UTC(), WindowEnd: observedAt.UTC(), Rows: rows}
 					prevWindowEnd = observedAt
