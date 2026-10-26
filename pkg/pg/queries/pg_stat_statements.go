@@ -15,6 +15,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -23,8 +24,7 @@ const (
 )
 
 // pgStatStatementsExcludedExpr flags the agent's own queries and trivial
-// statements. A NULL query counts as excluded, as it did when this was a
-// WHERE clause.
+// statements. A NULL query counts as excluded.
 var pgStatStatementsExcludedExpr = fmt.Sprintf(`COALESCE(
     starts_with(query, '%s')
     OR query ~* '^\s*(BEGIN|COMMIT|ROLLBACK|SET |SHOW |SELECT (pg_|\$1$|version\s*\(\s*\)))\s*;?\s*$',
@@ -42,7 +42,7 @@ type PgStatStatementsConfig struct {
 	// Minimum gap between query text reads. Every text read materializes all
 	// of pg_stat_statements' query texts and spills them to temp files once
 	// they outgrow work_mem, so it must not run on every poll.
-	QueryTextRefreshSeconds int `config:"query_text_refresh_seconds" default:"300" min:"0" max:"3600"`
+	QueryTextRefreshSeconds int `config:"query_text_refresh_seconds" default:"300" min:"60" max:"3600"`
 }
 
 // PgStatStatementsRow represents a single row from pg_stat_statements.
@@ -281,17 +281,15 @@ func buildPgStatStatementsQuery(extVersion PgStatStatementsExtVersion) string {
 	return fmt.Sprintf("SELECT %s\nFROM public.pg_stat_statements(false)", strings.Join(cols, ", "))
 }
 
-// pgssTextRow is one row of buildPgStatStatementsTextQuery.
 type pgssTextRow struct {
-	UserID   *Oid     `db:"userid"`
-	DbID     *Oid     `db:"dbid"`
-	QueryID  *Bigint  `db:"queryid"`
-	Query    *Text    `db:"query"`
-	QueryLen *Bigint  `db:"query_len"`
-	Excluded *Boolean `db:"excluded"`
+	UserID   *Oid    `db:"userid"`
+	DbID     *Oid    `db:"dbid"`
+	QueryID  *Bigint `db:"queryid"`
+	Query    *Text   `db:"query"`
+	QueryLen *Bigint `db:"query_len"`
+	Excluded Boolean `db:"excluded"`
 }
 
-// pgssText is the cached text and exclusion verdict for one composite key.
 type pgssText struct {
 	Query    *Text
 	QueryLen *Bigint
@@ -319,13 +317,12 @@ func buildPgssTextCache(rows []pgssTextRow) map[string]pgssText {
 		cache[compositeKeyOf(r.QueryID, r.UserID, r.DbID)] = pgssText{
 			Query:    r.Query,
 			QueryLen: r.QueryLen,
-			Excluded: r.Excluded == nil || bool(*r.Excluded),
+			Excluded: bool(r.Excluded),
 		}
 	}
 	return cache
 }
 
-// hasUnknownKeys reports whether any keyed row is missing from the text cache.
 func hasUnknownKeys(rows []PgStatStatementsRow, cache map[string]pgssText) bool {
 	for i := range rows {
 		if !hasCompositeKey(&rows[i]) {
@@ -339,22 +336,36 @@ func hasUnknownKeys(rows []PgStatStatementsRow, cache map[string]pgssText) bool 
 }
 
 // applyQueryTexts attaches cached text to the stats rows and drops excluded
-// rows. Keyed rows not in the cache yet are held back until the next text
-// read classifies them, so the agent's own queries never slip through.
-// Unkeyed rows pass through without text, as there is nothing to match on.
-func applyQueryTexts(rows []PgStatStatementsRow, cache map[string]pgssText) []PgStatStatementsRow {
-	out := make([]PgStatStatementsRow, 0, len(rows))
+// rows. Keyed rows not in the cache yet are returned as heldBack until the
+// next text read classifies them, so the agent's own queries never slip
+// through. Unkeyed rows (NULL ids, e.g. "<insufficient privilege>") pass
+// through without text, as there is nothing to match on.
+func applyQueryTexts(rows []PgStatStatementsRow, cache map[string]pgssText) (out, heldBack []PgStatStatementsRow) {
+	out = make([]PgStatStatementsRow, 0, len(rows))
 	for _, r := range rows {
 		if hasCompositeKey(&r) {
 			text, ok := cache[compositeKey(&r)]
-			if !ok || text.Excluded {
+			if !ok {
+				heldBack = append(heldBack, r)
+				continue
+			}
+			if text.Excluded {
 				continue
 			}
 			r.Query, r.QueryLen = text.Query, text.QueryLen
 		}
 		out = append(out, r)
 	}
-	return out
+	return out, heldBack
+}
+
+// addBaseline records held-back rows in the snapshot without emitting them,
+// so their first delta once classified covers one poll instead of the whole
+// hold-back.
+func addBaseline(snapshot map[string]PgStatStatementsRow, heldBack []PgStatStatementsRow) {
+	for _, r := range aggregateRowsByCompositeKey(heldBack) {
+		snapshot[compositeKey(&r)] = r
+	}
 }
 
 func hasCompositeKey(r *PgStatStatementsRow) bool {
@@ -771,6 +782,7 @@ func PgStatStatementsCollector(
 	pool *pgxpool.Pool,
 	prepareCtx PrepareCtx,
 	cfg PgStatStatementsConfig,
+	logger *logrus.Logger,
 ) CatalogCollector {
 	var prevSnapshot map[string]PgStatStatementsRow
 	var currentExtVersion PgStatStatementsExtVersion
@@ -816,13 +828,20 @@ func PgStatStatementsCollector(
 					return utils.QueryWithPrefix(pool, ctx, textQuery)
 				}
 				textRows, err := CollectView(textQuerier, "pg_stat_statements text", textScanner)
-				if err != nil {
+				switch {
+				case err == nil:
+					textCache = buildPgssTextCache(textRows)
+				case textCache == nil:
 					return nil, err
+				default:
+					// Keep reporting stats with the previous cache rather than
+					// failing every poll; this read is the one that can hit
+					// temp_file_limit or a statement timeout.
+					logger.Warnf("pg_stat_statements text read failed, reusing previous query texts: %v", err)
 				}
-				textCache = buildPgssTextCache(textRows)
 				lastTextRead = time.Now()
 			}
-			rows = applyQueryTexts(rows, textCache)
+			rows, heldBack := applyQueryTexts(rows, textCache)
 
 			// Single pass over curr rows: produces capped rows/deltas
 			// (ranked by delta avg exec time), the overall AQR computed
@@ -831,6 +850,7 @@ func PgStatStatementsCollector(
 			outRows, outDeltas, totalDiffs, totals, currSnapshot := buildPayloadParts(
 				rows, prevSnapshot, cfg.DiffLimit,
 			)
+			addBaseline(currSnapshot, heldBack)
 
 			payload := &PgStatStatementsPayload{
 				CollectedAt: collectedAt,

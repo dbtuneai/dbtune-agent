@@ -89,7 +89,7 @@ func BuildCatalogCollectors(
 		{queries.WaitEventsCollector(pool, prepareCtx), simpleBase(queries.WaitEventsName)},
 
 		// Typed collectors
-		{queries.PgStatStatementsCollector(pool, prepareCtx, cfg.PgStatStatements.Extra), cfg.PgStatStatements.Base},
+		{queries.PgStatStatementsCollector(pool, prepareCtx, cfg.PgStatStatements.Extra, logger), cfg.PgStatStatements.Base},
 		{queries.PgClassCollector(pool, prepareCtx, cfg.PgClass.Extra, pgMajorVersion), cfg.PgClass.Base},
 		{queries.PgStatsCollector(pool, prepareCtx, cfg.PgStats.Extra), cfg.PgStats.Base},
 		{queries.PgStatUserTablesCollector(pool, prepareCtx, cfg.PgStatUserTables.Extra), cfg.PgStatUserTables.Base},

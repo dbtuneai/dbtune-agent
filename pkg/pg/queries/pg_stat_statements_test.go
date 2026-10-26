@@ -753,29 +753,27 @@ func TestBuildPgStatStatementsTextQuery(t *testing.T) {
 	}
 }
 
-func mkTextRow(queryID int64, query string, excluded *Boolean) pgssTextRow {
+func mkTextRow(queryID int64, query string, excluded bool) pgssTextRow {
 	return pgssTextRow{
 		QueryID:  ptrOf(Bigint(queryID)),
 		UserID:   ptrOf(Oid(1)),
 		DbID:     ptrOf(Oid(1)),
 		Query:    ptrOf(Text(query)),
 		QueryLen: ptrOf(Bigint(len(query))),
-		Excluded: excluded,
+		Excluded: Boolean(excluded),
 	}
 }
 
 func TestBuildPgssTextCache(t *testing.T) {
 	unkeyed := pgssTextRow{UserID: ptrOf(Oid(1)), DbID: ptrOf(Oid(1)), Query: ptrOf(Text("<insufficient privilege>"))}
 	got := buildPgssTextCache([]pgssTextRow{
-		mkTextRow(1, "SELECT 1 FROM t", ptrOf(Boolean(false))),
-		mkTextRow(2, "/*dbtune*/ SELECT 1", ptrOf(Boolean(true))),
-		mkTextRow(3, "SELECT 3", nil),
+		mkTextRow(1, "SELECT 1 FROM t", false),
+		mkTextRow(2, "/*dbtune*/ SELECT 1", true),
 		unkeyed,
 	})
 	want := map[string]pgssText{
 		"1_1_1": {Query: ptrOf(Text("SELECT 1 FROM t")), QueryLen: ptrOf(Bigint(15)), Excluded: false},
 		"2_1_1": {Query: ptrOf(Text("/*dbtune*/ SELECT 1")), QueryLen: ptrOf(Bigint(19)), Excluded: true},
-		"3_1_1": {Query: ptrOf(Text("SELECT 3")), QueryLen: ptrOf(Bigint(8)), Excluded: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("buildPgssTextCache() = %+v, want %+v", got, want)
@@ -799,8 +797,39 @@ func TestApplyQueryTexts(t *testing.T) {
 
 	known := mkRow(1, 10, 5)
 	known.Query, known.QueryLen = ptrOf(Text("SELECT 1 FROM t")), ptrOf(Bigint(15))
-	want := []PgStatStatementsRow{known, unkeyed}
-	if got := applyQueryTexts(rows, cache); !reflect.DeepEqual(got, want) {
-		t.Errorf("applyQueryTexts() = %+v, want %+v", got, want)
+	out, heldBack := applyQueryTexts(rows, cache)
+	if want := []PgStatStatementsRow{known, unkeyed}; !reflect.DeepEqual(out, want) {
+		t.Errorf("applyQueryTexts() out = %+v, want %+v", out, want)
+	}
+	if want := []PgStatStatementsRow{mkRow(3, 30, 5)}; !reflect.DeepEqual(heldBack, want) {
+		t.Errorf("applyQueryTexts() heldBack = %+v, want %+v", heldBack, want)
+	}
+}
+
+// A query held back for several polls must not report its whole accumulated
+// count as a single poll's delta once its text is known.
+func TestHeldBackRowsSetBaseline(t *testing.T) {
+	cache := map[string]pgssText{}
+
+	out, heldBack := applyQueryTexts([]PgStatStatementsRow{mkRow(1, 1000, 500)}, cache)
+	_, _, _, _, snapshot := buildPayloadParts(out, map[string]PgStatStatementsRow{}, 500)
+	addBaseline(snapshot, heldBack)
+
+	cache["1_1_1"] = pgssText{Query: ptrOf(Text("SELECT 1"))}
+	out, _ = applyQueryTexts([]PgStatStatementsRow{mkRow(1, 1005, 502)}, cache)
+	_, deltas, _, totals, _ := buildPayloadParts(out, snapshot, 500)
+
+	want := []PgStatStatementsDelta{{
+		UserID:        ptrOf(Oid(1)),
+		DbID:          ptrOf(Oid(1)),
+		QueryID:       ptrOf(Bigint(1)),
+		Calls:         ptrOf(Bigint(5)),
+		TotalExecTime: ptrOf(DoublePrecision(2)),
+	}}
+	if !reflect.DeepEqual(deltas, want) {
+		t.Errorf("deltas = %+v, want %+v", deltas, want)
+	}
+	if totals != (pgssTotals{Calls: 5, ExecTime: 2}) {
+		t.Errorf("totals = %+v, want {Calls:5 ExecTime:2}", totals)
 	}
 }
