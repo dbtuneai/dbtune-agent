@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // collectUntil ticks the collector until done accepts a payload. Skipped
@@ -57,6 +59,44 @@ func findFinished(p VacuumActivityPayload, relid Oid) *VacuumFinishedRow {
 	return nil
 }
 
+// startPinnedVacuum starts a VACUUM (FREEZE) of table and holds it in progress:
+// an open cursor pins the first heap page, and the vacuum must wait for a
+// cleanup lock on it. The returned func releases the pin and waits for the
+// vacuum to finish.
+func startPinnedVacuum(t *testing.T, ctx context.Context, inst pgInstance, table string) func() {
+	t.Helper()
+	pinner, err := inst.admin.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	t.Cleanup(pinner.Release)
+	for _, sql := range []string{
+		`BEGIN`,
+		`DECLARE pin CURSOR FOR SELECT * FROM ` + table,
+		`FETCH 1 FROM pin`,
+	} {
+		if _, err := pinner.Exec(ctx, sql); err != nil {
+			t.Fatalf("pin %q: %v", sql, err)
+		}
+	}
+
+	vacuumDone := make(chan error, 1)
+	go func() {
+		_, err := inst.admin.Exec(ctx, `VACUUM (FREEZE) `+table)
+		vacuumDone <- err
+	}()
+
+	return func() {
+		t.Helper()
+		if _, err := pinner.Exec(ctx, `COMMIT`); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+		if err := <-vacuumDone; err != nil {
+			t.Fatalf("vacuum: %v", err)
+		}
+	}
+}
+
 func TestVacuumActivity_RunningThenFinished(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
 		if inst.version < vacuumActivityMinPGVersion {
@@ -91,28 +131,7 @@ func TestVacuumActivity_RunningThenFinished(t *testing.T) {
 			t.Fatalf("first payload should open a window ending at observed_at, got %+v", opened.Finished)
 		}
 
-		// An open cursor pins the first heap page; VACUUM (FREEZE) must wait
-		// for a cleanup lock on it, which holds the vacuum in progress.
-		pinner, err := inst.admin.Acquire(ctx)
-		if err != nil {
-			t.Fatalf("acquire: %v", err)
-		}
-		defer pinner.Release()
-		for _, sql := range []string{
-			`BEGIN`,
-			`DECLARE pin CURSOR FOR SELECT * FROM va_pinned`,
-			`FETCH 1 FROM pin`,
-		} {
-			if _, err := pinner.Exec(ctx, sql); err != nil {
-				t.Fatalf("pin %q: %v", sql, err)
-			}
-		}
-
-		vacuumDone := make(chan error, 1)
-		go func() {
-			_, err := inst.admin.Exec(ctx, `VACUUM (FREEZE) va_pinned`)
-			vacuumDone <- err
-		}()
+		finishVacuum := startPinnedVacuum(t, ctx, inst, "va_pinned")
 
 		active := collectUntil(t, ctx, c, func(p VacuumActivityPayload) bool {
 			return findRunning(p, relid) != nil
@@ -145,12 +164,7 @@ func TestVacuumActivity_RunningThenFinished(t *testing.T) {
 			t.Errorf("delay_time = %v, want nil", *row.DelayTime)
 		}
 
-		if _, err := pinner.Exec(ctx, `COMMIT`); err != nil {
-			t.Fatalf("commit: %v", err)
-		}
-		if err := <-vacuumDone; err != nil {
-			t.Fatalf("vacuum: %v", err)
-		}
+		finishVacuum()
 
 		// The vacuum is stamped before it leaves the progress view, so the
 		// window ending at the tick that no longer sees it has its completion.
@@ -271,4 +285,170 @@ func nullBool(b *bool) any {
 		return "NULL"
 	}
 	return *b
+}
+
+func TestVacuumActivity_FinishedIntervalAndUnchangedSkip(t *testing.T) {
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		if inst.version < vacuumActivityMinPGVersion {
+			t.Skipf("vacuum collectors require PG%d+", vacuumActivityMinPGVersion)
+		}
+		ctx := context.Background()
+		for _, sql := range []string{
+			`CREATE TABLE va_gated (id int, payload text)`,
+			`INSERT INTO va_gated SELECT i, repeat('x', 100) FROM generate_series(1, 1000) AS i`,
+		} {
+			if _, err := inst.admin.Exec(ctx, sql); err != nil {
+				t.Fatalf("fixture %q: %v", sql, err)
+			}
+		}
+		var relid Oid
+		if err := inst.admin.QueryRow(ctx, `SELECT 'va_gated'::regclass::oid`).Scan(&relid); err != nil {
+			t.Fatalf("relid: %v", err)
+		}
+
+		// Only the first tick is due a window during the test.
+		c := newVacuumActivityCollector(inst.pool, noopPrepareCtx, inst.version, time.Hour)
+		first, err := c.Collect(ctx)
+		if err != nil {
+			t.Fatalf("Collect() error: %v", err)
+		}
+		var opened VacuumActivityPayload
+		if err := json.Unmarshal(first.JSON, &opened); err != nil {
+			t.Fatalf("failed to parse payload: %v", err)
+		}
+		if opened.Finished == nil {
+			t.Fatal("first payload should open a window")
+		}
+
+		// A change in running vacuums is sent without waiting for a window.
+		finishVacuum := startPinnedVacuum(t, ctx, inst, "va_gated")
+		active := collectUntil(t, ctx, c, func(p VacuumActivityPayload) bool {
+			return findRunning(p, relid) != nil
+		})
+		if active.Finished != nil {
+			t.Errorf("window sent before the interval elapsed: %+v", active.Finished)
+		}
+
+		finishVacuum()
+		gone := collectUntil(t, ctx, c, func(p VacuumActivityPayload) bool {
+			return findRunning(p, relid) == nil
+		})
+		if gone.Finished != nil {
+			t.Errorf("window sent before the interval elapsed: %+v", gone.Finished)
+		}
+
+		// With no window due, an unchanged running set is not sent. Autovacuum
+		// can change it between ticks, so retry until two ticks match.
+		for i := 0; ; i++ {
+			r, err := c.Collect(ctx)
+			if err != nil {
+				t.Fatalf("Collect() error: %v", err)
+			}
+			if r == nil {
+				break
+			}
+			var p VacuumActivityPayload
+			if err := json.Unmarshal(r.JSON, &p); err != nil {
+				t.Fatalf("failed to parse payload: %v", err)
+			}
+			if p.Finished != nil {
+				t.Errorf("window sent before the interval elapsed: %+v", p.Finished)
+			}
+			if i == 20 {
+				t.Fatal("unchanged running vacuums were sent on every tick")
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+	})
+}
+
+func TestVacuumActivity_FinishedQueryFails(t *testing.T) {
+	forEachPG(t, func(t *testing.T, inst pgInstance) {
+		if inst.version < vacuumActivityMinPGVersion {
+			t.Skipf("vacuum collectors require PG%d+", vacuumActivityMinPGVersion)
+		}
+		ctx := context.Background()
+		// pg_stat_get_last_vacuum_time is only called by the finished query.
+		// A function of the same name earlier in the collector's search_path
+		// fails it while va_fail.flag is set, leaving the running query alone.
+		for _, sql := range []string{
+			`CREATE SCHEMA va_fail`,
+			`CREATE TABLE va_fail.flag (fail boolean NOT NULL)`,
+			`INSERT INTO va_fail.flag VALUES (true)`,
+			`CREATE FUNCTION va_fail.pg_stat_get_last_vacuum_time(oid) RETURNS timestamptz
+				LANGUAGE plpgsql AS $$
+				BEGIN
+					IF (SELECT fail FROM va_fail.flag) THEN
+						RAISE EXCEPTION 'finished query failed on purpose';
+					END IF;
+					RETURN pg_catalog.pg_stat_get_last_vacuum_time($1);
+				END $$`,
+			`GRANT USAGE ON SCHEMA va_fail TO monitor`,
+			`GRANT SELECT ON va_fail.flag TO monitor`,
+		} {
+			if _, err := inst.admin.Exec(ctx, sql); err != nil {
+				t.Fatalf("fixture %q: %v", sql, err)
+			}
+		}
+		setFail := func(fail bool) {
+			t.Helper()
+			if _, err := inst.admin.Exec(ctx, `UPDATE va_fail.flag SET fail = $1`, fail); err != nil {
+				t.Fatalf("set flag: %v", err)
+			}
+		}
+
+		cfg := inst.pool.Config()
+		cfg.ConnConfig.RuntimeParams["search_path"] = "va_fail, pg_catalog, public"
+		pool, err := pgxpool.NewWithConfig(ctx, cfg)
+		if err != nil {
+			t.Fatalf("pool: %v", err)
+		}
+		defer pool.Close()
+
+		collect := func(c CatalogCollector) *VacuumActivityPayload {
+			t.Helper()
+			r, err := c.Collect(ctx)
+			if err != nil {
+				t.Fatalf("Collect() error: %v", err)
+			}
+			if r == nil {
+				return nil
+			}
+			var p VacuumActivityPayload
+			if err := json.Unmarshal(r.JSON, &p); err != nil {
+				t.Fatalf("failed to parse payload: %v", err)
+			}
+			return &p
+		}
+
+		c := newVacuumActivityCollector(pool, noopPrepareCtx, inst.version, 0)
+
+		// The running half is still sent when the finished query fails.
+		if p := collect(c); p == nil {
+			t.Fatal("first tick sent nothing; want the running half")
+		} else if p.Finished != nil {
+			t.Fatalf("finished window sent although its query failed: %+v", p.Finished)
+		}
+
+		setFail(false)
+		opened := collect(c)
+		if opened == nil || opened.Finished == nil {
+			t.Fatal("expected a window once the finished query succeeds")
+		}
+
+		// A failed window does not advance the next window's start.
+		setFail(true)
+		if p := collect(c); p != nil && p.Finished != nil {
+			t.Fatalf("finished window sent although its query failed: %+v", p.Finished)
+		}
+		setFail(false)
+		retried := collect(c)
+		if retried == nil || retried.Finished == nil {
+			t.Fatal("expected a window once the finished query succeeds again")
+		}
+		wantStart := opened.Finished.WindowEnd.Add(-vacuumFinishedDataOverlap)
+		if !retried.Finished.WindowStart.Equal(wantStart) {
+			t.Errorf("window_start = %v, want %v (previous window_end - overlap)", retried.Finished.WindowStart, wantStart)
+		}
+	})
 }
