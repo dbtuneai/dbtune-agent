@@ -3,6 +3,7 @@ package queries
 import (
 	"encoding/json"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -273,7 +274,7 @@ func TestBuildPgStatStatementsQuery_ColumnGating(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			q := buildPgStatStatementsQuery(true, 4096, tc.v)
+			q := buildPgStatStatementsQuery(tc.v)
 			for _, s := range tc.mustContain {
 				if !strings.Contains(q, s) {
 					t.Errorf("expected query to contain %q\nquery:\n%s", s, q)
@@ -718,5 +719,88 @@ func TestBuildPayloadParts_TempBlksWrittenNewRowIsCurrentValue(t *testing.T) {
 	}
 	if got := deltas[0].TempBlksWritten; got == nil || int64(*got) != 42 {
 		t.Errorf("temp_blks_written delta = %v, want 42", got)
+	}
+}
+
+func TestBuildPgStatStatementsQuery_ReadsNoText(t *testing.T) {
+	q := buildPgStatStatementsQuery(PgStatStatementsExtVersion{Major: 1, Minor: 11})
+	if !strings.Contains(q, "FROM public.pg_stat_statements(false)") {
+		t.Errorf("stats query must read pg_stat_statements without text, got:\n%s", q)
+	}
+	if strings.Contains(q, "WHERE") || strings.Contains(q, "LEFT(query") {
+		t.Errorf("stats query must not touch query text, got:\n%s", q)
+	}
+}
+
+func TestBuildPgStatStatementsTextQuery(t *testing.T) {
+	cases := []struct {
+		name           string
+		includeQueries bool
+		mustContain    string
+	}{
+		{"with text", true, "LEFT(query, 1000) AS query"},
+		{"without text", false, "NULL::text AS query"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			q := buildPgStatStatementsTextQuery(tc.includeQueries, 1000)
+			for _, s := range []string{tc.mustContain, "AS excluded", "FROM public.pg_stat_statements(true)"} {
+				if !strings.Contains(q, s) {
+					t.Errorf("expected text query to contain %q, got:\n%s", s, q)
+				}
+			}
+		})
+	}
+}
+
+func mkTextRow(queryID int64, query string, excluded *Boolean) pgssTextRow {
+	return pgssTextRow{
+		QueryID:  ptrOf(Bigint(queryID)),
+		UserID:   ptrOf(Oid(1)),
+		DbID:     ptrOf(Oid(1)),
+		Query:    ptrOf(Text(query)),
+		QueryLen: ptrOf(Bigint(len(query))),
+		Excluded: excluded,
+	}
+}
+
+func TestBuildPgssTextCache(t *testing.T) {
+	unkeyed := pgssTextRow{UserID: ptrOf(Oid(1)), DbID: ptrOf(Oid(1)), Query: ptrOf(Text("<insufficient privilege>"))}
+	got := buildPgssTextCache([]pgssTextRow{
+		mkTextRow(1, "SELECT 1 FROM t", ptrOf(Boolean(false))),
+		mkTextRow(2, "/*dbtune*/ SELECT 1", ptrOf(Boolean(true))),
+		mkTextRow(3, "SELECT 3", nil),
+		unkeyed,
+	})
+	want := map[string]pgssText{
+		"1_1_1": {Query: ptrOf(Text("SELECT 1 FROM t")), QueryLen: ptrOf(Bigint(15)), Excluded: false},
+		"2_1_1": {Query: ptrOf(Text("/*dbtune*/ SELECT 1")), QueryLen: ptrOf(Bigint(19)), Excluded: true},
+		"3_1_1": {Query: ptrOf(Text("SELECT 3")), QueryLen: ptrOf(Bigint(8)), Excluded: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("buildPgssTextCache() = %+v, want %+v", got, want)
+	}
+}
+
+func TestApplyQueryTexts(t *testing.T) {
+	cache := map[string]pgssText{
+		"1_1_1": {Query: ptrOf(Text("SELECT 1 FROM t")), QueryLen: ptrOf(Bigint(15))},
+		"2_1_1": {Query: ptrOf(Text("/*dbtune*/ SELECT 1")), QueryLen: ptrOf(Bigint(19)), Excluded: true},
+	}
+	unkeyed := PgStatStatementsRow{UserID: ptrOf(Oid(1)), DbID: ptrOf(Oid(1)), Calls: ptrOf(Bigint(7))}
+	rows := []PgStatStatementsRow{mkRow(1, 10, 5), mkRow(2, 20, 5), mkRow(3, 30, 5), unkeyed}
+
+	if !hasUnknownKeys(rows, cache) {
+		t.Error("hasUnknownKeys() = false, want true: queryid 3 is not cached")
+	}
+	if hasUnknownKeys(rows[:2], cache) {
+		t.Error("hasUnknownKeys() = true, want false: every keyed row is cached")
+	}
+
+	known := mkRow(1, 10, 5)
+	known.Query, known.QueryLen = ptrOf(Text("SELECT 1 FROM t")), ptrOf(Bigint(15))
+	want := []PgStatStatementsRow{known, unkeyed}
+	if got := applyQueryTexts(rows, cache); !reflect.DeepEqual(got, want) {
+		t.Errorf("applyQueryTexts() = %+v, want %+v", got, want)
 	}
 }

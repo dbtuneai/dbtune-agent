@@ -222,7 +222,7 @@ collectors:
 		{
 			name: "empty config has defaults",
 			check: func(t *testing.T, cfg CollectorsConfig) {
-				assert.Equal(t, queries.PgStatStatementsConfig{DiffLimit: 500, IncludeQueries: true, MaxQueryTextLength: 8192}, cfg.PgStatStatements.Extra)
+				assert.Equal(t, queries.PgStatStatementsConfig{DiffLimit: 500, IncludeQueries: true, MaxQueryTextLength: 8192, QueryTextRefreshSeconds: 300}, cfg.PgStatStatements.Extra)
 				assert.Equal(t, queries.PgClassConfig{BackfillBatchSize: 500}, cfg.PgClass.Extra)
 				assert.True(t, cfg.PgClass.Base.IsEnabled())
 			},
