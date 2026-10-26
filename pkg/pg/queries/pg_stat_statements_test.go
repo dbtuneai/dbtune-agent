@@ -768,7 +768,7 @@ func mkTextRow(queryID int64, query string, excluded bool) pgssTextRow {
 
 func TestBuildPgssTextCache(t *testing.T) {
 	unkeyed := pgssTextRow{UserID: ptrOf(Oid(1)), DbID: ptrOf(Oid(1)), Query: ptrOf(Text("<insufficient privilege>"))}
-	// NULL text gives a NULL verdict: not cached, so a later read retries it.
+	// NULL text gives a NULL verdict: cached as not excluded, without text.
 	unclassified := pgssTextRow{QueryID: ptrOf(Bigint(3)), UserID: ptrOf(Oid(1)), DbID: ptrOf(Oid(1))}
 	got := buildPgssTextCache([]pgssTextRow{
 		mkTextRow(1, "SELECT 1 FROM t", false),
@@ -779,6 +779,7 @@ func TestBuildPgssTextCache(t *testing.T) {
 	want := map[string]pgssText{
 		"1_1_1": {Query: ptrOf(Text("SELECT 1 FROM t")), QueryLen: ptrOf(Bigint(15)), Excluded: false},
 		"2_1_1": {Query: ptrOf(Text("/*dbtune*/ SELECT 1")), QueryLen: ptrOf(Bigint(19)), Excluded: true},
+		"3_1_1": {},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("buildPgssTextCache() = %+v, want %+v", got, want)

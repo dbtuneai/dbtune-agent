@@ -311,9 +311,15 @@ func buildPgStatStatementsTextQuery(includeQueries bool, maxQueryTextLength int)
 func buildPgssTextCache(rows []pgssTextRow) map[string]pgssText {
 	cache := make(map[string]pgssText, len(rows))
 	for _, r := range rows {
-		// A NULL verdict is left out so the query stays unknown and gets
-		// classified by a later read, instead of being cached for good.
-		if r.QueryID == nil || r.UserID == nil || r.DbID == nil || r.Excluded == nil {
+		if r.QueryID == nil || r.UserID == nil || r.DbID == nil {
+			continue
+		}
+		// A NULL verdict (NULL text) is cached as not excluded and without
+		// text: the query keeps being sent, and is not dropped for good nor
+		// re-read on every refresh. The next read caused by a new query id
+		// classifies it again.
+		if r.Excluded == nil {
+			cache[compositeKeyOf(r.QueryID, r.UserID, r.DbID)] = pgssText{}
 			continue
 		}
 		cache[compositeKeyOf(r.QueryID, r.UserID, r.DbID)] = pgssText{
