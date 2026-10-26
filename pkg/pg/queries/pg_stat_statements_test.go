@@ -797,39 +797,8 @@ func TestApplyQueryTexts(t *testing.T) {
 
 	known := mkRow(1, 10, 5)
 	known.Query, known.QueryLen = ptrOf(Text("SELECT 1 FROM t")), ptrOf(Bigint(15))
-	out, heldBack := applyQueryTexts(rows, cache)
-	if want := []PgStatStatementsRow{known, unkeyed}; !reflect.DeepEqual(out, want) {
-		t.Errorf("applyQueryTexts() out = %+v, want %+v", out, want)
-	}
-	if want := []PgStatStatementsRow{mkRow(3, 30, 5)}; !reflect.DeepEqual(heldBack, want) {
-		t.Errorf("applyQueryTexts() heldBack = %+v, want %+v", heldBack, want)
-	}
-}
-
-// A query held back for several polls must not report its whole accumulated
-// count as a single poll's delta once its text is known.
-func TestHeldBackRowsSetBaseline(t *testing.T) {
-	cache := map[string]pgssText{}
-
-	out, heldBack := applyQueryTexts([]PgStatStatementsRow{mkRow(1, 1000, 500)}, cache)
-	_, _, _, _, snapshot := buildPayloadParts(out, map[string]PgStatStatementsRow{}, 500)
-	addBaseline(snapshot, heldBack)
-
-	cache["1_1_1"] = pgssText{Query: ptrOf(Text("SELECT 1"))}
-	out, _ = applyQueryTexts([]PgStatStatementsRow{mkRow(1, 1005, 502)}, cache)
-	_, deltas, _, totals, _ := buildPayloadParts(out, snapshot, 500)
-
-	want := []PgStatStatementsDelta{{
-		UserID:        ptrOf(Oid(1)),
-		DbID:          ptrOf(Oid(1)),
-		QueryID:       ptrOf(Bigint(1)),
-		Calls:         ptrOf(Bigint(5)),
-		TotalExecTime: ptrOf(DoublePrecision(2)),
-	}}
-	if !reflect.DeepEqual(deltas, want) {
-		t.Errorf("deltas = %+v, want %+v", deltas, want)
-	}
-	if totals != (pgssTotals{Calls: 5, ExecTime: 2}) {
-		t.Errorf("totals = %+v, want {Calls:5 ExecTime:2}", totals)
+	out := applyQueryTexts(rows, cache)
+	if want := []PgStatStatementsRow{known, mkRow(3, 30, 5), unkeyed}; !reflect.DeepEqual(out, want) {
+		t.Errorf("applyQueryTexts() = %+v, want %+v", out, want)
 	}
 }

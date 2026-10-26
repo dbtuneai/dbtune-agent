@@ -336,36 +336,24 @@ func hasUnknownKeys(rows []PgStatStatementsRow, cache map[string]pgssText) bool 
 }
 
 // applyQueryTexts attaches cached text to the stats rows and drops excluded
-// rows. Keyed rows not in the cache yet are returned as heldBack until the
-// next text read classifies them, so the agent's own queries never slip
-// through. Unkeyed rows (NULL ids, e.g. "<insufficient privilege>") pass
-// through without text, as there is nothing to match on.
-func applyQueryTexts(rows []PgStatStatementsRow, cache map[string]pgssText) (out, heldBack []PgStatStatementsRow) {
-	out = make([]PgStatStatementsRow, 0, len(rows))
+// rows. Rows not in the cache yet are sent right away without text; the next
+// text read fills in their text, or drops them if they turn out excluded.
+// Unkeyed rows (NULL ids, e.g. "<insufficient privilege>") pass through
+// without text, as there is nothing to match on.
+func applyQueryTexts(rows []PgStatStatementsRow, cache map[string]pgssText) []PgStatStatementsRow {
+	out := make([]PgStatStatementsRow, 0, len(rows))
 	for _, r := range rows {
 		if hasCompositeKey(&r) {
-			text, ok := cache[compositeKey(&r)]
-			if !ok {
-				heldBack = append(heldBack, r)
-				continue
+			if text, ok := cache[compositeKey(&r)]; ok {
+				if text.Excluded {
+					continue
+				}
+				r.Query, r.QueryLen = text.Query, text.QueryLen
 			}
-			if text.Excluded {
-				continue
-			}
-			r.Query, r.QueryLen = text.Query, text.QueryLen
 		}
 		out = append(out, r)
 	}
-	return out, heldBack
-}
-
-// addBaseline records held-back rows in the snapshot without emitting them,
-// so their first delta once classified covers one poll instead of the whole
-// hold-back.
-func addBaseline(snapshot map[string]PgStatStatementsRow, heldBack []PgStatStatementsRow) {
-	for _, r := range aggregateRowsByCompositeKey(heldBack) {
-		snapshot[compositeKey(&r)] = r
-	}
+	return out
 }
 
 func hasCompositeKey(r *PgStatStatementsRow) bool {
@@ -841,7 +829,7 @@ func PgStatStatementsCollector(
 				}
 				lastTextRead = time.Now()
 			}
-			rows, heldBack := applyQueryTexts(rows, textCache)
+			rows = applyQueryTexts(rows, textCache)
 
 			// Single pass over curr rows: produces capped rows/deltas
 			// (ranked by delta avg exec time), the overall AQR computed
@@ -850,7 +838,6 @@ func PgStatStatementsCollector(
 			outRows, outDeltas, totalDiffs, totals, currSnapshot := buildPayloadParts(
 				rows, prevSnapshot, cfg.DiffLimit,
 			)
-			addBaseline(currSnapshot, heldBack)
 
 			payload := &PgStatStatementsPayload{
 				CollectedAt: collectedAt,
