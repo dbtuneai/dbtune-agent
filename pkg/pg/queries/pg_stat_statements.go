@@ -15,6 +15,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -22,11 +23,13 @@ const (
 	PgStatStatementsInterval = 5 * time.Second
 )
 
-// pgStatStatementsFilter is the WHERE clause shared by all pg_stat_statements queries.
-var pgStatStatementsFilter = fmt.Sprintf(`
-WHERE NOT starts_with(query, '%s')
-  AND query !~* '^\s*(BEGIN|COMMIT|ROLLBACK|SET |SHOW |SELECT (pg_|\$1$|version\s*\(\s*\)))\s*;?\s*$'
-`, utils.DBtuneQueryPrefix)
+// pgStatStatementsExcludedExpr flags the agent's own queries and trivial
+// statements. It is NULL when the text is NULL (e.g. the query text file
+// could not be read), meaning the query is not classified yet.
+var pgStatStatementsExcludedExpr = fmt.Sprintf(`(
+    starts_with(query, '%s')
+    OR query ~* '^\s*(BEGIN|COMMIT|ROLLBACK|SET |SHOW |SELECT (pg_|\$1$|version\s*\(\s*\)))\s*;?\s*$'
+  )`, utils.DBtuneQueryPrefix)
 
 // PgStatStatementsDiffLimit is the max number of delta entries to include.
 const PgStatStatementsDiffLimit = 500
@@ -36,6 +39,10 @@ type PgStatStatementsConfig struct {
 	DiffLimit          int  `config:"diff_limit" default:"500" min:"0" max:"500"`
 	IncludeQueries     bool `config:"include_queries" default:"true"`
 	MaxQueryTextLength int  `config:"max_query_text_length" default:"8192" min:"0" max:"8192"`
+	// Minimum gap between query text reads. Every text read materializes all
+	// of pg_stat_statements' query texts and spills them to temp files once
+	// they outgrow work_mem, so it must not run on every poll.
+	QueryTextRefreshSeconds int `config:"query_text_refresh_seconds" default:"300" min:"60" max:"3600"`
 }
 
 // PgStatStatementsRow represents a single row from pg_stat_statements.
@@ -201,19 +208,13 @@ func (v PgStatStatementsExtVersion) GTE(major, minor int) bool {
 // PG 16 to PG 17 keeps the extension at 1.10 until the operator explicitly
 // runs ALTER EXTENSION pg_stat_statements UPDATE — that's the realistic
 // "new server / old extension" combination this gating must handle.
-func buildPgStatStatementsQuery(includeQueries bool, maxQueryTextLength int, extVersion PgStatStatementsExtVersion) string {
+//
+// The query reads the stats without query text (showtext => false). Query
+// text comes from buildPgStatStatementsTextQuery, on a slower cadence.
+func buildPgStatStatementsQuery(extVersion PgStatStatementsExtVersion) string {
 	var cols []string
 
-	cols = append(cols, "userid", "dbid", "queryid")
-
-	if !includeQueries {
-		cols = append(cols, "NULL::text AS query", "NULL::bigint AS query_len")
-	} else {
-		cols = append(cols,
-			fmt.Sprintf("LEFT(query, %d) AS query", maxQueryTextLength),
-			"LENGTH(query) AS query_len",
-		)
-	}
+	cols = append(cols, "userid", "dbid", "queryid", "NULL::text AS query", "NULL::bigint AS query_len")
 
 	// total_time/min_time/max_time/mean_time/stddev_time were renamed to their
 	// _exec_time counterparts in extension 1.8 (default in PG 13). PG 12 ships
@@ -277,20 +278,139 @@ func buildPgStatStatementsQuery(includeQueries bool, maxQueryTextLength int, ext
 		)
 	}
 
-	return fmt.Sprintf("SELECT %s\nFROM public.pg_stat_statements\n%s",
-		strings.Join(cols, ", "), pgStatStatementsFilter)
+	return fmt.Sprintf("SELECT %s\nFROM public.pg_stat_statements(false)", strings.Join(cols, ", "))
+}
+
+type pgssTextRow struct {
+	UserID   *Oid     `db:"userid"`
+	DbID     *Oid     `db:"dbid"`
+	QueryID  *Bigint  `db:"queryid"`
+	Query    *Text    `db:"query"`
+	QueryLen *Bigint  `db:"query_len"`
+	Excluded *Boolean `db:"excluded"`
+}
+
+type pgssText struct {
+	Query    *Text
+	QueryLen *Bigint
+	Excluded bool
+}
+
+// buildPgStatStatementsTextQuery reads query text and the exclusion verdict.
+// It always reads the text, even with includeQueries=false, because the
+// exclusion needs it.
+func buildPgStatStatementsTextQuery(includeQueries bool, maxQueryTextLength int) string {
+	textCols := "NULL::text AS query, NULL::bigint AS query_len"
+	if includeQueries {
+		textCols = fmt.Sprintf("LEFT(query, %d) AS query, LENGTH(query) AS query_len", maxQueryTextLength)
+	}
+	return fmt.Sprintf("SELECT userid, dbid, queryid, %s, %s AS excluded\nFROM public.pg_stat_statements(true)",
+		textCols, pgStatStatementsExcludedExpr)
+}
+
+func buildPgssTextCache(rows []pgssTextRow) map[string]pgssText {
+	cache := make(map[string]pgssText, len(rows))
+	for _, r := range rows {
+		if r.QueryID == nil || r.UserID == nil || r.DbID == nil {
+			continue
+		}
+		// A NULL verdict (NULL text) is cached as not excluded and without
+		// text: the query keeps being sent, and is not dropped for good nor
+		// re-read on every refresh. The next read caused by a new query id
+		// classifies it again.
+		if r.Excluded == nil {
+			cache[compositeKeyOf(r.QueryID, r.UserID, r.DbID)] = pgssText{}
+			continue
+		}
+		cache[compositeKeyOf(r.QueryID, r.UserID, r.DbID)] = pgssText{
+			Query:    r.Query,
+			QueryLen: r.QueryLen,
+			Excluded: bool(*r.Excluded),
+		}
+	}
+	return cache
+}
+
+func hasUnknownKeys(rows []PgStatStatementsRow, cache map[string]pgssText) bool {
+	for i := range rows {
+		if !hasCompositeKey(&rows[i]) {
+			continue
+		}
+		if _, ok := cache[compositeKey(&rows[i])]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+// pgssTextState tracks the query text cache and when it was last read.
+type pgssTextState struct {
+	refresh  time.Duration
+	cache    map[string]pgssText
+	lastRead time.Time
+}
+
+// needsRead reports whether to read query texts: on the first poll, then
+// only when unknown query ids show up and refresh has passed since the last
+// read.
+func (s *pgssTextState) needsRead(rows []PgStatStatementsRow, now time.Time) bool {
+	return s.cache == nil || (hasUnknownKeys(rows, s.cache) && now.Sub(s.lastRead) >= s.refresh)
+}
+
+// update stores the result of a text read. A failed read keeps the previous
+// cache, or starts an empty one, so stats keep flowing without text; this read
+// is the one that can hit temp_file_limit or a statement timeout.
+func (s *pgssTextState) update(textRows []pgssTextRow, err error, now time.Time) error {
+	s.lastRead = now
+	if err != nil {
+		if s.cache == nil {
+			s.cache = map[string]pgssText{}
+		}
+		return err
+	}
+	s.cache = buildPgssTextCache(textRows)
+	return nil
+}
+
+// applyQueryTexts attaches cached text to the stats rows and drops excluded
+// rows. Rows not in the cache yet are sent right away without text; the next
+// text read fills in their text, or drops them if they turn out excluded.
+// Unkeyed rows (NULL ids, e.g. "<insufficient privilege>") pass through
+// without text, as there is nothing to match on.
+func applyQueryTexts(rows []PgStatStatementsRow, cache map[string]pgssText) []PgStatStatementsRow {
+	out := make([]PgStatStatementsRow, 0, len(rows))
+	for _, r := range rows {
+		if hasCompositeKey(&r) {
+			if text, ok := cache[compositeKey(&r)]; ok {
+				if text.Excluded {
+					continue
+				}
+				r.Query, r.QueryLen = text.Query, text.QueryLen
+			}
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+func hasCompositeKey(r *PgStatStatementsRow) bool {
+	return r.QueryID != nil && r.UserID != nil && r.DbID != nil
 }
 
 func compositeKey(r *PgStatStatementsRow) string {
+	return compositeKeyOf(r.QueryID, r.UserID, r.DbID)
+}
+
+func compositeKeyOf(queryID *Bigint, userID, dbID *Oid) string {
 	var qid, uid, did int64
-	if r.QueryID != nil {
-		qid = int64(*r.QueryID)
+	if queryID != nil {
+		qid = int64(*queryID)
 	}
-	if r.UserID != nil {
-		uid = int64(*r.UserID)
+	if userID != nil {
+		uid = int64(*userID)
 	}
-	if r.DbID != nil {
-		did = int64(*r.DbID)
+	if dbID != nil {
+		did = int64(*dbID)
 	}
 	return fmt.Sprintf("%d_%d_%d", qid, uid, did)
 }
@@ -687,11 +807,16 @@ func PgStatStatementsCollector(
 	pool *pgxpool.Pool,
 	prepareCtx PrepareCtx,
 	cfg PgStatStatementsConfig,
+	logger *logrus.Logger,
 ) CatalogCollector {
 	var prevSnapshot map[string]PgStatStatementsRow
 	var currentExtVersion PgStatStatementsExtVersion
 	var query string
 	scanner := pgxutil.NewScanner[PgStatStatementsRow]()
+
+	textQuery := buildPgStatStatementsTextQuery(cfg.IncludeQueries, cfg.MaxQueryTextLength)
+	textScanner := pgxutil.NewScanner[pgssTextRow]()
+	texts := &pgssTextState{refresh: time.Duration(cfg.QueryTextRefreshSeconds) * time.Second}
 
 	return CatalogCollector{
 		Name:     PgStatStatementsName,
@@ -709,7 +834,7 @@ func PgStatStatementsCollector(
 			}
 			if detectedExtVersion != currentExtVersion {
 				currentExtVersion = detectedExtVersion
-				query = buildPgStatStatementsQuery(cfg.IncludeQueries, cfg.MaxQueryTextLength, currentExtVersion)
+				query = buildPgStatStatementsQuery(currentExtVersion)
 				prevSnapshot = nil
 			}
 
@@ -720,6 +845,17 @@ func PgStatStatementsCollector(
 			if err != nil {
 				return nil, err
 			}
+
+			if now := time.Now(); texts.needsRead(rows, now) {
+				textQuerier := func() (pgx.Rows, error) {
+					return utils.QueryWithPrefix(pool, ctx, textQuery)
+				}
+				textRows, err := CollectView(textQuerier, "pg_stat_statements text", textScanner)
+				if err := texts.update(textRows, err, now); err != nil {
+					logger.Warnf("pg_stat_statements text read failed, sending stats with the last known query texts: %v", err)
+				}
+			}
+			rows = applyQueryTexts(rows, texts.cache)
 
 			// Single pass over curr rows: produces capped rows/deltas
 			// (ranked by delta avg exec time), the overall AQR computed

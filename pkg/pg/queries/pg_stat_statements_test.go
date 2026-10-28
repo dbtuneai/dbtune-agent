@@ -2,9 +2,12 @@ package queries
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func ptrOf[T any](v T) *T { return &v }
@@ -273,7 +276,7 @@ func TestBuildPgStatStatementsQuery_ColumnGating(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			q := buildPgStatStatementsQuery(true, 4096, tc.v)
+			q := buildPgStatStatementsQuery(tc.v)
 			for _, s := range tc.mustContain {
 				if !strings.Contains(q, s) {
 					t.Errorf("expected query to contain %q\nquery:\n%s", s, q)
@@ -718,5 +721,179 @@ func TestBuildPayloadParts_TempBlksWrittenNewRowIsCurrentValue(t *testing.T) {
 	}
 	if got := deltas[0].TempBlksWritten; got == nil || int64(*got) != 42 {
 		t.Errorf("temp_blks_written delta = %v, want 42", got)
+	}
+}
+
+func TestBuildPgStatStatementsQuery_ReadsNoText(t *testing.T) {
+	q := buildPgStatStatementsQuery(PgStatStatementsExtVersion{Major: 1, Minor: 11})
+	if !strings.Contains(q, "FROM public.pg_stat_statements(false)") {
+		t.Errorf("stats query must read pg_stat_statements without text, got:\n%s", q)
+	}
+	if strings.Contains(q, "WHERE") || strings.Contains(q, "LEFT(query") {
+		t.Errorf("stats query must not touch query text, got:\n%s", q)
+	}
+}
+
+func TestBuildPgStatStatementsTextQuery(t *testing.T) {
+	cases := []struct {
+		name           string
+		includeQueries bool
+		mustContain    string
+	}{
+		{"with text", true, "LEFT(query, 1000) AS query"},
+		{"without text", false, "NULL::text AS query"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			q := buildPgStatStatementsTextQuery(tc.includeQueries, 1000)
+			for _, s := range []string{tc.mustContain, "AS excluded", "FROM public.pg_stat_statements(true)"} {
+				if !strings.Contains(q, s) {
+					t.Errorf("expected text query to contain %q, got:\n%s", s, q)
+				}
+			}
+		})
+	}
+}
+
+func mkTextRow(queryID int64, query string, excluded bool) pgssTextRow {
+	return pgssTextRow{
+		QueryID:  ptrOf(Bigint(queryID)),
+		UserID:   ptrOf(Oid(1)),
+		DbID:     ptrOf(Oid(1)),
+		Query:    ptrOf(Text(query)),
+		QueryLen: ptrOf(Bigint(len(query))),
+		Excluded: ptrOf(Boolean(excluded)),
+	}
+}
+
+func TestBuildPgssTextCache(t *testing.T) {
+	unkeyed := pgssTextRow{UserID: ptrOf(Oid(1)), DbID: ptrOf(Oid(1)), Query: ptrOf(Text("<insufficient privilege>"))}
+	// NULL text gives a NULL verdict: cached as not excluded, without text.
+	unclassified := pgssTextRow{QueryID: ptrOf(Bigint(3)), UserID: ptrOf(Oid(1)), DbID: ptrOf(Oid(1))}
+	got := buildPgssTextCache([]pgssTextRow{
+		mkTextRow(1, "SELECT 1 FROM t", false),
+		mkTextRow(2, "/*dbtune*/ SELECT 1", true),
+		unkeyed,
+		unclassified,
+	})
+	want := map[string]pgssText{
+		"1_1_1": {Query: ptrOf(Text("SELECT 1 FROM t")), QueryLen: ptrOf(Bigint(15)), Excluded: false},
+		"2_1_1": {Query: ptrOf(Text("/*dbtune*/ SELECT 1")), QueryLen: ptrOf(Bigint(19)), Excluded: true},
+		"3_1_1": {},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("buildPgssTextCache() = %+v, want %+v", got, want)
+	}
+}
+
+func TestApplyQueryTexts(t *testing.T) {
+	cache := map[string]pgssText{
+		"1_1_1": {Query: ptrOf(Text("SELECT 1 FROM t")), QueryLen: ptrOf(Bigint(15))},
+		"2_1_1": {Query: ptrOf(Text("/*dbtune*/ SELECT 1")), QueryLen: ptrOf(Bigint(19)), Excluded: true},
+	}
+	unkeyed := PgStatStatementsRow{UserID: ptrOf(Oid(1)), DbID: ptrOf(Oid(1)), Calls: ptrOf(Bigint(7))}
+	rows := []PgStatStatementsRow{mkRow(1, 10, 5), mkRow(2, 20, 5), mkRow(3, 30, 5), unkeyed}
+
+	if !hasUnknownKeys(rows, cache) {
+		t.Error("hasUnknownKeys() = false, want true: queryid 3 is not cached")
+	}
+	if hasUnknownKeys(rows[:2], cache) {
+		t.Error("hasUnknownKeys() = true, want false: every keyed row is cached")
+	}
+
+	known := mkRow(1, 10, 5)
+	known.Query, known.QueryLen = ptrOf(Text("SELECT 1 FROM t")), ptrOf(Bigint(15))
+	out := applyQueryTexts(rows, cache)
+	if want := []PgStatStatementsRow{known, mkRow(3, 30, 5), unkeyed}; !reflect.DeepEqual(out, want) {
+		t.Errorf("applyQueryTexts() = %+v, want %+v", out, want)
+	}
+}
+
+// Every poll sends every query; a new query goes out without text until the
+// next text read, which runs only once refresh has passed since the last one.
+func TestPgssTextState_PollSequence(t *testing.T) {
+	texts := &pgssTextState{refresh: 300 * time.Second}
+	t0 := time.Unix(0, 0)
+	withText := func(r PgStatStatementsRow, q string) PgStatStatementsRow {
+		r.Query, r.QueryLen = ptrOf(Text(q)), ptrOf(Bigint(len(q)))
+		return r
+	}
+
+	// First poll always reads texts.
+	poll1 := []PgStatStatementsRow{mkRow(1, 10, 5)}
+	if !texts.needsRead(poll1, t0) {
+		t.Fatal("needsRead() = false on first poll, want true")
+	}
+	if err := texts.update([]pgssTextRow{mkTextRow(1, "SELECT 1 FROM t", false)}, nil, t0); err != nil {
+		t.Fatalf("update() error: %v", err)
+	}
+	if got, want := applyQueryTexts(poll1, texts.cache), []PgStatStatementsRow{withText(mkRow(1, 10, 5), "SELECT 1 FROM t")}; !reflect.DeepEqual(got, want) {
+		t.Errorf("poll 1 = %+v, want %+v", got, want)
+	}
+
+	// New queries 2 and 3 within the refresh window: no read, sent without text.
+	poll2 := []PgStatStatementsRow{mkRow(1, 11, 6), mkRow(2, 1, 1), mkRow(3, 1, 1)}
+	for _, at := range []time.Duration{5 * time.Second, 60 * time.Second, 299 * time.Second} {
+		if texts.needsRead(poll2, t0.Add(at)) {
+			t.Fatalf("needsRead() = true at %v, want false within refresh", at)
+		}
+		want := []PgStatStatementsRow{withText(mkRow(1, 11, 6), "SELECT 1 FROM t"), mkRow(2, 1, 1), mkRow(3, 1, 1)}
+		if got := applyQueryTexts(poll2, texts.cache); !reflect.DeepEqual(got, want) {
+			t.Errorf("poll at %v = %+v, want %+v", at, got, want)
+		}
+	}
+
+	// Refresh passed: read, query 2 gets its text, excluded query 3 is dropped.
+	at := t0.Add(300 * time.Second)
+	if !texts.needsRead(poll2, at) {
+		t.Fatal("needsRead() = false after refresh with unknown ids, want true")
+	}
+	if err := texts.update([]pgssTextRow{
+		mkTextRow(1, "SELECT 1 FROM t", false),
+		mkTextRow(2, "SELECT 2 FROM t", false),
+		mkTextRow(3, "BEGIN", true),
+	}, nil, at); err != nil {
+		t.Fatalf("update() error: %v", err)
+	}
+	want := []PgStatStatementsRow{withText(mkRow(1, 11, 6), "SELECT 1 FROM t"), withText(mkRow(2, 1, 1), "SELECT 2 FROM t")}
+	if got := applyQueryTexts(poll2, texts.cache); !reflect.DeepEqual(got, want) {
+		t.Errorf("poll after refresh = %+v, want %+v", got, want)
+	}
+
+	// Nothing new: no read, however long since the last one.
+	if texts.needsRead(poll2, at.Add(time.Hour)) {
+		t.Error("needsRead() = true with no unknown ids, want false")
+	}
+}
+
+func TestPgssTextState_FailedRead(t *testing.T) {
+	readErr := errors.New("temporary file size exceeds temp_file_limit")
+	t0 := time.Unix(0, 0)
+
+	// A failed first read still lets stats out, without text, and is retried
+	// only after refresh.
+	texts := &pgssTextState{refresh: 300 * time.Second}
+	if err := texts.update(nil, readErr, t0); !errors.Is(err, readErr) {
+		t.Fatalf("update() error = %v, want %v", err, readErr)
+	}
+	rows := []PgStatStatementsRow{mkRow(1, 10, 5)}
+	if got := applyQueryTexts(rows, texts.cache); !reflect.DeepEqual(got, rows) {
+		t.Errorf("after failed first read = %+v, want %+v", got, rows)
+	}
+	if texts.needsRead(rows, t0.Add(5*time.Second)) {
+		t.Error("needsRead() = true right after a failed read, want false")
+	}
+	if !texts.needsRead(rows, t0.Add(300*time.Second)) {
+		t.Error("needsRead() = false after refresh, want a retry")
+	}
+
+	// A failed later read keeps the previous cache.
+	if err := texts.update([]pgssTextRow{mkTextRow(1, "SELECT 1 FROM t", false)}, nil, t0); err != nil {
+		t.Fatalf("update() error: %v", err)
+	}
+	prev := texts.cache
+	_ = texts.update(nil, readErr, t0.Add(300*time.Second))
+	if !reflect.DeepEqual(texts.cache, prev) {
+		t.Errorf("cache after failed read = %+v, want previous %+v", texts.cache, prev)
 	}
 }

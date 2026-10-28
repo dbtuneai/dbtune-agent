@@ -1761,7 +1761,7 @@ func TestPgStatStatements_AllVersions(t *testing.T) {
 					DiffLimit:          PgStatStatementsDiffLimit,
 					IncludeQueries:     true,
 					MaxQueryTextLength: 1000,
-				},
+				}, logrus.New(),
 			)
 
 			// First call: snapshot, no deltas, no avg runtime.
@@ -1926,7 +1926,7 @@ func TestPgStatStatements_AdaptsToOldExtensionOnNewServer(t *testing.T) {
 				DiffLimit:          PgStatStatementsDiffLimit,
 				IncludeQueries:     true,
 				MaxQueryTextLength: 1000,
-			})
+			}, logrus.New())
 
 			// REGRESSION: under the old (server-version-based) gate, this
 			// Collect() would fail on PG >= 17 with
@@ -2124,7 +2124,7 @@ func TestPgStatStatements_TopLevelNestedAggregation(t *testing.T) {
 				DiffLimit:          PgStatStatementsDiffLimit,
 				IncludeQueries:     true,
 				MaxQueryTextLength: 1000,
-			})
+			}, logrus.New())
 
 			// First collect: baseline snapshot, rows must already be deduped.
 			r1, err := c.Collect(ctx)
@@ -2257,7 +2257,7 @@ func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []CatalogCollector 
 			DiffLimit:          PgStatStatementsDiffLimit,
 			IncludeQueries:     true,
 			MaxQueryTextLength: 1000,
-		}),
+		}, logrus.New()),
 		PgStatSubscriptionCollector(pool, noopPrepareCtx),
 		PgStatSubscriptionStatsCollector(pool, noopPrepareCtx, pgMajorVersion),
 		PgStatUserFunctionsCollector(pool, noopPrepareCtx),
