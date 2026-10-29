@@ -508,10 +508,42 @@ func flushStats(ctx context.Context, inst pgInstance) {
 func TestWaitEvents_ReturnsAllTypes(t *testing.T) {
 	forEachPG(t, func(t *testing.T, inst pgInstance) {
 		c := WaitEventsCollector(inst.pool, noopPrepareCtx)
-		n := requireRows(t, c)
+		result, err := c.Collect(context.Background())
+		if err != nil {
+			t.Fatalf("Collect() error: %v", err)
+		}
+		var p Payload[WaitEventRow]
+		if err := json.Unmarshal(result.JSON, &p); err != nil {
+			t.Fatalf("failed to parse result: %v", err)
+		}
+
 		// 9 wait event types + 1 TOTAL row = 10
-		if n != 10 {
-			t.Fatalf("expected 10 rows (9 types + TOTAL), got %d", n)
+		if len(p.Rows) != 10 {
+			t.Fatalf("expected 10 rows (9 types + TOTAL), got %d", len(p.Rows))
+		}
+		var total, totalRow Bigint
+		for _, row := range p.Rows {
+			if row.WaitEventType == "TOTAL" {
+				totalRow = row.CurrentCount
+				if row.Events != nil {
+					t.Errorf("TOTAL: expected nil events, got %v", row.Events)
+				}
+				continue
+			}
+			if row.Events == nil {
+				t.Errorf("%s: expected non-nil events", row.WaitEventType)
+			}
+			var sum Bigint
+			for _, n := range row.Events {
+				sum += n
+			}
+			if sum != row.CurrentCount {
+				t.Errorf("%s: events sum to %d, current_count = %d", row.WaitEventType, sum, row.CurrentCount)
+			}
+			total += row.CurrentCount
+		}
+		if totalRow != total {
+			t.Errorf("TOTAL = %d, sum of types = %d", totalRow, total)
 		}
 	})
 }
