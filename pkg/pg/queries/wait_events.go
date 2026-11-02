@@ -8,7 +8,7 @@ import (
 
 // WaitEventRow represents a row from the wait events aggregation query.
 // Events maps each wait_event currently observed under WaitEventType to its
-// count; it is empty for types with no waits and nil on the TOTAL row.
+// count; it is empty for types with no waits and on the TOTAL row.
 type WaitEventRow struct {
 	WaitEventType Text            `json:"wait_event_type" db:"wait_event_type"`
 	CurrentCount  Bigint          `json:"current_count" db:"current_count"`
@@ -67,7 +67,7 @@ UNION ALL
 SELECT
 	'TOTAL' as wait_event_type,
 	sum(current_count)::bigint as current_count,
-	NULL::jsonb as events
+	'{}'::jsonb as events
 FROM wait_counts`
 
 func WaitEventsCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {

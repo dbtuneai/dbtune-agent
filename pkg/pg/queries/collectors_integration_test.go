@@ -525,8 +525,8 @@ func TestWaitEvents_ReturnsAllTypes(t *testing.T) {
 		for _, row := range p.Rows {
 			if row.WaitEventType == "TOTAL" {
 				totalRow = row.CurrentCount
-				if row.Events != nil {
-					t.Errorf("TOTAL: expected nil events, got %v", row.Events)
+				if row.Events == nil || len(row.Events) != 0 {
+					t.Errorf("TOTAL: expected empty events, got %v", row.Events)
 				}
 				continue
 			}
