@@ -36,10 +36,20 @@ func TestPostgresCapabilities_PgMonitorAndSuperuser(t *testing.T) {
 		if role != "monitor" {
 			t.Fatalf("inst.pool connects as %q, want monitor", role)
 		}
+		// pg_monitor doesn't include pg_read_all_data, which only exists
+		// from PostgreSQL 14.
+		readAllData := map[string]CapabilityStatus{"pg_monitor": CapabilityMissing, "superuser": CapabilityOK}
+		if inst.version < 14 {
+			readAllData = map[string]CapabilityStatus{"pg_monitor": CapabilityUnknown, "superuser": CapabilityUnknown}
+		}
 		for name, pool := range map[string]*pgxpool.Pool{"pg_monitor": inst.pool, "superuser": inst.admin} {
 			for capability, status := range postgresStatuses(t, pool) {
-				if status != CapabilityOK {
-					t.Errorf("%s: %s = %s, want ok", name, capability, status)
+				want := CapabilityOK
+				if capability == "pg_read_all_data" {
+					want = readAllData[name]
+				}
+				if status != want {
+					t.Errorf("%s: %s = %s, want %s", name, capability, status, want)
 				}
 			}
 		}
@@ -91,6 +101,13 @@ func TestPostgresCapabilities_GrantAndRevoke(t *testing.T) {
 				t.Errorf("%s = %s, want missing", name, s)
 			}
 		}
+		wantReadAllData := CapabilityMissing
+		if inst.version < 14 {
+			wantReadAllData = CapabilityUnknown
+		}
+		if s := statusOf(first, "postgres.pg_read_all_data"); s != wantReadAllData {
+			t.Errorf("postgres.pg_read_all_data = %s, want %s", s, wantReadAllData)
+		}
 		if p := collectCapabilities(t, collector); p != nil {
 			t.Fatalf("unchanged tick sent %+v", p)
 		}
@@ -115,6 +132,17 @@ func TestPostgresCapabilities_GrantAndRevoke(t *testing.T) {
 		revoked := collectCapabilities(t, collector)
 		if revoked == nil || statusOf(revoked, "postgres.pg_read_all_stats") != CapabilityMissing {
 			t.Fatalf("payload after revoke = %+v, want pg_read_all_stats missing", revoked)
+		}
+
+		if inst.version < 14 {
+			return
+		}
+		if _, err := inst.admin.Exec(ctx, `GRANT pg_read_all_data TO cap_unprivileged`); err != nil {
+			t.Fatalf("grant pg_read_all_data: %v", err)
+		}
+		readAll := collectCapabilities(t, collector)
+		if readAll == nil || statusOf(readAll, "postgres.pg_read_all_data") != CapabilityOK {
+			t.Fatalf("payload after pg_read_all_data grant = %+v, want pg_read_all_data ok", readAll)
 		}
 	})
 }

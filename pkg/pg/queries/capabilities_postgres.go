@@ -25,20 +25,29 @@ type PostgresRolePrivileges struct {
 	// pg_read_all_stats and pg_read_all_settings are granted through pg_monitor.
 	ReadAllStats    bool `db:"pg_read_all_stats"`
 	ReadAllSettings bool `db:"pg_read_all_settings"`
+	// ReadAllData is nil before PostgreSQL 14, which has no pg_read_all_data.
+	ReadAllData *bool `db:"pg_read_all_data"`
 }
 
+// pg_has_role errors on a role that doesn't exist, so pg_read_all_data is
+// looked up by OID: no row, and so NULL, before PostgreSQL 14.
 const postgresRolePrivilegesQuery = `SELECT
 	current_user AS role,
 	pg_has_role(current_user, 'pg_read_all_stats', 'USAGE') AS pg_read_all_stats,
-	pg_has_role(current_user, 'pg_read_all_settings', 'USAGE') AS pg_read_all_settings`
+	pg_has_role(current_user, 'pg_read_all_settings', 'USAGE') AS pg_read_all_settings,
+	(SELECT pg_has_role(current_user, oid, 'USAGE') FROM pg_roles WHERE rolname = 'pg_read_all_data') AS pg_read_all_data`
 
 // postgresCapability is a capability the agent needs from its role and what is
 // lost without it. Add a PostgresRolePrivileges field and a row here to check
 // another.
 type postgresCapability struct {
-	name   string
-	has    func(PostgresRolePrivileges) bool
-	impact string
+	name string
+	// has reports whether the role has it, or nil when it can't be checked
+	// (e.g. a predefined role this Postgres version doesn't have); unknown
+	// then says why.
+	has     func(PostgresRolePrivileges) *bool
+	unknown string
+	impact  string
 	// fix is a statement with one %s for the quoted role name.
 	fix string
 }
@@ -46,15 +55,22 @@ type postgresCapability struct {
 var postgresCapabilities = []postgresCapability{
 	{
 		name:   "pg_read_all_stats",
-		has:    func(p PostgresRolePrivileges) bool { return p.ReadAllStats },
+		has:    func(p PostgresRolePrivileges) *bool { return &p.ReadAllStats },
 		impact: "other roles' activity is hidden, so query runtimes, connections, wait events and vacuum progress only cover the agent's own role",
 		fix:    "GRANT pg_monitor TO %s;",
 	},
 	{
 		name:   "pg_read_all_settings",
-		has:    func(p PostgresRolePrivileges) bool { return p.ReadAllSettings },
+		has:    func(p PostgresRolePrivileges) *bool { return &p.ReadAllSettings },
 		impact: "superuser-only settings such as shared_preload_libraries are hidden",
 		fix:    "GRANT pg_monitor TO %s;",
+	},
+	{
+		name:    "pg_read_all_data",
+		has:     func(p PostgresRolePrivileges) *bool { return p.ReadAllData },
+		unknown: "pg_read_all_data needs PostgreSQL 14 or later",
+		impact:  "dbtune can't read column statistics from pg_stats",
+		fix:     "GRANT pg_read_all_data TO %s;",
 	},
 }
 
@@ -92,7 +108,12 @@ func postgresCapabilitiesFor(p PostgresRolePrivileges) []Capability {
 			Impact: pc.impact,
 			Fix:    fmt.Sprintf(pc.fix, quoted),
 		}
-		if !pc.has(p) {
+		switch has := pc.has(p); {
+		case has == nil:
+			caps[i].Status = CapabilityUnknown
+			caps[i].Error = pc.unknown
+			caps[i].Fix = ""
+		case !*has:
 			caps[i].Status = CapabilityMissing
 		}
 	}

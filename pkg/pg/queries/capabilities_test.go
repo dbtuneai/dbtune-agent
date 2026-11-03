@@ -143,16 +143,52 @@ func TestLogCapabilityChanges(t *testing.T) {
 }
 
 func TestPostgresCapabilitiesFor(t *testing.T) {
-	caps := postgresCapabilitiesFor(PostgresRolePrivileges{Role: `odd"role`, ReadAllSettings: true})
+	no := false
+	caps := postgresCapabilitiesFor(PostgresRolePrivileges{Role: `odd"role`, ReadAllSettings: true, ReadAllData: &no})
 	got := strings.Join(capabilityNames(caps), " ")
-	if want := "pg_read_all_stats=missing pg_read_all_settings=ok"; got != want {
+	if want := "pg_read_all_stats=missing pg_read_all_settings=ok pg_read_all_data=missing"; got != want {
 		t.Errorf("capabilities = %s, want %s", got, want)
 	}
 	if want := `GRANT pg_monitor TO "odd""role";`; caps[0].Fix != want {
 		t.Errorf("fix = %q, want %q", caps[0].Fix, want)
 	}
+	if want := `GRANT pg_read_all_data TO "odd""role";`; caps[2].Fix != want {
+		t.Errorf("pg_read_all_data fix = %q, want %q", caps[2].Fix, want)
+	}
 	if caps[0].Impact == "" {
 		t.Error("expected an impact")
+	}
+}
+
+func TestPostgresCapabilitiesFor_ReadAllData(t *testing.T) {
+	yes, no := true, false
+	for _, tc := range []struct {
+		name string
+		has  *bool
+		want CapabilityStatus
+	}{
+		{"granted", &yes, CapabilityOK},
+		{"not granted", &no, CapabilityMissing},
+		{"before PostgreSQL 14", nil, CapabilityUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var c Capability
+			for _, got := range postgresCapabilitiesFor(PostgresRolePrivileges{Role: "agent", ReadAllData: tc.has}) {
+				if got.Name == "pg_read_all_data" {
+					c = got
+				}
+			}
+			if c.Status != tc.want {
+				t.Fatalf("pg_read_all_data = %s, want %s", c.Status, tc.want)
+			}
+			if tc.want == CapabilityUnknown {
+				if c.Error == "" || c.Fix != "" {
+					t.Errorf("unknown pg_read_all_data: error %q, fix %q; want an error and no fix", c.Error, c.Fix)
+				}
+			} else if c.Error != "" || c.Fix == "" {
+				t.Errorf("pg_read_all_data: error %q, fix %q; want no error and a fix", c.Error, c.Fix)
+			}
+		})
 	}
 }
 
