@@ -38,8 +38,14 @@ func TestPostgresCapabilities_PgMonitorAndSuperuser(t *testing.T) {
 		}
 		for name, pool := range map[string]*pgxpool.Pool{"pg_monitor": inst.pool, "superuser": inst.admin} {
 			for capability, status := range postgresStatuses(t, pool) {
-				if status != CapabilityOK {
-					t.Errorf("%s: %s = %s, want ok", name, capability, status)
+				want := CapabilityOK
+				// pg_monitor doesn't include pg_read_all_data, which isn't
+				// checked before PostgreSQL 14.
+				if capability == "pg_read_all_data" && name == "pg_monitor" && inst.version >= 14 {
+					want = CapabilityMissing
+				}
+				if status != want {
+					t.Errorf("%s: %s = %s, want %s", name, capability, status, want)
 				}
 			}
 		}
@@ -86,7 +92,11 @@ func TestPostgresCapabilities_GrantAndRevoke(t *testing.T) {
 		if first == nil {
 			t.Fatal("first tick sent nothing")
 		}
-		for _, name := range []string{"postgres.pg_read_all_stats", "postgres.pg_read_all_settings"} {
+		missing := []string{"postgres.pg_read_all_stats", "postgres.pg_read_all_settings"}
+		if inst.version >= 14 {
+			missing = append(missing, "postgres.pg_read_all_data")
+		}
+		for _, name := range missing {
 			if s := statusOf(first, name); s != CapabilityMissing {
 				t.Errorf("%s = %s, want missing", name, s)
 			}
