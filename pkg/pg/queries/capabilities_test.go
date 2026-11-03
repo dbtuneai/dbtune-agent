@@ -145,11 +145,14 @@ func TestLogCapabilityChanges(t *testing.T) {
 func TestPostgresCapabilitiesFor(t *testing.T) {
 	caps := postgresCapabilitiesFor(PostgresRolePrivileges{Role: `odd"role`, ReadAllSettings: true})
 	got := strings.Join(capabilityNames(caps), " ")
-	if want := "pg_read_all_stats=missing pg_read_all_settings=ok"; got != want {
+	if want := "pg_read_all_stats=missing pg_read_all_settings=ok pg_read_all_data=missing"; got != want {
 		t.Errorf("capabilities = %s, want %s", got, want)
 	}
 	if want := `GRANT pg_monitor TO "odd""role";`; caps[0].Fix != want {
 		t.Errorf("fix = %q, want %q", caps[0].Fix, want)
+	}
+	if want := `GRANT pg_read_all_data TO "odd""role";`; caps[2].Fix != want {
+		t.Errorf("pg_read_all_data fix = %q, want %q", caps[2].Fix, want)
 	}
 	if caps[0].Impact == "" {
 		t.Error("expected an impact")
