@@ -75,7 +75,9 @@ func FetchDBInfo(
 	if rdsInstanceInfo.DBClusterIdentifier != nil {
 		clusterID := aws.ToString(rdsInstanceInfo.DBClusterIdentifier)
 		cluster, err = fetchAuroraClusterInfo(clusterID, clients, ctx)
-		if err != nil {
+		// Outside Serverless v2 the cluster only supplies its parameter group
+		// name, so go without it if the agent may not describe the cluster.
+		if err != nil && (instanceType == "serverless" || !isAccessDenied(err)) {
 			return DBInfo{}, fmt.Errorf("failed to fetch DB cluster info: %w", err)
 		}
 	}
