@@ -271,91 +271,13 @@ type IOCounterStat struct {
 	WriteCount uint64
 }
 
-type XactStat struct {
-	Count     int64
-	Timestamp time.Time
-}
-
-type BufferStat struct {
-	BlksHit   int64
-	BlksRead  int64
-	Timestamp time.Time
-}
-
-type PGDatabase struct {
-	BlksHit               int64
-	BlksRead              int64
-	TuplesReturned        int64
-	TuplesFetched         int64
-	TuplesInserted        int64
-	TuplesUpdated         int64
-	TuplesDeleted         int64
-	TempFiles             int64
-	TempBytes             int64
-	Deadlocks             int64
-	IdleInTransactionTime float64
-	Timestamp             time.Time
-}
-
-type PGBGWriter struct {
-	BuffersClean    int64
-	MaxWrittenClean int64
-	BuffersAlloc    int64
-	Timestamp       time.Time
-}
-
-type PGWAL struct {
-	WALRecords     int64
-	WALFpi         int64
-	WALBytes       int64
-	WALBuffersFull int64
-	WALWrite       int64
-	WALSync        int64
-	WALWriteTime   float64
-	WALSyncTime    float64
-	Timestamp      time.Time
-}
-
-type PGCheckPointer struct {
-	NumTimed       int64
-	NumRequested   int64
-	WriteTime      float64
-	SyncTime       float64
-	BuffersWritten int64
-	Timestamp      time.Time
-}
-
 // Caches is a struct that holds the caches for the agent
 // that is updated between each metric collection beat.
 // Currently, this is fixed for all adapters.
 // TODO: Make this dynamic for each adapter, this could use
 // GJSON and SJSON to update the cache as a string, but the locking then would be a problem in reading and writing without custom methods on state.
 type Caches struct {
-	// QueryRuntimeList is a list of all the queries in pg_stat_statements
-	// The list is used to calculate the runtime of the queries
-	// Example data:
-	// {
-	// 	example_query_id: {
-	// 		"query_id": example_query_id,
-	// 		"total_exec_time": 1000,
-	// 		"calls": 10,
-	// 	},
-	// }
-	QueryRuntimeList map[string]utils.CachedPGStatStatement
-
-	// XactCommit is the number of transactions committed
-	// This is used to calculate the TPS between two heartbeats
-	XactCommit XactStat
-
 	IOCountersStat IOCounterStat
-
-	// stores metrics from pg_stat_database
-	PGDatabase     PGDatabase
-	PGBGWriter     PGBGWriter
-	PGWAL          PGWAL
-	PGCheckPointer PGCheckPointer
-
-	PGUserTables map[string]utils.PGUserTables
 
 	// Hardware specific cache for guardrails
 	// {
@@ -386,16 +308,6 @@ func (state *MetricsState) AddMetric(metric metrics.FlatValue) {
 	defer state.Mutex.Unlock()
 	state.Metrics = append(state.Metrics, metric)
 }
-
-// The list below be used to remove
-// default collectors with help utils
-
-type MetricKey string
-
-const (
-	QueryRuntime      MetricKey = "query_runtime"
-	ActiveConnections MetricKey = "active_connections"
-)
 
 type CommonAgent struct {
 	dbtune.ServerURLs
