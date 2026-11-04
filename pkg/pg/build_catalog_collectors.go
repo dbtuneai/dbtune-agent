@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/dbtuneai/agent/pkg/capabilities"
 	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,7 +26,7 @@ func BuildCatalogCollectors(
 	cfg CollectorsConfig,
 	prepareCtx queries.PrepareCtx,
 	logger *logrus.Logger,
-	extraCheckers ...queries.CapabilityChecker,
+	extraCheckers ...capabilities.CapabilityChecker,
 ) ([]queries.CatalogCollector, error) {
 	if prepareCtx == nil {
 		prepareCtx = noopPrepareCtx
@@ -46,7 +47,7 @@ func BuildCatalogCollectors(
 		return collectorconfig.BaseConfig{}
 	}
 
-	checkers := append([]queries.CapabilityChecker{queries.PostgresCapabilityChecker(pool, prepareCtx)}, extraCheckers...)
+	checkers := append([]capabilities.CapabilityChecker{queries.PostgresCapabilityChecker(pool, prepareCtx)}, extraCheckers...)
 
 	entries := []entry{
 		// Simple collectors

@@ -8,25 +8,25 @@ The DBtune agent is a lightweight, extensible monitoring and configuration manag
 
 - PostgreSQL -
   [docs](https://docs.dbtune.com/postgresql),
-  [config](pkg/pgprem/CONFIG.md)
+  [config](pkg/adapters/pgprem/CONFIG.md)
 - AWS Aurora PostgreSQL -
   [docs](https://docs.dbtune.com/aws-aurora),
-  [config](pkg/rds/CONFIG.md)
+  [config](pkg/adapters/rds/CONFIG.md)
 - AWS RDS PostgreSQL -
   [docs](https://docs.dbtune.com/aws-rds),
-  [config](pkg/rds/CONFIG.md)
+  [config](pkg/adapters/rds/CONFIG.md)
 - Google Cloud SQL -
   [docs](https://docs.dbtune.com/google-cloud-sql),
-  [config](pkg/cloudsql/CONFIG.md)
+  [config](pkg/adapters/cloudsql/CONFIG.md)
 - Aiven -
   [docs](https://docs.dbtune.com/aiven),
-  [config](pkg/aiven/CONFIG.md)
+  [config](pkg/adapters/aiven/CONFIG.md)
 - Azure Flexible Server -
   [docs](https://docs.dbtune.com/azure-flex-server),
-  [config](pkg/azureflex/CONFIG.md)
+  [config](pkg/adapters/azureflex/CONFIG.md)
 - CloudNativePG -
   [docs](https://docs.dbtune.com/cnpg),
-  [config](pkg/cnpg/CONFIG.md)
+  [config](pkg/adapters/cnpg/CONFIG.md)
 
 ## Quick start
 You can use the binary or our docker image to run the `dbtune-agent`.

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/dbtune"
+	"github.com/dbtuneai/agent/pkg/backend"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -36,7 +36,7 @@ func TestSendCatalogPayload(t *testing.T) {
 	ca := &CommonAgent{
 		logger:    logrus.New(),
 		APIClient: retryablehttp.NewClient(),
-		ServerURLs: dbtune.ServerURLs{
+		ServerURLs: backend.ServerURLs{
 			ServerUrl: server.URL,
 			ApiKey:    "k",
 			DbID:      "db",
@@ -71,7 +71,7 @@ func TestSendCatalogPayload_NonSuccessStatus(t *testing.T) {
 	ca := &CommonAgent{
 		logger:    logrus.New(),
 		APIClient: client,
-		ServerURLs: dbtune.ServerURLs{
+		ServerURLs: backend.ServerURLs{
 			ServerUrl: server.URL,
 			ApiKey:    "k",
 			DbID:      "db",

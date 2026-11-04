@@ -18,7 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/dbtuneai/agent/pkg/dbtune"
+	"github.com/dbtuneai/agent/pkg/backend"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
@@ -310,7 +310,7 @@ func (state *MetricsState) AddMetric(metric metrics.FlatValue) {
 }
 
 type CommonAgent struct {
-	dbtune.ServerURLs
+	backend.ServerURLs
 	logger    *log.Logger
 	APIClient *retryablehttp.Client
 	// Unique identifier for this agent instance
@@ -364,7 +364,7 @@ func CreateCommonAgentWithVersion(version string) *CommonAgent {
 		logger.SetLevel(log.InfoLevel)
 	}
 
-	serverUrl, err := dbtune.CreateServerURLs()
+	serverUrl, err := backend.CreateServerURLs()
 	if err != nil {
 		logger.Fatalf("Error creating server URLs: %s", err)
 	}

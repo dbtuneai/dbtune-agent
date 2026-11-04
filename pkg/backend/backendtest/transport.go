@@ -1,10 +1,10 @@
-// Package dbtunetest provides test infrastructure for the DBtune API.
+// Package backendtest provides test infrastructure for the DBtune API.
 //
 // It serves two purposes:
 //   - documents the surface area of the DBtune API that we use and rely on
 //   - allows for testing DBtune API interactions so we can make changes with
 //     confidence that we are not breaking things
-package dbtunetest
+package backendtest
 
 import (
 	"bytes"

@@ -9,8 +9,8 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/guardrails"
+	"github.com/dbtuneai/agent/pkg/internal/kubernetes"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
-	"github.com/dbtuneai/agent/pkg/kubernetes"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/jackc/pgx/v5/pgxpool"
