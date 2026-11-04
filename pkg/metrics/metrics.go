@@ -17,8 +17,6 @@ const (
 	Float      MetricType = "float"
 	String     MetricType = "string"
 	Bytes      MetricType = "bytes"
-	Boolean    MetricType = "boolean"
-	Time       MetricType = "time"
 	Percentage MetricType = "percentage"
 )
 
@@ -52,7 +50,7 @@ type FormattedSystemInfo struct {
 func NewMetric(key string, value interface{}, typeStr MetricType) (FlatValue, error) {
 	// Determine the type based on the provided type string
 	switch typeStr {
-	case "int", "bytes", "time":
+	case "int", "bytes":
 		v := reflect.ValueOf(value)
 		if !(v.Kind() >= reflect.Int && v.Kind() <= reflect.Uint64) {
 			return FlatValue{}, fmt.Errorf("value is not of type int")
@@ -73,10 +71,6 @@ func NewMetric(key string, value interface{}, typeStr MetricType) (FlatValue, er
 	case "string":
 		if _, ok := value.(string); !ok {
 			return FlatValue{}, fmt.Errorf("value is not of type string")
-		}
-	case "boolean":
-		if _, ok := value.(bool); !ok {
-			return FlatValue{}, fmt.Errorf("value is not of type boolean")
 		}
 	default:
 		return FlatValue{}, fmt.Errorf("unknown type: %s", typeStr)

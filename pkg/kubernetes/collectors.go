@@ -9,12 +9,6 @@ import (
 	"github.com/dbtuneai/agent/pkg/metrics"
 )
 
-// ContainerMetricsConfig holds configuration for collecting container metrics
-type ContainerMetricsConfig struct {
-	Client    *Client
-	Namespace string
-}
-
 // ContainerMetricsCache stores previous metric values for calculating deltas
 type ContainerMetricsCache struct {
 	PreviousCPUMillicores       int64
