@@ -12,15 +12,19 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Metric collector key constants.
-// These are the Key values used in adapter MetricCollector entries.
+// Collector names left from before Postgres metrics moved from
+// MetricCollectors to CatalogCollectors. They stay in the collector registry
+// below so configs and DBT_COLLECTOR_* env vars that name them still parse.
+// MetricHardware is still the Key of each adapter's hardware MetricCollector.
+// Some names are also a catalog collector's name (database_connections,
+// system_db_size, server_uptime), so their config applies to that collector;
+// config under the other names is accepted and ignored.
 const (
 	MetricDatabaseTransactionsPerSecond = "database_transactions_per_second"
 	MetricDatabaseConnections           = "database_connections"
 	MetricSystemDbSize                  = "system_db_size"
 	MetricDatabaseAutovacuumCount       = "database_autovacuum_count"
 	MetricServerUptime                  = "server_uptime"
-	MetricPgDatabase                    = "pg_database"
 	MetricPgUserTables                  = "pg_user_tables"
 	MetricPgBgwriter                    = "pg_bgwriter"
 	MetricPgWal                         = "pg_wal"
