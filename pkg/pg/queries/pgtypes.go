@@ -106,6 +106,15 @@ func (t TimestampTZ) MarshalJSON() ([]byte, error) {
 	return json.Marshal(time.Time(t))
 }
 
+func (t *TimestampTZ) UnmarshalJSON(data []byte) error {
+	var v time.Time
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	*t = TimestampTZ(v)
+	return nil
+}
+
 // Anyarray and Float4Array remain json.RawMessage — they require
 // special conversion logic in pg_stats.go.
 type Anyarray = json.RawMessage
