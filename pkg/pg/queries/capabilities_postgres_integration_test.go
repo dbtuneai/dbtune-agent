@@ -6,19 +6,20 @@ import (
 	"context"
 	"testing"
 
+	"github.com/dbtuneai/agent/pkg/capabilities"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
 )
 
 // postgresStatuses runs the Postgres checker once and returns each
 // capability's status by name.
-func postgresStatuses(t *testing.T, pool *pgxpool.Pool) map[string]CapabilityStatus {
+func postgresStatuses(t *testing.T, pool *pgxpool.Pool) map[string]capabilities.CapabilityStatus {
 	t.Helper()
 	caps, err := PostgresCapabilityChecker(pool, noopPrepareCtx).Check(context.Background())
 	if err != nil {
 		t.Fatalf("Check() error: %v", err)
 	}
-	statuses := make(map[string]CapabilityStatus, len(caps))
+	statuses := make(map[string]capabilities.CapabilityStatus, len(caps))
 	for _, c := range caps {
 		statuses[c.Name] = c.Status
 	}
@@ -38,7 +39,7 @@ func TestPostgresCapabilities_PgMonitorAndSuperuser(t *testing.T) {
 		}
 		for name, pool := range map[string]*pgxpool.Pool{"pg_monitor": inst.pool, "superuser": inst.admin} {
 			for capability, status := range postgresStatuses(t, pool) {
-				if status != CapabilityOK {
+				if status != capabilities.CapabilityOK {
 					t.Errorf("%s: %s = %s, want ok", name, capability, status)
 				}
 			}
@@ -71,7 +72,7 @@ func TestPostgresCapabilities_GrantAndRevoke(t *testing.T) {
 
 		// Through the collector, so a grant is shown to reach the payload.
 		collector := CapabilitiesCollector(logrus.New(), PostgresCapabilityChecker(pool, noopPrepareCtx))
-		statusOf := func(p *CapabilitiesPayload, name string) CapabilityStatus {
+		statusOf := func(p *CapabilitiesPayload, name string) capabilities.CapabilityStatus {
 			t.Helper()
 			for _, c := range p.Capabilities {
 				if c.Name == name {
@@ -87,7 +88,7 @@ func TestPostgresCapabilities_GrantAndRevoke(t *testing.T) {
 			t.Fatal("first tick sent nothing")
 		}
 		for _, name := range []string{"postgres.pg_read_all_stats", "postgres.pg_read_all_settings"} {
-			if s := statusOf(first, name); s != CapabilityMissing {
+			if s := statusOf(first, name); s != capabilities.CapabilityMissing {
 				t.Errorf("%s = %s, want missing", name, s)
 			}
 		}
@@ -102,10 +103,10 @@ func TestPostgresCapabilities_GrantAndRevoke(t *testing.T) {
 		if granted == nil {
 			t.Fatal("tick after grant sent nothing")
 		}
-		if s := statusOf(granted, "postgres.pg_read_all_stats"); s != CapabilityOK {
+		if s := statusOf(granted, "postgres.pg_read_all_stats"); s != capabilities.CapabilityOK {
 			t.Errorf("after grant pg_read_all_stats = %s, want ok", s)
 		}
-		if s := statusOf(granted, "postgres.pg_read_all_settings"); s != CapabilityMissing {
+		if s := statusOf(granted, "postgres.pg_read_all_settings"); s != capabilities.CapabilityMissing {
 			t.Errorf("after grant pg_read_all_settings = %s, want missing", s)
 		}
 
@@ -113,7 +114,7 @@ func TestPostgresCapabilities_GrantAndRevoke(t *testing.T) {
 			t.Fatalf("revoke: %v", err)
 		}
 		revoked := collectCapabilities(t, collector)
-		if revoked == nil || statusOf(revoked, "postgres.pg_read_all_stats") != CapabilityMissing {
+		if revoked == nil || statusOf(revoked, "postgres.pg_read_all_stats") != capabilities.CapabilityMissing {
 			t.Fatalf("payload after revoke = %+v, want pg_read_all_stats missing", revoked)
 		}
 	})

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/dbtune"
+	"github.com/dbtuneai/agent/pkg/backend"
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -25,7 +25,7 @@ func CheckStartupRequirements(pool *pgxpool.Pool) error {
 	}
 
 	// Check dbtune server URL, API key, and database ID
-	serverURLs, err := dbtune.CreateServerURLs()
+	serverURLs, err := backend.CreateServerURLs()
 	if err != nil {
 		return fmt.Errorf("dbtune server configuration invalid: %w", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dbtuneai/agent/pkg/capabilities"
 	"github.com/sirupsen/logrus"
 	"github.com/sirupsen/logrus/hooks/test"
 )
@@ -20,10 +21,10 @@ func discardLogger() *logrus.Logger {
 }
 
 // fakeChecker returns whatever caps points at on each tick.
-func fakeChecker(name string, caps *[]Capability) CapabilityChecker {
-	return CapabilityChecker{
+func fakeChecker(name string, caps *[]capabilities.Capability) capabilities.CapabilityChecker {
+	return capabilities.CapabilityChecker{
 		Name:  name,
-		Check: func(context.Context) ([]Capability, error) { return *caps, nil },
+		Check: func(context.Context) ([]capabilities.Capability, error) { return *caps, nil },
 	}
 }
 
@@ -43,7 +44,7 @@ func collectCapabilities(t *testing.T, c CatalogCollector) *CapabilitiesPayload 
 	return &p
 }
 
-func capabilityNames(caps []Capability) []string {
+func capabilityNames(caps []capabilities.Capability) []string {
 	names := make([]string, len(caps))
 	for i, c := range caps {
 		names[i] = c.Name + "=" + string(c.Status)
@@ -52,10 +53,10 @@ func capabilityNames(caps []Capability) []string {
 }
 
 func TestCapabilitiesCollector_PrefixesAndOrdersCheckers(t *testing.T) {
-	pg := []Capability{{Name: "pg_read_all_stats", Status: CapabilityOK}}
-	aws := []Capability{
-		{Name: "rds:DescribeDBClusters", Status: CapabilityMissing},
-		{Name: "rds:RebootDBInstance", Status: CapabilityUnknown, Error: "can't be checked without rebooting"},
+	pg := []capabilities.Capability{{Name: "pg_read_all_stats", Status: capabilities.CapabilityOK}}
+	aws := []capabilities.Capability{
+		{Name: "rds:DescribeDBClusters", Status: capabilities.CapabilityMissing},
+		{Name: "rds:RebootDBInstance", Status: capabilities.CapabilityUnknown, Error: "can't be checked without rebooting"},
 	}
 	c := CapabilitiesCollector(discardLogger(), fakeChecker("postgres", &pg), fakeChecker("aws", &aws))
 
@@ -74,7 +75,7 @@ func TestCapabilitiesCollector_PrefixesAndOrdersCheckers(t *testing.T) {
 }
 
 func TestCapabilitiesCollector_SendsOnlyOnChange(t *testing.T) {
-	caps := []Capability{{Name: "a", Status: CapabilityMissing}}
+	caps := []capabilities.Capability{{Name: "a", Status: capabilities.CapabilityMissing}}
 	c := CapabilitiesCollector(discardLogger(), fakeChecker("x", &caps))
 
 	if collectCapabilities(t, c) == nil {
@@ -83,18 +84,18 @@ func TestCapabilitiesCollector_SendsOnlyOnChange(t *testing.T) {
 	if p := collectCapabilities(t, c); p != nil {
 		t.Fatalf("unchanged tick sent %+v", p)
 	}
-	caps = []Capability{{Name: "a", Status: CapabilityOK}}
+	caps = []capabilities.Capability{{Name: "a", Status: capabilities.CapabilityOK}}
 	p := collectCapabilities(t, c)
-	if p == nil || p.Capabilities[0].Status != CapabilityOK {
+	if p == nil || p.Capabilities[0].Status != capabilities.CapabilityOK {
 		t.Fatalf("changed tick = %+v, want x.a ok", p)
 	}
 }
 
 func TestCapabilitiesCollector_CheckerErrorFailsTick(t *testing.T) {
-	ok := []Capability{{Name: "a", Status: CapabilityOK}}
-	failing := CapabilityChecker{
+	ok := []capabilities.Capability{{Name: "a", Status: capabilities.CapabilityOK}}
+	failing := capabilities.CapabilityChecker{
 		Name:  "broken",
-		Check: func(context.Context) ([]Capability, error) { return nil, errors.New("boom") },
+		Check: func(context.Context) ([]capabilities.Capability, error) { return nil, errors.New("boom") },
 	}
 	c := CapabilitiesCollector(discardLogger(), fakeChecker("x", &ok), failing)
 	_, err := c.Collect(context.Background())
@@ -106,12 +107,12 @@ func TestCapabilitiesCollector_CheckerErrorFailsTick(t *testing.T) {
 func TestLogCapabilityChanges(t *testing.T) {
 	logger, hook := test.NewNullLogger()
 
-	missing := Capability{Name: "postgres.pg_read_all_stats", Status: CapabilityMissing, Impact: "stats hidden", Fix: "GRANT pg_monitor TO x;"}
-	ok := Capability{Name: "postgres.pg_read_all_settings", Status: CapabilityOK}
-	unknown := Capability{Name: "aws.rds:RebootDBInstance", Status: CapabilityUnknown, Error: "not checkable"}
+	missing := capabilities.Capability{Name: "postgres.pg_read_all_stats", Status: capabilities.CapabilityMissing, Impact: "stats hidden", Fix: "GRANT pg_monitor TO x;"}
+	ok := capabilities.Capability{Name: "postgres.pg_read_all_settings", Status: capabilities.CapabilityOK}
+	unknown := capabilities.Capability{Name: "aws.rds:RebootDBInstance", Status: capabilities.CapabilityUnknown, Error: "not checkable"}
 
 	// First tick: only the missing and unknown ones are logged.
-	logCapabilityChanges(logger, nil, []Capability{missing, ok, unknown})
+	logCapabilityChanges(logger, nil, []capabilities.Capability{missing, ok, unknown})
 	entries := hook.AllEntries()
 	if len(entries) != 2 {
 		t.Fatalf("first tick logged %d entries, want 2: %v", len(entries), entries)
@@ -125,8 +126,8 @@ func TestLogCapabilityChanges(t *testing.T) {
 
 	// Unchanged: nothing logged.
 	hook.Reset()
-	prev := map[string]Capability{missing.Name: missing, ok.Name: ok, unknown.Name: unknown}
-	logCapabilityChanges(logger, prev, []Capability{missing, ok, unknown})
+	prev := map[string]capabilities.Capability{missing.Name: missing, ok.Name: ok, unknown.Name: unknown}
+	logCapabilityChanges(logger, prev, []capabilities.Capability{missing, ok, unknown})
 	if n := len(hook.AllEntries()); n != 0 {
 		t.Errorf("unchanged tick logged %d entries", n)
 	}
@@ -134,8 +135,8 @@ func TestLogCapabilityChanges(t *testing.T) {
 	// Recovered: logged once at info.
 	hook.Reset()
 	fixed := missing
-	fixed.Status = CapabilityOK
-	logCapabilityChanges(logger, prev, []Capability{fixed, ok, unknown})
+	fixed.Status = capabilities.CapabilityOK
+	logCapabilityChanges(logger, prev, []capabilities.Capability{fixed, ok, unknown})
 	entries = hook.AllEntries()
 	if len(entries) != 1 || entries[0].Level != logrus.InfoLevel || entries[0].Message != "capability postgres.pg_read_all_stats is now available" {
 		t.Errorf("recovery logged as %v, want one info entry", entries)

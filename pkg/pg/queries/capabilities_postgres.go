@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/dbtuneai/agent/pkg/capabilities"
 	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/jackc/pgx/v5"
@@ -59,11 +60,11 @@ var postgresCapabilities = []postgresCapability{
 }
 
 // PostgresCapabilityChecker checks the agent's database role.
-func PostgresCapabilityChecker(pool *pgxpool.Pool, prepareCtx PrepareCtx) CapabilityChecker {
+func PostgresCapabilityChecker(pool *pgxpool.Pool, prepareCtx PrepareCtx) capabilities.CapabilityChecker {
 	scanner := pgxutil.NewScanner[PostgresRolePrivileges]()
-	return CapabilityChecker{
+	return capabilities.CapabilityChecker{
 		Name: PostgresCapabilityCheckerName,
-		Check: func(ctx context.Context) ([]Capability, error) {
+		Check: func(ctx context.Context) ([]capabilities.Capability, error) {
 			ctx, err := prepareCtx(ctx)
 			if err != nil {
 				return nil, err
@@ -82,18 +83,18 @@ func PostgresCapabilityChecker(pool *pgxpool.Pool, prepareCtx PrepareCtx) Capabi
 	}
 }
 
-func postgresCapabilitiesFor(p PostgresRolePrivileges) []Capability {
+func postgresCapabilitiesFor(p PostgresRolePrivileges) []capabilities.Capability {
 	quoted := pgx.Identifier{p.Role}.Sanitize()
-	caps := make([]Capability, len(postgresCapabilities))
+	caps := make([]capabilities.Capability, len(postgresCapabilities))
 	for i, pc := range postgresCapabilities {
-		caps[i] = Capability{
+		caps[i] = capabilities.Capability{
 			Name:   pc.name,
-			Status: CapabilityOK,
+			Status: capabilities.CapabilityOK,
 			Impact: pc.impact,
 			Fix:    fmt.Sprintf(pc.fix, quoted),
 		}
 		if !pc.has(p) {
-			caps[i].Status = CapabilityMissing
+			caps[i].Status = capabilities.CapabilityMissing
 		}
 	}
 	return caps

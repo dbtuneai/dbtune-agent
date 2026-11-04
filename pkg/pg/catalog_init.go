@@ -3,6 +3,7 @@ package pg
 import (
 	"fmt"
 
+	"github.com/dbtuneai/agent/pkg/capabilities"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
@@ -14,7 +15,7 @@ import (
 //
 // extraCheckers are the adapter's own capability checks (cloud API
 // permissions, ...), run by the capabilities collector after the Postgres one.
-func StandardCatalogCollectors(pool *pgxpool.Pool, pgVersion Version, logger *logrus.Logger, extraCheckers ...queries.CapabilityChecker) ([]queries.CatalogCollector, error) {
+func StandardCatalogCollectors(pool *pgxpool.Pool, pgVersion Version, logger *logrus.Logger, extraCheckers ...capabilities.CapabilityChecker) ([]queries.CatalogCollector, error) {
 	cfg, err := CollectorsConfigFromViper(logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse collectors config: %w", err)
@@ -24,6 +25,6 @@ func StandardCatalogCollectors(pool *pgxpool.Pool, pgVersion Version, logger *lo
 
 // CatalogCollectorsForVersion builds the catalog collector set with a
 // pre-loaded/adjusted CollectorsConfig.
-func CatalogCollectorsForVersion(pool *pgxpool.Pool, pgVersion Version, cfg CollectorsConfig, logger *logrus.Logger, extraCheckers ...queries.CapabilityChecker) ([]queries.CatalogCollector, error) {
+func CatalogCollectorsForVersion(pool *pgxpool.Pool, pgVersion Version, cfg CollectorsConfig, logger *logrus.Logger, extraCheckers ...capabilities.CapabilityChecker) ([]queries.CatalogCollector, error) {
 	return BuildCatalogCollectors(pool, pgVersion.Major, cfg, nil, logger, extraCheckers...)
 }

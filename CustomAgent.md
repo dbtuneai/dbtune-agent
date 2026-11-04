@@ -6,7 +6,7 @@ This guide explains how to build DBtune agent from source and extend it with cus
 
 1. Prerequisites:
 
-   - Go 1.23.1 or later
+   - Go 1.25 or later
    - Git
 
 2. Clone and build:
@@ -21,118 +21,158 @@ go build -o dbtune-agent cmd/agent.go
 
 ```
 dbtune-agent/
-├── cmd/                    # Main application entry points
-├── pkg/                    # Core packages
-│   ├── adapters/           # Database deployment type adapters (PostgreSQL, Docker)
-│   ├── adeptersinterfaces/ # Common interfaces for adapters
-│   ├── agent/              # Core agent functionality
-│   ├── collectors/         # Metric collection implementations
-│   ├── internal/           # Internal utilities and parameters
-│   └── runner/             # Agent runtime execution
+├── cmd/agent.go            # Entry point: picks an adapter, runs startup checks, starts the runner
+└── pkg/
+    ├── adapters/           # One package per deployment type, each with a CONFIG.md
+    │   ├── aiven/
+    │   ├── azureflex/
+    │   ├── cloudsql/
+    │   ├── cnpg/
+    │   ├── docker/
+    │   ├── patroni/
+    │   ├── pgprem/         # Self-managed PostgreSQL (--local)
+    │   └── rds/            # RDS and Aurora
+    ├── agent/              # AgentLooper interface, CommonAgent, MetricCollector
+    ├── backend/            # DBtune backend URLs; backendtest fakes the backend in tests
+    ├── capabilities/       # Capability and CapabilityChecker types
+    ├── checks/             # Startup checks for config and connectivity
+    ├── guardrails/         # Guardrail signals and settings
+    ├── metrics/            # Metric definitions and payload formatting
+    ├── pg/                 # PostgreSQL config, helpers and collector configuration
+    │   └── queries/        # Catalog collectors, one per PostgreSQL view
+    ├── runner/             # Runs the collection, sending, config and guardrail loops
+    ├── version/            # Build version information
+    └── internal/           # kubernetes (used by cnpg), parameters, pgxutil, utils
 ```
+
+## How the agent runs
+
+`cmd/agent.go` creates one adapter, chosen by a flag (`--local`, `--docker`, `--rds`, `--aurora`, `--aiven`, `--cloudsql`, `--cnpg`, `--patroni`, `--azure-flex`) or, without a flag, detected from environment variables and the config file. It then hands the adapter to `runner.Runner`, which runs these loops:
+
+| Loop | Interval | What it does |
+|---|---|---|
+| Heartbeat | 15s | Tells the backend the agent is alive |
+| Metrics | 5s | Runs the adapter's metric collectors and sends their values together |
+| System info | 1 min | Sends hardware and PostgreSQL facts (memory, CPU count, version, ...) |
+| Config | 5s | Sends the active configuration, fetches a recommended one and applies it |
+| Guardrails | 1s, at most every 15s | Checks for problems such as memory pressure and signals the backend |
+| Catalog collectors | Each its own | Queries one PostgreSQL view and sends it as its own payload |
+
+The agent collects two kinds of data:
+
+- **Metric collectors** (`agent.MetricCollector`) gather hardware and infrastructure metrics from outside PostgreSQL: the OS, Docker, Kubernetes or a cloud provider's monitoring API. Each adapter supplies its own.
+- **Catalog collectors** (`queries.CatalogCollector`) query PostgreSQL views such as `pg_stat_statements`, `pg_class` or `pg_stats`. Every adapter gets the same set from `pg.StandardCatalogCollectors`. Users can enable, disable and tune them in the `collectors:` section of the config file or with `DBT_COLLECTOR_*` environment variables.
 
 ## Extension points
 
-The DBtune agent is designed to be extensible through its adapter architecture. You can extend it in several ways:
+### Adding an adapter
 
-1. Custom database adapters (PostgreSQL On-prem, RDS, Aurora, Tembo, etc.)
-2. New metric collectors (custom metrics)
-3. Custom parameter management
-4. Additional data sources (sources like Prometheus, Datadog, etc.)
-
-### Creating a custom adapter
-
-1. Create a new adapter struct that implements the PostgreSQLAdapter interface from `pkg/adeptersinterfaces`:
+An adapter implements `agent.AgentLooper`. Embed `agent.CommonAgent`, which provides the backend client, the heartbeat, the metric loop and every `Send*` method, and `agent.CatalogGetter`, which provides `CatalogCollectors()`. You then only write the parts that depend on the deployment type:
 
 ```go
-type CustomAdapter struct {
-    adapters.DefaultPostgreSQLAdapter
-    // Add custom fields
+package myadapter
+
+type MyAdapter struct {
+	agent.CommonAgent
+	agent.CatalogGetter
+	pool *pgxpool.Pool
 }
 
-// Required interface methods to implement:
-func (a *CustomAdapter) Logger() *logrus.Logger
-func (a *CustomAdapter) PGDriver() *pgPool.Pool
-func (a *CustomAdapter) APIClient() *retryablehttp.Client
+func CreateMyAdapter() (*MyAdapter, error) {
+	pgConfig, err := pg.ConfigFromViper(nil)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := pgxpool.New(context.Background(), pgConfig.ConnectionURL)
+	if err != nil {
+		return nil, err
+	}
+	pgVersion, err := pg.PGVersion(pool)
+	if err != nil {
+		return nil, err
+	}
 
-// Optional: Implement additional methods to extend/override functionality
-func (a *CustomAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
-    // Custom system info implementation
+	common := agent.CreateCommonAgent()
+	common.DBPool = pool
+	a := &MyAdapter{CommonAgent: *common, pool: pool}
+
+	catalog, err := pg.StandardCatalogCollectors(pool, pgVersion, common.Logger())
+	if err != nil {
+		return nil, err
+	}
+	a.SetCatalogCollectors(catalog)
+	a.InitCollectors([]agent.MetricCollector{
+		{Key: pg.MetricHardware, Collector: myHardwareCollector()},
+	})
+	return a, nil
 }
 
-func (a *CustomAdapter) Guardrails(ctx context.Context) *agent.GuardrailSignal {
-    // Custom guardrails implementation
+// The deployment-specific part of agent.AgentLooper:
+func (a *MyAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error)
+func (a *MyAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error)
+func (a *MyAdapter) ApplyConfig(ctx context.Context, cfg *agent.ProposedConfigResponse) agent.ApplyConfigError
+func (a *MyAdapter) Guardrails(ctx context.Context) *guardrails.Signal
+```
+
+`pkg/adapters/pgprem` is the simplest complete example. To finish the adapter:
+
+1. Put it in `pkg/adapters/<name>/` with a `CONFIG.md` describing its settings.
+2. Add a flag and a `case` for it in `cmd/agent.go`. To support detection without a flag, add `DetectConfigFromEnv` and `DetectConfigFromConfigFile` functions like the other adapters have.
+
+### Adding a hardware metric
+
+A metric collector adds values to the shared `MetricsState`. Use a definition from `pkg/metrics` where one fits:
+
+```go
+func myHardwareCollector() func(ctx context.Context, state *agent.MetricsState) error {
+	return func(ctx context.Context, state *agent.MetricsState) error {
+		usage, err := readCPUUsage()
+		if err != nil {
+			return err
+		}
+		metric, err := metrics.NodeCPUUsage.AsFlatValue(usage)
+		if err != nil {
+			return err
+		}
+		state.AddMetric(metric)
+		return nil
+	}
 }
 ```
 
-2. Modify the `cmd/agent.go` to include your adapter and run it:
+For a new metric, define it with `metrics.MetricDef{Key: "my_metric", Type: metrics.Int}`. The backend also needs to know a new key before it can use it.
+
+### Adding a catalog collector
+
+A catalog collector is a row type, a name, an interval and a query. `pg_stat_archiver` is a minimal example:
 
 ```go
-    case *useCustomAdapter:
-        adapter, err = adapters.CreateCustomAdapter()
-        if err != nil {
-            log.Fatalf("Failed to create Custom adapter: %v", err)
-        }
-```
+type PgStatArchiverRow struct {
+	ArchivedCount *Bigint `json:"archived_count" db:"archived_count"`
+	// ...
+}
 
-### Adding new metric collectors
+const (
+	PgStatArchiverName     = "pg_stat_archiver"
+	PgStatArchiverInterval = 1 * time.Minute
+)
 
-1. Create a new collector in the `pkg/collectors` package:
-
-```go
-func NewCustomCollector(pgAdapter adeptersinterfaces.PostgreSQLAdapter) func(ctx context.Context, state *agent.MetricsState) error {
-    return func(ctx context.Context, state *agent.MetricsState) error {
-        // Implement collection logic
-        value, err := collectCustomMetric()
-        if err != nil {
-            return err
-        }
-
-        // If you can prefer to use the metrics defined in `metrics.go`
-        metric, err := metrics.NodeOSInfo.AsFlatValue(value)
-        if err != nil {
-            return err
-        }
-
-        state.AddMetric(metric)
-
-        // Or to create a custom metric,
-        custom_metric, err := metrics.MetricDef{Key: "my_metric", Type: metrics.Int}.AsFlatValue(value)
-        if err != nil {
-            return err
-        }
-
-
-        state.AddMetric(custom_metric)
-        return nil
-    }
+func PgStatArchiverCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
+	return NewCollector[PgStatArchiverRow](pool, prepareCtx, PgStatArchiverName, PgStatArchiverInterval,
+		`SELECT * FROM pg_stat_archiver`, WithSkipUnchanged())
 }
 ```
 
-2. Register the collector with your adapter:
+Then register it in two places:
 
-```go
-func CreateCustomAdapter() (*CustomAdapter, error) {
-    // Initialize base adapter...
+1. The `entries` list in `pg.BuildCatalogCollectors` (`pkg/pg/build_catalog_collectors.go`), so every adapter runs it.
+2. The `collectors` registry in `pkg/pg/collector_config.go`, so users can configure it.
 
-    customAdapter := &CustomAdapter{
-        DefaultPostgreSQLAdapter: *defaultAdapter,
-        // Initialize custom fields...
-    }
+Each catalog collector posts to `/api/v1/agent/<name>`, so the backend needs that endpoint before the collector ships.
 
-    // Add custom collectors
-    customAdapter.MetricsState.Collectors = append(
-        defaultAdapter.MetricsState.Collectors,
-        agent.MetricCollector{
-            Key:        "custom_metric",
-            MetricType: utils.Int,
-            Collector:  collectors.NewCustomCollector(customAdapter),
-        },
-    )
+### Reporting missing permissions
 
-    return customAdapter, nil
-}
-```
+When the agent can run without a permission but loses data or features, report it as a capability instead of failing startup. Write a `capabilities.CapabilityChecker` and pass it to `pg.StandardCatalogCollectors` as an extra checker. The capabilities collector runs every checker, logs what is missing and reports it to the backend.
 
 ## Development guidelines
 
@@ -141,13 +181,13 @@ func CreateCustomAdapter() (*CustomAdapter, error) {
 1. Unit tests:
 
 ```bash
-go test ./...
+task test   # or: go test ./...
 ```
 
-2. Integration tests:
+2. Integration tests (run against PostgreSQL 13 to 18; requires Docker):
 
 ```bash
-task integration-tests
+task test-integration
 ```
 
 3. Local development environment:
@@ -156,8 +196,8 @@ task integration-tests
 # Start a local PostgreSQL instance
 task start-dev-postgres
 
-# Run the agent in debug mode
-go run cmd/agent.go
+# Run the agent against it
+go run cmd/agent.go --local
 ```
 
 ## Debugging

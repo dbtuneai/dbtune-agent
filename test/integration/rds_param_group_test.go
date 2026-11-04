@@ -55,9 +55,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dbtuneai/agent/pkg/adapters/rds"
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/metrics"
-	"github.com/dbtuneai/agent/pkg/rds"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

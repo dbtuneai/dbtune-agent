@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/kubernetes"
+	"github.com/dbtuneai/agent/pkg/internal/kubernetes"
 )
 
 const (

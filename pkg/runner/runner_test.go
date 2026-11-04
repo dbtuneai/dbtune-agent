@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/dbtune"
-	"github.com/dbtuneai/agent/pkg/dbtune/dbtunetest"
+	"github.com/dbtuneai/agent/pkg/backend"
+	"github.com/dbtuneai/agent/pkg/backend/backendtest"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
@@ -459,7 +459,7 @@ func createStubAgentLooper(rt http.RoundTripper) *stubAgentLooper {
 	ca := agent.CommonAgent{
 		AgentID:   "test-agent",
 		APIClient: client,
-		ServerURLs: dbtune.ServerURLs{
+		ServerURLs: backend.ServerURLs{
 			ServerUrl: "http://localhost:8080",
 			ApiKey:    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
 			DbID:      "550e8400-e29b-41d4-a716-446655440000",
@@ -477,7 +477,7 @@ func createStubAgentLooper(rt http.RoundTripper) *stubAgentLooper {
 // Heartbeat (skipFirst: true, 15 s ticker) and log-entries (error-path only)
 // are excluded because they do not fire in a short test window.
 func TestRunnerCallsAllAPIActions(t *testing.T) {
-	transport := dbtunetest.CreateSuccessfulTripWithRoutes([]dbtunetest.Route{
+	transport := backendtest.CreateSuccessfulTripWithRoutes([]backendtest.Route{
 		{"/api/v1/agent/configurations", http.MethodGet},
 		{"/api/v1/agent/configurations", http.MethodPost},
 		{"/api/v1/agent/metrics", http.MethodPost},

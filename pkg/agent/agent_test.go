@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/dbtune"
-	"github.com/dbtuneai/agent/pkg/dbtune/dbtunetest"
+	"github.com/dbtuneai/agent/pkg/backend"
+	"github.com/dbtuneai/agent/pkg/backend/backendtest"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/hashicorp/go-retryablehttp"
@@ -125,7 +125,7 @@ func TestGetMetrics(t *testing.T) {
 	// A panicking collector used to take the whole process down, since
 	// collectors run in their own goroutine and nothing recovered.
 	t.Run("panicking collector does not kill the process", func(t *testing.T) {
-		transport := dbtunetest.CreateSuccessfulTripWithRoutes([]dbtunetest.Route{
+		transport := backendtest.CreateSuccessfulTripWithRoutes([]backendtest.Route{
 			{"/api/v1/agent/log-entries", http.MethodPost},
 		})
 		agent := CreateCommonAgentForTests(transport)
@@ -165,7 +165,7 @@ func TestGetMetrics(t *testing.T) {
 	// A collector that panics once panics on every tick, so its reports back
 	// off instead of firing every 5 seconds forever.
 	t.Run("a collector stuck panicking is throttled", func(t *testing.T) {
-		transport := dbtunetest.CreateSuccessfulTripWithRoutes([]dbtunetest.Route{
+		transport := backendtest.CreateSuccessfulTripWithRoutes([]backendtest.Route{
 			{"/api/v1/agent/log-entries", http.MethodPost},
 		})
 		agent := CreateCommonAgentForTests(transport)
@@ -212,7 +212,7 @@ func CreateCommonAgentForTests(rt http.RoundTripper) CommonAgent {
 		AgentID:   "test-agent",
 		APIClient: httpClient,
 		logger:    logrus.New(),
-		ServerURLs: dbtune.ServerURLs{
+		ServerURLs: backend.ServerURLs{
 			ServerUrl: "http://localhost:8080",
 			ApiKey:    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
 			DbID:      "550e8400-e29b-41d4-a716-446655440000",
@@ -223,7 +223,7 @@ func CreateCommonAgentForTests(rt http.RoundTripper) CommonAgent {
 }
 
 func TestCommonAgent_SendHeartbeat_Succeeds(t *testing.T) {
-	transport := dbtunetest.CreateSuccessfulTrip()
+	transport := backendtest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
 
 	err := agent.SendHeartbeat(context.Background())
@@ -233,7 +233,7 @@ func TestCommonAgent_SendHeartbeat_Succeeds(t *testing.T) {
 }
 
 func TestCommonAgent_SendActiveConfig_Succeeds(t *testing.T) {
-	transport := dbtunetest.CreateSuccessfulTrip()
+	transport := backendtest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
 	config := ConfigArraySchema{}
 
@@ -244,7 +244,7 @@ func TestCommonAgent_SendActiveConfig_Succeeds(t *testing.T) {
 }
 
 func TestCommonAgent_SendError_Succeeds(t *testing.T) {
-	transport := dbtunetest.CreateSuccessfulTrip()
+	transport := backendtest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
 
 	err := agent.SendError(context.Background(), ErrorPayload{
@@ -258,7 +258,7 @@ func TestCommonAgent_SendError_Succeeds(t *testing.T) {
 }
 
 func TestCommonAgent_SendGuardrailSignal_Succeeds(t *testing.T) {
-	transport := dbtunetest.CreateSuccessfulTrip()
+	transport := backendtest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
 
 	err := agent.SendGuardrailSignal(context.Background(), guardrails.Signal{
@@ -271,7 +271,7 @@ func TestCommonAgent_SendGuardrailSignal_Succeeds(t *testing.T) {
 }
 
 func TestCommonAgent_SendMetrics_Succeeds(t *testing.T) {
-	transport := dbtunetest.CreateSuccessfulTrip()
+	transport := backendtest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
 
 	err := agent.SendMetrics(context.Background(), []metrics.FlatValue{
@@ -284,7 +284,7 @@ func TestCommonAgent_SendMetrics_Succeeds(t *testing.T) {
 }
 
 func TestCommonAgent_SendSystemInfo_Succeeds(t *testing.T) {
-	transport := dbtunetest.CreateSuccessfulTrip()
+	transport := backendtest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
 
 	err := agent.SendSystemInfo(context.Background(), []metrics.FlatValue{
@@ -297,7 +297,7 @@ func TestCommonAgent_SendSystemInfo_Succeeds(t *testing.T) {
 }
 
 func TestCommonAgent_GetProposedConfig_Succeeds(t *testing.T) {
-	transport := dbtunetest.CreateSuccessfulTrip()
+	transport := backendtest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
 
 	config, err := agent.GetProposedConfig(context.Background())

@@ -1,4 +1,4 @@
-package dbtune
+package backend
 
 import (
 	"strings"
