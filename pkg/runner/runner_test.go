@@ -99,7 +99,7 @@ func (m *MockAgentLooper) SendGuardrailSignal(ctx context.Context, signal guardr
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) SendError(ctx context.Context, payload agent.ErrorPayload) error {
+func (m *MockAgentLooper) SendError(ctx context.Context, payload backend.ErrorPayload) error {
 	args := m.Called(ctx, payload)
 	return args.Error(0)
 }
@@ -198,7 +198,7 @@ func TestPanicGuardedTaskKeepsTicking(t *testing.T) {
 
 	m := new(MockAgentLooper)
 	m.On("Logger").Return(logrus.New())
-	m.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+	m.On("SendError", mock.Anything, mock.MatchedBy(func(p backend.ErrorPayload) bool {
 		return p.ErrorType == "pg_stats_panic" && strings.Contains(p.ErrorMessage, "boom")
 	})).Run(func(mock.Arguments) {
 		mu.Lock()
@@ -407,7 +407,7 @@ func TestRunnerApplyConfigFailure_SendsErrorAndActiveConfig(t *testing.T) {
 			mockAgent.On("GetActiveConfig", mock.Anything).Return(tuning.ConfigArraySchema{}, nil)
 			mockAgent.On("GetProposedConfig", mock.Anything).Return(mockRecommendation, nil)
 			mockAgent.On("ApplyConfig", mock.Anything, mockRecommendation).Return(tc.applyErr)
-			mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+			mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p backend.ErrorPayload) bool {
 				return p.ErrorType == tc.expectedErrorType &&
 					strings.HasPrefix(p.ErrorMessage, "Failed to apply configuration: ")
 			})).Return(nil)
@@ -419,7 +419,7 @@ func TestRunnerApplyConfigFailure_SendsErrorAndActiveConfig(t *testing.T) {
 			<-ctx.Done()
 			time.Sleep(50 * time.Millisecond)
 
-			mockAgent.AssertCalled(t, "SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+			mockAgent.AssertCalled(t, "SendError", mock.Anything, mock.MatchedBy(func(p backend.ErrorPayload) bool {
 				return p.ErrorType == tc.expectedErrorType
 			}))
 			mockAgent.AssertCalled(t, "SendActiveConfig", mock.Anything, mock.Anything, mock.Anything)
@@ -458,15 +458,17 @@ func createStubAgentLooper(rt http.RoundTripper) *stubAgentLooper {
 	client.HTTPClient = underlying
 
 	ca := agent.CommonAgent{
-		AgentID:   "test-agent",
-		APIClient: client,
-		ServerURLs: backend.ServerURLs{
-			ServerUrl: "http://localhost:8080",
-			ApiKey:    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-			DbID:      "550e8400-e29b-41d4-a716-446655440000",
+		Client: backend.Client{
+			AgentID:   "test-agent",
+			APIClient: client,
+			ServerURLs: backend.ServerURLs{
+				ServerUrl: "http://localhost:8080",
+				ApiKey:    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+				DbID:      "550e8400-e29b-41d4-a716-446655440000",
+			},
+			StartTime: time.Now().UTC().Format(time.RFC3339),
+			Version:   "test-version",
 		},
-		StartTime: time.Now().UTC().Format(time.RFC3339),
-		Version:   "test-version",
 	}
 	ca.WithLogger(logrus.New())
 
@@ -540,7 +542,7 @@ func TestRunnerCatalogLoop(t *testing.T) {
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
 	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{okCollector, errCollector})
 	mockAgent.On("SendCatalogPayload", mock.Anything, "ok_collector", mock.Anything).Return(nil)
-	mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+	mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p backend.ErrorPayload) bool {
 		return p.ErrorType == "err_collector_error"
 	})).Return(nil)
 
@@ -762,7 +764,7 @@ func TestRunnerCatalogLoop_BootstrapFailureDoesNotBlockOthers(t *testing.T) {
 
 	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{bootstrap, other})
 	mockAgent.On("SendCatalogPayload", mock.Anything, "other", mock.Anything).Return(nil)
-	mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+	mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p backend.ErrorPayload) bool {
 		return p.ErrorType == "bootstrap_inv_error"
 	})).Return(nil)
 
@@ -910,7 +912,7 @@ func TestHandleCollectorError_RecoverySuppressed(t *testing.T) {
 func TestHandleCollectorError_NonRecoveryReportsAndReturns(t *testing.T) {
 	m := new(MockAgentLooper)
 	m.On("Logger").Return(logrus.New())
-	m.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+	m.On("SendError", mock.Anything, mock.MatchedBy(func(p backend.ErrorPayload) bool {
 		return p.ErrorType == "catalog_view_error" && strings.Contains(p.ErrorMessage, "boom")
 	})).Return(nil)
 

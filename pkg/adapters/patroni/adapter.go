@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/backend"
 	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
@@ -168,7 +169,7 @@ func (adapter *PatroniAdapter) handlePossibleFailoverError(ctx context.Context, 
 		adapter.State.SetLastFailoverTime(time.Now())
 		logger.Errorf("[FAILOVER_RECOVERY] Failover detected via PostgreSQL error %s", errContext)
 
-		errorPayload := agent.ErrorPayload{
+		errorPayload := backend.ErrorPayload{
 			ErrorMessage: fmt.Sprintf("Failover detected: %s", err.Error()),
 			ErrorType:    "failover_detected",
 			Timestamp:    time.Now().UTC().Format(time.RFC3339),
@@ -266,7 +267,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 			errMsg := "Tuning operation rejected: Agent is running on a Standby node."
 			logger.Error(errMsg)
 
-			errorPayload := agent.ErrorPayload{
+			errorPayload := backend.ErrorPayload{
 				ErrorMessage: errMsg,
 				ErrorType:    "standby_node_detected",
 				Timestamp:    time.Now().UTC().Format(time.RFC3339),

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/backend"
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/dbtuneai/agent/pkg/tuning"
@@ -62,7 +63,7 @@ func handleCollectorError(ctx context.Context, adapter agent.AgentLooper, name s
 		adapter.Logger().Debugf("Skipping %s during recovery/restart: %v", name, err)
 		return nil
 	}
-	_ = adapter.SendError(ctx, agent.ErrorPayload{
+	_ = adapter.SendError(ctx, backend.ErrorPayload{
 		ErrorMessage: fmt.Sprintf("Failed to collect %s: %s", name, err.Error()),
 		ErrorType:    name + "_error",
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),
@@ -191,7 +192,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 			if proposedConfig != nil {
 				applyErr = adapter.ApplyConfig(ctx, proposedConfig)
 				if applyErr != nil {
-					errorPayload := agent.ErrorPayload{
+					errorPayload := backend.ErrorPayload{
 						ErrorMessage: "Failed to apply configuration: " + applyErr.Error(),
 						ErrorType:    applyErr.ErrorType(),
 						Timestamp:    time.Now().UTC().Format(time.RFC3339),

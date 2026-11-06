@@ -1,13 +1,9 @@
 package metrics
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"math"
 	"reflect"
-	"time"
 )
 
 type MetricType string
@@ -26,24 +22,6 @@ type FlatValue struct {
 	Key   string      `json:"key"`
 	Value interface{} `json:"value"`
 	Type  MetricType  `json:"type"`
-}
-
-type MetricData struct {
-	Type  string      `json:"type"`
-	Value interface{} `json:"value"`
-}
-
-// FormattedMetrics matches the expected payload of DBtune backend
-type FormattedMetrics struct {
-	Version   string                 `json:"version"`
-	Metrics   map[string]interface{} `json:"metrics"`
-	Timestamp string                 `json:"timestamp"`
-}
-
-type FormattedSystemInfo struct {
-	SystemInfo map[string]MetricData `json:"system_info"`
-	Timestamp  string                `json:"timestamp"`
-	Hash       string                `json:"hash"`
 }
 
 // NewMetric creates a new Metric object based on the provided key, value, and type.
@@ -83,70 +61,11 @@ func NewMetric(key string, value interface{}, typeStr MetricType) (FlatValue, er
 	}, nil
 }
 
-// FormatMetrics converts the MetricsState object into a FormattedMetrics object
-// to be used as a metrics payload
-func FormatMetrics(metrics []FlatValue) FormattedMetrics {
-	metricsMap := make(map[string]interface{})
-
-	for _, metric := range metrics {
-		value := metric.Value
-		if f, ok := value.(float64); ok {
-			value = truncateFloat(f)
-		}
-		metricsMap[metric.Key] = value
-	}
-
-	return FormattedMetrics{
-		Version:   "2.0",
-		Metrics:   metricsMap,
-		Timestamp: time.Now().Format(time.RFC3339),
-	}
-}
-
-func FormatSystemInfo(metrics []FlatValue) FormattedSystemInfo {
-	metricsMap := make(map[string]MetricData)
-
-	for _, metric := range metrics {
-		value := metric.Value
-		if f, ok := value.(float64); ok {
-			value = truncateFloat(f)
-		}
-		metricsMap[metric.Key] = MetricData{
-			Type:  string(metric.Type), // Assuming MetricType is a string type, adjust if necessary
-			Value: value,
-		}
-	}
-
-	hash, _ := HashJSON(metricsMap)
-
-	return FormattedSystemInfo{
-		SystemInfo: metricsMap,
-		Timestamp:  time.Now().Format(time.RFC3339),
-		Hash:       hash,
-	}
-}
-
 func TryUint64ToInt64(value uint64) (int64, error) {
 	if value > math.MaxInt64 {
 		return 0, fmt.Errorf("value is too large to convert to int64")
 	}
 	return int64(value), nil
-}
-
-func truncateFloat(value float64) float64 {
-	return math.Round(value*1000) / 1000
-}
-
-// HashJSON computes a SHA256 hash of the JSON-serialized value.
-// Go's encoding/json sorts map keys lexicographically, so the output
-// is deterministic for maps with string keys and deterministic values.
-func HashJSON(v interface{}) (string, error) {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return "", err
-	}
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:]), nil
 }
 
 type MetricDef struct {

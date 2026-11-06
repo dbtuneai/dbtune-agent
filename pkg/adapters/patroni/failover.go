@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/backend"
 )
 
 const (
@@ -255,7 +255,7 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 
 				// Send failover notification to backend ONLY if not in intentional restart
 				if !adapter.State.IsInRestartWindow() {
-					errorPayload := agent.ErrorPayload{
+					errorPayload := backend.ErrorPayload{
 						ErrorMessage: fmt.Sprintf("failover detected: %s -> NO PRIMARY DETECTED: cluster status unavailable: %v",
 							lastKnownPrimary, err),
 						ErrorType: "failover_detected",
@@ -298,7 +298,7 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 
 			// Send failover notification to backend ONLY if not in intentional restart
 			if !adapter.State.IsInRestartWindow() {
-				errorPayload := agent.ErrorPayload{
+				errorPayload := backend.ErrorPayload{
 					ErrorMessage: fmt.Sprintf("failover detected: %s -> NO PRIMARY DETECTED: cluster state: %s",
 						lastKnownPrimary, clusterStatus.State),
 					ErrorType: "failover_detected",
@@ -359,7 +359,7 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 
 		// Send failover notification to backend ONLY if not in intentional restart
 		if !adapter.State.IsInRestartWindow() {
-			errorPayload := agent.ErrorPayload{
+			errorPayload := backend.ErrorPayload{
 				ErrorMessage: fmt.Sprintf("failover detected: %s -> %s: cluster state: %s",
 					lastKnownPrimary, currentPrimary, clusterStatus.State),
 				ErrorType: "failover_detected",

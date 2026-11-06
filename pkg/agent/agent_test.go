@@ -10,9 +10,7 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/backend"
 	"github.com/dbtuneai/agent/pkg/backend/backendtest"
-	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
-	"github.com/dbtuneai/agent/pkg/tuning"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -43,7 +41,7 @@ func mockCollector(delay time.Duration, shouldError bool, metrics []metrics.Flat
 func TestGetMetrics(t *testing.T) {
 	t.Run("happy path - all collectors succeed", func(t *testing.T) {
 		agent := &CommonAgent{
-			logger: logrus.New(),
+			Client: clientWithLogger(logrus.New()),
 			MetricsState: MetricsState{
 				Collectors: []MetricCollector{
 					mockCollector(100*time.Millisecond, false, []metrics.FlatValue{{
@@ -72,7 +70,7 @@ func TestGetMetrics(t *testing.T) {
 
 	t.Run("partial failure - one collector errors", func(t *testing.T) {
 		agent := &CommonAgent{
-			logger: logrus.New(),
+			Client: clientWithLogger(logrus.New()),
 			MetricsState: MetricsState{
 				Collectors: []MetricCollector{
 					mockCollector(100*time.Millisecond, true, nil), // This one will error
@@ -96,7 +94,7 @@ func TestGetMetrics(t *testing.T) {
 
 	t.Run("context timeout - slow collectors are cancelled", func(t *testing.T) {
 		agent := &CommonAgent{
-			logger: logrus.New(),
+			Client: clientWithLogger(logrus.New()),
 			MetricsState: MetricsState{
 				Collectors: []MetricCollector{
 					mockCollector(100*time.Millisecond, false, []metrics.FlatValue{{
@@ -208,107 +206,27 @@ func CreateCommonAgentForTests(rt http.RoundTripper) CommonAgent {
 	httpClient := retryablehttp.NewClient()
 	httpClient.HTTPClient = &underlyingHTTPClient
 
-	return CommonAgent{
-		AgentID:   "test-agent",
-		APIClient: httpClient,
-		logger:    logrus.New(),
-		ServerURLs: backend.ServerURLs{
-			ServerUrl: "http://localhost:8080",
-			ApiKey:    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-			DbID:      "550e8400-e29b-41d4-a716-446655440000",
+	ca := CommonAgent{
+		Client: backend.Client{
+			AgentID:   "test-agent",
+			APIClient: httpClient,
+			ServerURLs: backend.ServerURLs{
+				ServerUrl: "http://localhost:8080",
+				ApiKey:    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+				DbID:      "550e8400-e29b-41d4-a716-446655440000",
+			},
+			StartTime: time.Now().UTC().Format(time.RFC3339),
+			Version:   "test-version",
 		},
-		StartTime: time.Now().UTC().Format(time.RFC3339),
-		Version:   "test-version",
 	}
+	ca.WithLogger(logrus.New())
+	return ca
 }
 
-func TestCommonAgent_SendHeartbeat_Succeeds(t *testing.T) {
-	transport := backendtest.CreateSuccessfulTrip()
-	agent := CreateCommonAgentForTests(transport)
-
-	err := agent.SendHeartbeat(context.Background())
-	assert.NoError(t, err)
-
-	transport.ActionWasCalled(t, "/api/v1/agent/heartbeat", http.MethodPost)
-}
-
-func TestCommonAgent_SendActiveConfig_Succeeds(t *testing.T) {
-	transport := backendtest.CreateSuccessfulTrip()
-	agent := CreateCommonAgentForTests(transport)
-	config := tuning.ConfigArraySchema{}
-
-	err := agent.SendActiveConfig(context.Background(), config, time.Now())
-	assert.NoError(t, err)
-
-	transport.ActionWasCalled(t, "/api/v1/agent/configurations", http.MethodPost)
-}
-
-func TestCommonAgent_SendError_Succeeds(t *testing.T) {
-	transport := backendtest.CreateSuccessfulTrip()
-	agent := CreateCommonAgentForTests(transport)
-
-	err := agent.SendError(context.Background(), ErrorPayload{
-		ErrorMessage: "something went wrong",
-		ErrorType:    "test_error",
-		Timestamp:    time.Now().UTC().Format(time.RFC3339),
-	})
-	assert.NoError(t, err)
-
-	transport.ActionWasCalled(t, "/api/v1/agent/log-entries", http.MethodPost)
-}
-
-func TestCommonAgent_SendGuardrailSignal_Succeeds(t *testing.T) {
-	transport := backendtest.CreateSuccessfulTrip()
-	agent := CreateCommonAgentForTests(transport)
-
-	err := agent.SendGuardrailSignal(context.Background(), guardrails.Signal{
-		Level: guardrails.Critical,
-		Type:  guardrails.Memory,
-	})
-	assert.NoError(t, err)
-
-	transport.ActionWasCalled(t, "/api/v1/agent/guardrails", http.MethodPost)
-}
-
-func TestCommonAgent_SendMetrics_Succeeds(t *testing.T) {
-	transport := backendtest.CreateSuccessfulTrip()
-	agent := CreateCommonAgentForTests(transport)
-
-	err := agent.SendMetrics(context.Background(), []metrics.FlatValue{
-		{Key: "metric1", Value: 1, Type: "int"},
-		{Key: "metric2", Value: 3.14, Type: "float"},
-	})
-	assert.NoError(t, err)
-
-	transport.ActionWasCalled(t, "/api/v1/agent/metrics", http.MethodPost)
-}
-
-func TestCommonAgent_SendSystemInfo_Succeeds(t *testing.T) {
-	transport := backendtest.CreateSuccessfulTrip()
-	agent := CreateCommonAgentForTests(transport)
-
-	err := agent.SendSystemInfo(context.Background(), []metrics.FlatValue{
-		{Key: "os", Value: "linux", Type: "string"},
-		{Key: "cpu_count", Value: 4, Type: "int"},
-	})
-	assert.NoError(t, err)
-
-	transport.ActionWasCalled(t, "/api/v1/agent/system-info", http.MethodPut)
-}
-
-func TestCommonAgent_GetProposedConfig_Succeeds(t *testing.T) {
-	transport := backendtest.CreateSuccessfulTrip()
-	agent := CreateCommonAgentForTests(transport)
-
-	config, err := agent.GetProposedConfig(context.Background())
-	if assert.NoError(t, err) && assert.NotNil(t, config) {
-		assert.Len(t, config.Config, 3)
-		assert.Equal(t, "shared_buffers", config.Config[0].Name)
-		assert.Equal(t, "work_mem", config.Config[1].Name)
-		assert.Equal(t, "max_connections", config.Config[2].Name)
-		assert.Equal(t, []string{"shared_buffers"}, config.KnobsOverrides)
-		assert.Equal(t, tuning.KnobApplicationRestart, config.KnobApplication)
-
-		transport.ActionWasCalled(t, "/api/v1/agent/configurations", http.MethodGet)
-	}
+// clientWithLogger returns a backend client that only has a logger, for tests
+// that never reach the backend.
+func clientWithLogger(logger *logrus.Logger) backend.Client {
+	var c backend.Client
+	c.WithLogger(logger)
+	return c
 }

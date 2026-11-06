@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/backend"
 	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/kubernetes"
@@ -391,7 +392,7 @@ func (adapter *CNPGAdapter) GetActiveConfig(ctx context.Context) (tuning.ConfigA
 				logger.Errorf("[FAILOVER_RECOVERY] Failover detected via PostgreSQL error (before CNPG status update)")
 
 				// Send failover notification
-				errorPayload := agent.ErrorPayload{
+				errorPayload := backend.ErrorPayload{
 					ErrorMessage: "Failover detected: " + err.Error(),
 					ErrorType:    "failover_detected",
 					Timestamp:    time.Now().UTC().Format(time.RFC3339),

@@ -1,7 +1,9 @@
-package metrics
+package backend
 
 import (
 	"testing"
+
+	"github.com/dbtuneai/agent/pkg/metrics"
 )
 
 func TestTruncateFloat(t *testing.T) {
@@ -58,13 +60,13 @@ func TestTruncateFloat(t *testing.T) {
 }
 
 func TestFormatMetrics_TruncatesFloats(t *testing.T) {
-	metrics := []FlatValue{
-		{Key: "float_metric", Value: 1.23456789, Type: Float},
-		{Key: "int_metric", Value: int64(42), Type: Int},
-		{Key: "string_metric", Value: "test", Type: String},
+	values := []metrics.FlatValue{
+		{Key: "float_metric", Value: 1.23456789, Type: metrics.Float},
+		{Key: "int_metric", Value: int64(42), Type: metrics.Int},
+		{Key: "string_metric", Value: "test", Type: metrics.String},
 	}
 
-	result := FormatMetrics(metrics)
+	result := FormatMetrics(values)
 
 	// Check float is truncated
 	floatVal, ok := result.Metrics["float_metric"].(float64)
@@ -128,13 +130,13 @@ func TestHashJSON(t *testing.T) {
 }
 
 func TestFormatSystemInfo_TruncatesFloats(t *testing.T) {
-	metrics := []FlatValue{
-		{Key: "float_metric", Value: 99.99999, Type: Float},
-		{Key: "percentage_metric", Value: 50.123456, Type: Percentage},
-		{Key: "int_metric", Value: int64(100), Type: Int},
+	values := []metrics.FlatValue{
+		{Key: "float_metric", Value: 99.99999, Type: metrics.Float},
+		{Key: "percentage_metric", Value: 50.123456, Type: metrics.Percentage},
+		{Key: "int_metric", Value: int64(100), Type: metrics.Int},
 	}
 
-	result := FormatSystemInfo(metrics)
+	result := FormatSystemInfo(values)
 
 	// Check float is truncated
 	floatData := result.SystemInfo["float_metric"]
@@ -170,7 +172,7 @@ func TestFormatSystemInfo_TruncatesFloats(t *testing.T) {
 	if result.Hash == "" {
 		t.Error("expected non-empty hash")
 	}
-	result2 := FormatSystemInfo(metrics)
+	result2 := FormatSystemInfo(values)
 	if result.Hash != result2.Hash {
 		t.Errorf("same input produced different hashes: %s vs %s", result.Hash, result2.Hash)
 	}

@@ -1,4 +1,4 @@
-package agent
+package backend
 
 import (
 	"compress/gzip"
@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/backend"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -33,10 +32,10 @@ func TestSendCatalogPayload(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ca := &CommonAgent{
+	ca := &Client{
 		logger:    logrus.New(),
 		APIClient: retryablehttp.NewClient(),
-		ServerURLs: backend.ServerURLs{
+		ServerURLs: ServerURLs{
 			ServerUrl: server.URL,
 			ApiKey:    "k",
 			DbID:      "db",
@@ -68,10 +67,10 @@ func TestSendCatalogPayload_NonSuccessStatus(t *testing.T) {
 
 	client := retryablehttp.NewClient()
 	client.RetryMax = 0
-	ca := &CommonAgent{
+	ca := &Client{
 		logger:    logrus.New(),
 		APIClient: client,
-		ServerURLs: backend.ServerURLs{
+		ServerURLs: ServerURLs{
 			ServerUrl: server.URL,
 			ApiKey:    "k",
 			DbID:      "db",

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/backend"
 	"github.com/dbtuneai/agent/pkg/internal/kubernetes"
 )
 
@@ -246,7 +246,7 @@ func (adapter *CNPGAdapter) HandleFailoverDetected(ctx context.Context, failover
 
 	// Send failover error to backend
 	// Backend decides: stop tuning session? apply baseline? etc.
-	errorPayload := agent.ErrorPayload{
+	errorPayload := backend.ErrorPayload{
 		ErrorMessage: failoverErr.Error(),
 		ErrorType:    "failover_detected",
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),
