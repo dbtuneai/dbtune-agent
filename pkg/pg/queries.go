@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
@@ -259,7 +260,7 @@ const restartRequiredParamsQuery = `SELECT name FROM pg_settings WHERE name = AN
 // ValidateRestartPolicy queries which of the supplied parameter names would
 // require a PostgreSQL restart and enforces the agent's apply policy:
 //
-//   - if at least one requires a restart but agent.IsRestartAllowed is false,
+//   - if at least one requires a restart but config.IsRestartAllowed is false,
 //     a *agent.RestartNotAllowedError is returned;
 //   - if at least one requires a restart but KnobApplication=reload, the apply
 //     is refused with a plain error to prevent partial application.
@@ -280,7 +281,7 @@ func ValidateRestartPolicy(
 	if len(restartRequired) == 0 {
 		return false, nil
 	}
-	if !agent.IsRestartAllowed() {
+	if !config.IsRestartAllowed() {
 		return true, &agent.RestartNotAllowedError{
 			Message: fmt.Sprintf("restart is not allowed in the agent, but %d parameter(s) require restart: %v", len(restartRequired), restartRequired),
 		}

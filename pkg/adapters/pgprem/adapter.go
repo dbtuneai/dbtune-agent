@@ -7,6 +7,7 @@ import (
 	"os/exec"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/config"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
@@ -22,18 +23,18 @@ type DefaultPostgreSQLAdapter struct {
 	agent.CommonAgent
 	agent.CatalogGetter
 	pgDriver        *pgPool.Pool
-	pgConfig        pg.Config
-	GuardrailConfig guardrails.Config
+	pgConfig        config.Postgres
+	GuardrailConfig config.Guardrails
 	PGVersion       pg.Version
 }
 
 func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
-	guardrailSettings, err := guardrails.ConfigFromViper(nil)
+	guardrailSettings, err := config.GuardrailsFromViper(nil)
 	if err != nil {
 		return nil, err
 	}
 
-	pgConfig, err := pg.ConfigFromViper(nil)
+	pgConfig, err := config.PostgresFromViper(nil)
 	if err != nil {
 		return nil, err
 	}

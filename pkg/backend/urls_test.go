@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/config"
 )
 
 func TestServerURLsValidation(t *testing.T) {
@@ -176,7 +176,7 @@ func TestServerURLsValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := utils.ValidateStruct(&tt.input)
+			err := config.ValidateStruct(&tt.input)
 
 			if tt.expectError && err == nil {
 				t.Errorf("expected error but got nil")

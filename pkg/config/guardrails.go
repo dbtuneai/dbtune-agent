@@ -1,25 +1,24 @@
-package guardrails
+package config
 
 import (
 	"fmt"
 
-	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/spf13/viper"
 )
 
-type Config struct {
+type Guardrails struct {
 	MemoryThreshold float64 `mapstructure:"memory_threshold" validate:"gte=1,lte=100"`
 }
 
 const (
-	DEFAULT_CONFIG_KEY       = "guardrail_settings"
-	MEMORY_THRESHOLD_DEFAULT = 90
+	GuardrailsConfigKey    = "guardrail_settings"
+	MemoryThresholdDefault = 90
 )
 
-func ConfigFromViper(key *string) (Config, error) {
+func GuardrailsFromViper(key *string) (Guardrails, error) {
 	var keyValue string
 	if key == nil {
-		keyValue = DEFAULT_CONFIG_KEY
+		keyValue = GuardrailsConfigKey
 	} else {
 		keyValue = *key
 	}
@@ -30,14 +29,14 @@ func ConfigFromViper(key *string) (Config, error) {
 	}
 
 	_ = settingConfig.BindEnv("memory_threshold", "DBT_MEMORY_THRESHOLD")
-	settingConfig.SetDefault("memory_threshold", MEMORY_THRESHOLD_DEFAULT)
+	settingConfig.SetDefault("memory_threshold", MemoryThresholdDefault)
 
-	var settings Config
+	var settings Guardrails
 	err := settingConfig.Unmarshal(&settings)
 	if err != nil {
-		return Config{}, fmt.Errorf("unable to decode into struct, %w", err)
+		return Guardrails{}, fmt.Errorf("unable to decode into struct, %w", err)
 	}
 
-	err = utils.ValidateStruct(&settings)
+	err = ValidateStruct(&settings)
 	return settings, err
 }

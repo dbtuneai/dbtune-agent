@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
@@ -157,7 +157,7 @@ func newAdapter(t *testing.T, pool *pgxpool.Pool, serviceName string) *DefaultPo
 	t.Helper()
 	adapter := &DefaultPostgreSQLAdapter{
 		pgDriver: pool,
-		pgConfig: pg.Config{
+		pgConfig: config.Postgres{
 			ConnectionURL: pgpremConnStr,
 			ServiceName:   serviceName,
 		},
@@ -170,7 +170,7 @@ func newAdapterWithRestartScript(t *testing.T, pool *pgxpool.Pool, scriptPath st
 	t.Helper()
 	adapter := &DefaultPostgreSQLAdapter{
 		pgDriver: pool,
-		pgConfig: pg.Config{
+		pgConfig: config.Postgres{
 			ConnectionURL:     pgpremConnStr,
 			RestartScriptPath: scriptPath,
 		},

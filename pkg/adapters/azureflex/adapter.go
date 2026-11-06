@@ -12,6 +12,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/monitor/armmonitor"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/postgresql/armpostgresqlflexibleservers/v5"
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
@@ -27,24 +28,24 @@ type AzureFlexAdapter struct {
 	agent.CatalogGetter
 	AzureFlexConfig Config
 	PGDriver        *pgxpool.Pool
-	GuardrailConfig guardrails.Config
-	pgConfig        pg.Config
+	GuardrailConfig config.Guardrails
+	pgConfig        config.Postgres
 	PGVersion       pg.Version
 }
 
 func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 	ctx := context.Background()
-	pgConfig, err := pg.ConfigFromViper(nil)
+	pgConfig, err := config.PostgresFromViper(nil)
 	if err != nil {
 		return nil, err
 	}
 
-	config, err := ConfigFromViper()
+	cfg, err := ConfigFromViper()
 	if err != nil {
 		return nil, err
 	}
 
-	pgPool, err := NewPool(ctx, pgConfig.ConnectionURL, config)
+	pgPool, err := NewPool(ctx, pgConfig.ConnectionURL, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +55,7 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 		return nil, err
 	}
 
-	guardrailConfig, err := guardrails.ConfigFromViper(nil)
+	guardrailConfig, err := config.GuardrailsFromViper(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate settings for guardrails %w", err)
 	}
@@ -63,7 +64,7 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 	common.DBPool = pgPool
 	adpt := AzureFlexAdapter{
 		CommonAgent:     *common,
-		AzureFlexConfig: config,
+		AzureFlexConfig: cfg,
 		PGDriver:        pgPool,
 		GuardrailConfig: guardrailConfig,
 		pgConfig:        pgConfig,
@@ -88,7 +89,7 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 // full configuration has been pushed; we do not roll back.
 func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
 	// Bail before pushing parameter changes to Azure if a restart is required but not allowed.
-	if proposedConfig.KnobApplication == agent.KnobApplicationRestart && !agent.IsRestartAllowed() {
+	if proposedConfig.KnobApplication == agent.KnobApplicationRestart && !config.IsRestartAllowed() {
 		return &agent.RestartNotAllowedError{
 			Message: "restart is not allowed in the agent",
 		}

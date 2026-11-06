@@ -19,6 +19,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/dbtuneai/agent/pkg/backend"
+	"github.com/dbtuneai/agent/pkg/config"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
@@ -256,10 +257,6 @@ func (e *DefaultParameterGroupError) Error() string {
 func (e *DefaultParameterGroupError) ErrorType() string { return "default_parameter_group" }
 func (*DefaultParameterGroupError) isApplyConfigError() {}
 
-func IsRestartAllowed() bool {
-	return viper.GetBool("postgresql.allow_restart")
-}
-
 type ErrorPayload struct {
 	ErrorMessage string `json:"error_message"`
 	ErrorType    string `json:"error_type"`
@@ -485,7 +482,7 @@ func (a *CommonAgent) SendHeartbeat(ctx context.Context) error {
 		AgentVersion:   a.Version,
 		AgentStartTime: a.StartTime,
 		AgentID:        a.AgentID,
-		AllowRestart:   IsRestartAllowed(),
+		AllowRestart:   config.IsRestartAllowed(),
 	}
 
 	jsonData, err := json.Marshal(payload)

@@ -1,35 +1,34 @@
-package pg
+package config
 
 import (
 	"fmt"
 	"runtime"
 
-	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/spf13/viper"
 )
 
 const (
-	DEFAULT_CONFIG_KEY = "postgresql"
+	PostgresConfigKey = "postgresql"
 )
 
-type Config struct {
+type Postgres struct {
 	ConnectionURL     string `mapstructure:"connection_url" validate:"required"`
 	ServiceName       string `mapstructure:"service_name"`        // TODO(eddie): Should be moved under pgprem, as it doesn't apply to all other PG providers
 	RestartScriptPath string `mapstructure:"restart_script_path"` // When set, restarts execute this script directly (no shell) instead of `systemctl restart`. Must be an executable path with no arguments. Takes precedence over ServiceName.
 	AllowRestart      bool   `mapstructure:"allow_restart"`
 }
 
-func ConfigFromViper(key *string) (Config, error) {
+func PostgresFromViper(key *string) (Postgres, error) {
 	var keyValue string
 	if key == nil {
-		keyValue = DEFAULT_CONFIG_KEY
+		keyValue = PostgresConfigKey
 	} else {
 		keyValue = *key
 	}
 
 	// Try both "postgres" and "postgresql" keys for backward compatibility
 	dbtuneConfig := viper.Sub(keyValue)
-	if dbtuneConfig == nil && keyValue == DEFAULT_CONFIG_KEY {
+	if dbtuneConfig == nil && keyValue == PostgresConfigKey {
 		// Try alternate key "postgres" for backward compatibility
 		dbtuneConfig = viper.Sub("postgres")
 	}
@@ -46,7 +45,7 @@ func ConfigFromViper(key *string) (Config, error) {
 	_ = dbtuneConfig.BindEnv("allow_restart", "DBT_POSTGRESQL_ALLOW_RESTART")
 
 	// Also bind on the global viper so dotted lookups like
-	// viper.GetBool("postgresql.allow_restart") (used by agent.IsRestartAllowed)
+	// viper.GetBool("postgresql.allow_restart") (used by IsRestartAllowed)
 	// resolve the env var. BindEnv on a sub-viper does not propagate to the parent.
 	_ = viper.BindEnv("postgresql.connection_url", "DBT_POSTGRESQL_CONNECTION_URL")
 	_ = viper.BindEnv("postgresql.service_name", "DBT_POSTGRESQL_SERVICE_NAME")
@@ -55,22 +54,29 @@ func ConfigFromViper(key *string) (Config, error) {
 
 	dbtuneConfig.SetDefault("allow_restart", false)
 
-	var pgConfig Config
+	var pgConfig Postgres
 
 	// If using global viper, manually extract the nested config
 	err := dbtuneConfig.Unmarshal(&pgConfig)
 	if err != nil {
-		return Config{}, fmt.Errorf("unable to decode into struct, %w", err)
+		return Postgres{}, fmt.Errorf("unable to decode into struct, %w", err)
 	}
 
-	err = utils.ValidateStruct(&pgConfig)
+	err = ValidateStruct(&pgConfig)
 	if err != nil {
-		return Config{}, err
+		return Postgres{}, err
 	}
 
 	if pgConfig.AllowRestart && pgConfig.RestartScriptPath == "" && runtime.GOOS == "windows" {
-		return Config{}, fmt.Errorf("postgresql.allow_restart is not supported on Windows: the agent restarts PostgreSQL via systemctl, which has no Windows equivalent yet. Set postgresql.restart_script_path (env: DBT_POSTGRESQL_RESTART_SCRIPT_PATH) to a custom restart script, or set postgresql.allow_restart=false (or unset DBT_POSTGRESQL_ALLOW_RESTART) to run the agent in monitoring/reload-only mode")
+		return Postgres{}, fmt.Errorf("postgresql.allow_restart is not supported on Windows: the agent restarts PostgreSQL via systemctl, which has no Windows equivalent yet. Set postgresql.restart_script_path (env: DBT_POSTGRESQL_RESTART_SCRIPT_PATH) to a custom restart script, or set postgresql.allow_restart=false (or unset DBT_POSTGRESQL_ALLOW_RESTART) to run the agent in monitoring/reload-only mode")
 	}
 
 	return pgConfig, nil
+}
+
+// IsRestartAllowed reports whether postgresql.allow_restart is set. It reads
+// the global viper, so it sees DBT_POSTGRESQL_ALLOW_RESTART only after
+// PostgresFromViper has bound it.
+func IsRestartAllowed() bool {
+	return viper.GetBool("postgresql.allow_restart")
 }

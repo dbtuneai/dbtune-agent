@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
@@ -30,8 +31,8 @@ type PatroniAdapter struct {
 	agent.CatalogGetter
 	PatroniConfig   Config
 	PGDriver        *pgxpool.Pool
-	GuardrailConfig guardrails.Config
-	pgConfig        pg.Config
+	GuardrailConfig config.Guardrails
+	pgConfig        config.Postgres
 	PGVersion       pg.Version
 	HTTPClient      *http.Client
 	State           *State
@@ -40,7 +41,7 @@ type PatroniAdapter struct {
 func CreatePatroniAdapter() (*PatroniAdapter, error) {
 	ctx := context.Background()
 
-	pgConfig, err := pg.ConfigFromViper(nil)
+	pgConfig, err := config.PostgresFromViper(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +61,7 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 		return nil, fmt.Errorf("failed to get PostgreSQL version: %w", err)
 	}
 
-	guardrailConfig, err := guardrails.ConfigFromViper(nil)
+	guardrailConfig, err := config.GuardrailsFromViper(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate settings for guardrails: %w", err)
 	}

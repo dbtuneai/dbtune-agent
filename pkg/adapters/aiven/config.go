@@ -5,7 +5,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/config"
+
 	"github.com/spf13/viper"
 )
 
@@ -55,21 +56,21 @@ func ConfigFromViper(key *string) (Config, error) {
 	// prevents us from spamming their API where we do not get any new information.
 	dbtuneConfig.SetDefault("metric_resolution_seconds", DEFAULT_METRIC_RESOLUTION_SECONDS)
 	_ = dbtuneConfig.BindEnv("AIVEN_METRIC_RESOLUTION_SECONDS", "DBT_AIVEN_METRIC_RESOLUTION_SECONDS")
-	var config Config
-	err := dbtuneConfig.Unmarshal(&config)
+	var cfg Config
+	err := dbtuneConfig.Unmarshal(&cfg)
 	if err != nil {
 		return Config{}, fmt.Errorf("unable to decode into struct: %w", err)
 	}
 
-	err = utils.ValidateStruct(&config)
+	err = config.ValidateStruct(&cfg)
 	if err != nil {
 		return Config{}, err
 	}
 
 	// Since we are specifying in units of seconds, but a raw int such as 30
 	// is interpreted as nanoseconds, we need to convert it
-	config.MetricResolution *= time.Second
-	return config, nil
+	cfg.MetricResolution *= time.Second
+	return cfg, nil
 }
 
 func DetectConfigFromConfigFile() bool {

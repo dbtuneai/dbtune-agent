@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/kubernetes"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
@@ -40,7 +41,7 @@ const (
 type CNPGAdapter struct {
 	agent.CommonAgent
 	agent.CatalogGetter
-	GuardrailSettings guardrails.Config
+	GuardrailSettings config.Guardrails
 	Config            Config
 	PGDriver          *pgxpool.Pool
 	PGVersion         pg.Version
@@ -49,33 +50,33 @@ type CNPGAdapter struct {
 }
 
 func CreateCNPGAdapter() (*CNPGAdapter, error) {
-	// Load CNPG config
-	config, err := ConfigFromViper()
+	// Load CNPG cfg
+	cfg, err := ConfigFromViper()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load CNPG config: %w", err)
 	}
 
 	// Load guardrail settings
-	guardrailSettings, err := guardrails.ConfigFromViper(nil)
+	guardrailSettings, err := config.GuardrailsFromViper(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load guardrail settings: %w", err)
 	}
 
 	// Create Kubernetes client
-	client, err := kubernetes.CreateClient(config.KubeconfigPath, config.Namespace)
+	client, err := kubernetes.CreateClient(cfg.KubeconfigPath, cfg.Namespace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
 	// Resolve pod name - either use explicit config or auto-discover primary
-	podName := config.PodName
+	podName := cfg.PodName
 	if podName == "" {
-		if config.ClusterName == "" {
+		if cfg.ClusterName == "" {
 			return nil, fmt.Errorf("either pod_name or cluster_name must be specified in CNPG config")
 		}
 		// Auto-discover primary pod from cluster
 		ctx := context.Background()
-		discoveredPod, err := client.FindCNPGPrimaryPod(ctx, config.ClusterName)
+		discoveredPod, err := client.FindCNPGPrimaryPod(ctx, cfg.ClusterName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to auto-discover primary pod: %w", err)
 		}
@@ -83,10 +84,10 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 		log.Infof("Auto-discovered primary pod: %s", podName)
 	}
 	// Update config with resolved pod name
-	config.PodName = podName
+	cfg.PodName = podName
 
 	// Create PostgreSQL connection pool
-	pgConfig, err := pg.ConfigFromViper(nil)
+	pgConfig, err := config.PostgresFromViper(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load PostgreSQL config: %w", err)
 	}
@@ -106,7 +107,7 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 	commonAgent.DBPool = dbpool
 	adapter := &CNPGAdapter{
 		CommonAgent:       *commonAgent,
-		Config:            config,
+		Config:            cfg,
 		GuardrailSettings: guardrailSettings,
 		PGDriver:          dbpool,
 		PGVersion:         pgVersion,
@@ -127,8 +128,8 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 	// Use cluster name (not pod name) so metrics always come from current primary
 	adapter.InitCollectors(Collectors(
 		client,
-		config.ClusterName,
-		config.ContainerName,
+		cfg.ClusterName,
+		cfg.ContainerName,
 	))
 
 	return adapter, nil

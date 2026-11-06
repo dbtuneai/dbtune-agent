@@ -8,6 +8,7 @@ import (
 
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
@@ -24,8 +25,8 @@ type CloudSQLAdapter struct {
 	CloudSQLConfig        Config
 	CloudMonitoringClient *CloudMonitoringClient
 	CloudSQLAdminClient   *SqlAdminClient
-	GuardrailSettings     *guardrails.Config
-	pgConfig              pg.Config
+	GuardrailSettings     *config.Guardrails
+	pgConfig              config.Postgres
 	PGVersion             pg.Version
 }
 
@@ -33,7 +34,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 	ctx := context.Background()
 	commonAgent := agent.CreateCommonAgent()
 
-	pgConfig, err := pg.ConfigFromViper(nil)
+	pgConfig, err := config.PostgresFromViper(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +44,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		return nil, err
 	}
 
-	config, err := ConfigFromViper()
+	cfg, err := ConfigFromViper()
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +59,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		log.Fatalf("Failed to connect to SQL Admin service: %v", err)
 	}
 
-	guardrailSettings, err := guardrails.ConfigFromViper(nil)
+	guardrailSettings, err := config.GuardrailsFromViper(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate settings for guardrails %w", err)
 	}
@@ -73,7 +74,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		CommonAgent:    *commonAgent,
 		State:          &State{LastGuardrailCheck: time.Now()},
 		PGDriver:       pgPool,
-		CloudSQLConfig: config,
+		CloudSQLConfig: cfg,
 		CloudMonitoringClient: &CloudMonitoringClient{
 			client: client,
 			ctx:    ctx,
@@ -105,7 +106,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 func (adapter *CloudSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
 	adapter.Logger().Infof("Applying config")
 
-	if proposedConfig.KnobApplication == agent.KnobApplicationRestart && !agent.IsRestartAllowed() {
+	if proposedConfig.KnobApplication == agent.KnobApplicationRestart && !config.IsRestartAllowed() {
 		return &agent.RestartNotAllowedError{
 			Message: "restart is not allowed in the agent",
 		}

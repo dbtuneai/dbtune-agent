@@ -3,7 +3,8 @@ package azureflex
 import (
 	"os"
 
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/config"
+
 	"github.com/spf13/viper"
 )
 
@@ -28,19 +29,19 @@ func ConfigFromViper() (Config, error) {
 	_ = dbtuneConfig.BindEnv("server_name", "DBT_AZURE_FLEX_SERVER_NAME")
 	_ = dbtuneConfig.BindEnv("auth_method", "DBT_AZURE_FLEX_AUTH_METHOD")
 
-	var config Config
+	var cfg Config
 
-	err := dbtuneConfig.Unmarshal(&config)
+	err := dbtuneConfig.Unmarshal(&cfg)
 	if err != nil {
 		return Config{}, err
 	}
 
-	err = utils.ValidateStruct(&config)
+	err = config.ValidateStruct(&cfg)
 	if err != nil {
 		return Config{}, err
 	}
 
-	return config, nil
+	return cfg, nil
 }
 
 func DetectConfigFromEnv() bool {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/config"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
@@ -21,8 +22,8 @@ type RDSAdapter struct {
 	agent.CommonAgent
 	agent.CatalogGetter
 	Config            Config
-	GuardrailSettings guardrails.Config
-	pgConfig          pg.Config
+	GuardrailSettings config.Guardrails
+	pgConfig          config.Postgres
 	State             State
 	AWSClients        AWSClients
 	PGDriver          *pgxpool.Pool
@@ -41,13 +42,13 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 	commonAgent := agent.CreateCommonAgent()
 
 	var err error
-	var config Config
-	config, err = ConfigFromViper(keyValue, commonAgent.Logger())
+	var rdsConfig Config
+	rdsConfig, err = ConfigFromViper(keyValue, commonAgent.Logger())
 	if err != nil {
 		return nil, fmt.Errorf("failed to bind config from key %s: %w", keyValue, err)
 	}
 
-	guardrailSettings, err := guardrails.ConfigFromViper(nil)
+	guardrailSettings, err := config.GuardrailsFromViper(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate settings for guardrails %w", err)
 	}
@@ -56,9 +57,9 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 
 	// Create AWS config
 	cfg, err := FetchAWSConfig(
-		config.AWSAccessKey,
-		config.AWSSecretAccessKey,
-		config.AWSRegion,
+		rdsConfig.AWSAccessKey,
+		rdsConfig.AWSSecretAccessKey,
+		rdsConfig.AWSRegion,
 		ctx,
 	)
 	if err != nil {
@@ -67,7 +68,7 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 	clients := NewAWSClients(cfg)
 
 	// Check if RDS client can fetch the database instance correctly and the tokens work
-	dbInfo, err := FetchDBInfo(config.RDSDatabaseIdentifier, &clients, ctx)
+	dbInfo, err := FetchDBInfo(rdsConfig.RDSDatabaseIdentifier, &clients, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to describe database instance: %w", err)
 	}
@@ -80,7 +81,7 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 		}
 	}
 
-	pgConfig, err := pg.ConfigFromViper(nil)
+	pgConfig, err := config.PostgresFromViper(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +99,7 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 	commonAgent.DBPool = dbpool
 	adapter := &RDSAdapter{
 		CommonAgent: *commonAgent,
-		Config:      config,
+		Config:      rdsConfig,
 		pgConfig:    pgConfig,
 		State: State{
 			DBInfo: &dbInfo,
@@ -108,7 +109,7 @@ func CreateRDSAdapterWithoutCollectors(configKey *string) (*RDSAdapter, error) {
 		PGDriver:          dbpool,
 		PGVersion:         PGVersion,
 	}
-	adapter.Logger().Infof("detected parameter group %q for instance %q", dbInfo.ParameterGroupName, config.RDSDatabaseIdentifier)
+	adapter.Logger().Infof("detected parameter group %q for instance %q", dbInfo.ParameterGroupName, rdsConfig.RDSDatabaseIdentifier)
 	if dbInfo.ClusterParameterGroupName != "" {
 		adapter.Logger().Infof("detected cluster parameter group %q", dbInfo.ClusterParameterGroupName)
 	}
@@ -230,7 +231,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 
 	containsRestartParameterChange := slices.ContainsFunc(configs, configInfo.isChangedRestartParameter)
 	applyMethodIsRestart := proposedConfig.KnobApplication == agent.KnobApplicationRestart
-	if applyMethodIsRestart && !agent.IsRestartAllowed() {
+	if applyMethodIsRestart && !config.IsRestartAllowed() {
 		return &agent.RestartNotAllowedError{
 			Message: "restart is not allowed in the agent",
 		}

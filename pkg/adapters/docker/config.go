@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/config"
+
 	"github.com/spf13/viper"
 )
 
@@ -37,7 +38,7 @@ func ConfigFromViper(key *string) (Config, error) {
 		return Config{}, fmt.Errorf("unable to decode into struct, %w", err)
 	}
 
-	err = utils.ValidateStruct(&dockerConfig)
+	err = config.ValidateStruct(&dockerConfig)
 	if err != nil {
 		return Config{}, err
 	}

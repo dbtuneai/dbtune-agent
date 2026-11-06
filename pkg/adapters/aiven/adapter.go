@@ -10,6 +10,7 @@ import (
 	aivenclient "github.com/aiven/go-client-codegen"
 	"github.com/aiven/go-client-codegen/handler/service"
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/config"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
@@ -29,8 +30,8 @@ type AivenPostgreSQLAdapter struct {
 	Config            Config
 	Client            aivenclient.Client
 	State             *State
-	GuardrailSettings guardrails.Config
-	pgConfig          pg.Config
+	GuardrailSettings config.Guardrails
+	pgConfig          config.Postgres
 	PGDriver          *pgPool.Pool
 	PGVersion         pg.Version
 }
@@ -43,12 +44,12 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		return nil, err
 	}
 
-	guardrailSettings, err := guardrails.ConfigFromViper(nil)
+	guardrailSettings, err := config.GuardrailsFromViper(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate settings for guardrails %w", err)
 	}
 
-	pgConfig, err := pg.ConfigFromViper(nil)
+	pgConfig, err := config.PostgresFromViper(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +238,7 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposed
 
 	// If any of the parameters being applied would require a restart but the
 	// agent is not allowed to restart, bail before pushing changes to Aiven.
-	if restartRequired && !agent.IsRestartAllowed() {
+	if restartRequired && !config.IsRestartAllowed() {
 		return &agent.RestartNotAllowedError{
 			Message: "restart is not allowed in the agent",
 		}

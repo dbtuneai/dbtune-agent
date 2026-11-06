@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/config"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
@@ -24,8 +25,8 @@ type DockerContainerAdapter struct {
 	agent.CatalogGetter
 	Config            Config
 	dockerClient      *client.Client
-	GuardrailSettings guardrails.Config
-	pgConfig          pg.Config
+	GuardrailSettings config.Guardrails
+	pgConfig          config.Postgres
 	PGDriver          *pgxpool.Pool
 	PGVersion         pg.Version
 }
@@ -37,7 +38,7 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 		return nil, fmt.Errorf("failed to validate settings for docker %w", err)
 	}
 
-	guardrailSettings, err := guardrails.ConfigFromViper(nil)
+	guardrailSettings, err := config.GuardrailsFromViper(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate settings for guardrails %w", err)
 	}
@@ -48,7 +49,7 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 		return nil, fmt.Errorf("failed to create Docker client: %w", err)
 	}
 
-	pgConfig, err := pg.ConfigFromViper(nil)
+	pgConfig, err := config.PostgresFromViper(nil)
 	if err != nil {
 		return nil, err
 	}

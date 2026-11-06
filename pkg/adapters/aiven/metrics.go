@@ -9,7 +9,7 @@ import (
 
 	aiven "github.com/aiven/go-client-codegen"
 	"github.com/aiven/go-client-codegen/handler/service"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 )
@@ -190,7 +190,7 @@ func GetFetchedMetrics(
 		}
 
 		// Validate the individual metric data structure
-		if err := utils.ValidateStruct(&data); err != nil {
+		if err := config.ValidateStruct(&data); err != nil {
 			in.Logger.Errorf("Validation failed for metric %s: %v", metricName, err)
 			continue
 		}
