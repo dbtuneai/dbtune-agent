@@ -9,6 +9,7 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/backend"
+	"github.com/dbtuneai/agent/pkg/catalog"
 	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/internal/kubernetes"
@@ -119,7 +120,7 @@ func CreateCNPGAdapter() (*CNPGAdapter, error) {
 	// Initialize operations context for cancellation support
 	adapter.State.CreateOperationsContext()
 
-	collectors, err := pg.StandardCatalogCollectors(dbpool, pgVersion, commonAgent.Logger())
+	collectors, err := catalog.StandardCollectors(dbpool, pgVersion, commonAgent.Logger())
 	if err != nil {
 		return nil, err
 	}

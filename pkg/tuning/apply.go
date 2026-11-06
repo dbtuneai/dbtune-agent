@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/config"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -15,7 +15,7 @@ SELECT pg_reload_conf();
 `
 
 func ReloadConfig(pgPool *pgxpool.Pool) error {
-	_, err := utils.ExecWithPrefix(pgPool, context.Background(), ReloadConfigQuery)
+	_, err := pg.ExecWithPrefix(pgPool, context.Background(), ReloadConfigQuery)
 	if err != nil {
 		return err
 	}
@@ -27,7 +27,7 @@ ALTER SYSTEM SET %s = %s;
 `
 
 func AlterSystem(pgPool *pgxpool.Pool, name string, value string) error {
-	_, err := utils.ExecWithPrefix(pgPool, context.Background(), fmt.Sprintf(AlterSystemQuery, name, value))
+	_, err := pg.ExecWithPrefix(pgPool, context.Background(), fmt.Sprintf(AlterSystemQuery, name, value))
 	if err != nil {
 		return err
 	}
@@ -40,7 +40,7 @@ ALTER SYSTEM RESET %s;
 `
 
 func AlterSystemReset(pgPool *pgxpool.Pool, name string) error {
-	_, err := utils.ExecWithPrefix(pgPool, context.Background(), fmt.Sprintf(AlterSystemResetQuery, name))
+	_, err := pg.ExecWithPrefix(pgPool, context.Background(), fmt.Sprintf(AlterSystemResetQuery, name))
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func RestartRequiredParams(pgPool *pgxpool.Pool, ctx context.Context, parameterN
 		return nil, nil
 	}
 
-	rows, err := utils.QueryWithPrefix(pgPool, ctx, restartRequiredParamsQuery, parameterNames)
+	rows, err := pg.QueryWithPrefix(pgPool, ctx, restartRequiredParamsQuery, parameterNames)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_settings for restart-required parameters: %w", err)
 	}
@@ -126,7 +126,7 @@ func WaitPostgresReady(pgPool *pgxpool.Pool, ctx context.Context) error {
 			return fmt.Errorf("waiting for PostgreSQL to come back online: %w", ctx.Err())
 		case <-time.After(1 * time.Second):
 			// Try to execute a simple query
-			_, err := utils.ExecWithPrefix(pgPool, ctx, Select1Query)
+			_, err := pg.ExecWithPrefix(pgPool, ctx, Select1Query)
 			if err == nil {
 				return nil
 			}

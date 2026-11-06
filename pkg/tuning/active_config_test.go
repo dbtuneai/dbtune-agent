@@ -3,18 +3,19 @@ package tuning
 import (
 	"testing"
 
-	"github.com/dbtuneai/agent/pkg/pg/queries"
+	"github.com/dbtuneai/agent/pkg/catalog"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func textPtr(s string) *queries.Text {
-	t := queries.Text(s)
+func textPtr(s string) *catalog.Text {
+	t := catalog.Text(s)
 	return &t
 }
 
 func TestSettingsToConfigRows_IntegerVartype(t *testing.T) {
-	settings := []queries.PgSettingsRow{
+	settings := []catalog.PgSettingsRow{
 		{Name: "work_mem", Setting: "4096", Vartype: "integer", Context: "user", Unit: textPtr("kB")},
 	}
 	got := settingsToConfigRows(settings)
@@ -29,7 +30,7 @@ func TestSettingsToConfigRows_IntegerVartype(t *testing.T) {
 }
 
 func TestSettingsToConfigRows_RealVartype(t *testing.T) {
-	settings := []queries.PgSettingsRow{
+	settings := []catalog.PgSettingsRow{
 		{Name: "seq_page_cost", Setting: "1.0", Vartype: "real", Context: "user", Unit: nil},
 	}
 	got := settingsToConfigRows(settings)
@@ -41,7 +42,7 @@ func TestSettingsToConfigRows_RealVartype(t *testing.T) {
 }
 
 func TestSettingsToConfigRows_StringVartype(t *testing.T) {
-	settings := []queries.PgSettingsRow{
+	settings := []catalog.PgSettingsRow{
 		{Name: "log_timezone", Setting: "UTC", Vartype: "string", Context: "sighup"},
 	}
 	got := settingsToConfigRows(settings)
@@ -53,7 +54,7 @@ func TestSettingsToConfigRows_StringVartype(t *testing.T) {
 }
 
 func TestSettingsToConfigRows_EnumVartype(t *testing.T) {
-	settings := []queries.PgSettingsRow{
+	settings := []catalog.PgSettingsRow{
 		{Name: "wal_level", Setting: "replica", Vartype: "enum", Context: "postmaster"},
 	}
 	got := settingsToConfigRows(settings)
@@ -62,7 +63,7 @@ func TestSettingsToConfigRows_EnumVartype(t *testing.T) {
 }
 
 func TestSettingsToConfigRows_BoolVartype(t *testing.T) {
-	settings := []queries.PgSettingsRow{
+	settings := []catalog.PgSettingsRow{
 		{Name: "jit", Setting: "on", Vartype: "bool", Context: "user"},
 	}
 	got := settingsToConfigRows(settings)
@@ -72,7 +73,7 @@ func TestSettingsToConfigRows_BoolVartype(t *testing.T) {
 }
 
 func TestSettingsToConfigRows_NullUnit(t *testing.T) {
-	settings := []queries.PgSettingsRow{
+	settings := []catalog.PgSettingsRow{
 		{Name: "max_connections", Setting: "100", Vartype: "integer", Context: "postmaster", Unit: nil},
 	}
 	got := settingsToConfigRows(settings)
@@ -81,7 +82,7 @@ func TestSettingsToConfigRows_NullUnit(t *testing.T) {
 }
 
 func TestSettingsToConfigRows_NonNullUnit(t *testing.T) {
-	settings := []queries.PgSettingsRow{
+	settings := []catalog.PgSettingsRow{
 		{Name: "shared_buffers", Setting: "16384", Vartype: "integer", Context: "postmaster", Unit: textPtr("8kB")},
 	}
 	got := settingsToConfigRows(settings)
@@ -90,7 +91,7 @@ func TestSettingsToConfigRows_NonNullUnit(t *testing.T) {
 }
 
 func TestSettingsToConfigRows_MixedRows(t *testing.T) {
-	settings := []queries.PgSettingsRow{
+	settings := []catalog.PgSettingsRow{
 		{Name: "max_connections", Setting: "100", Vartype: "integer", Context: "postmaster", Unit: nil},
 		{Name: "seq_page_cost", Setting: "1.5", Vartype: "real", Context: "user", Unit: nil},
 		{Name: "log_timezone", Setting: "UTC", Vartype: "string", Context: "sighup"},

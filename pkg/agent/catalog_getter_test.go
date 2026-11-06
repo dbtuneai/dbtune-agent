@@ -4,7 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/pg/queries"
+	"github.com/dbtuneai/agent/pkg/catalog"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -12,7 +13,7 @@ func TestCatalogGetter_RoundTrip(t *testing.T) {
 	g := &CatalogGetter{}
 	assert.Empty(t, g.CatalogCollectors(), "empty getter should return empty slice")
 
-	want := []queries.CatalogCollector{
+	want := []catalog.Collector{
 		{Name: "a", Interval: time.Second},
 		{Name: "b", Interval: 2 * time.Second},
 	}

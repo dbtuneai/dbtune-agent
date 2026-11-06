@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -15,7 +14,7 @@ SELECT setting::integer FROM pg_settings WHERE  name = 'max_connections';
 
 func MaxConnections(pgPool *pgxpool.Pool) (uint32, error) {
 	var maxConnections uint32
-	err := utils.QueryRowWithPrefix(pgPool, context.Background(), MaxConnectionsQuery).Scan(&maxConnections)
+	err := QueryRowWithPrefix(pgPool, context.Background(), MaxConnectionsQuery).Scan(&maxConnections)
 	if err != nil {
 		return 0, fmt.Errorf("error getting max connections: %w", err)
 	}
@@ -32,7 +31,7 @@ SELECT current_database();
 // (i.e. the database being tuned).
 func CurrentDatabase(pgPool *pgxpool.Pool) (string, error) {
 	var currentDatabase string
-	err := utils.QueryRowWithPrefix(pgPool, context.Background(), CurrentDatabaseQuery).Scan(&currentDatabase)
+	err := QueryRowWithPrefix(pgPool, context.Background(), CurrentDatabaseQuery).Scan(&currentDatabase)
 	if err != nil {
 		return "", fmt.Errorf("error getting current database: %w", err)
 	}
@@ -51,7 +50,7 @@ SELECT count(*)::integer FROM pg_database WHERE NOT datistemplate AND datallowco
 // the cluster.
 func UserDatabaseCount(pgPool *pgxpool.Pool) (int, error) {
 	var count int
-	err := utils.QueryRowWithPrefix(pgPool, context.Background(), UserDatabaseCountQuery).Scan(&count)
+	err := QueryRowWithPrefix(pgPool, context.Background(), UserDatabaseCountQuery).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("error getting user database count: %w", err)
 	}
@@ -92,6 +91,6 @@ SELECT COUNT(*) FROM public.pg_stat_statements(false);
 `
 
 func CheckPGStatStatements(pgPool *pgxpool.Pool) error {
-	_, err := utils.ExecWithPrefix(pgPool, context.Background(), CheckPGStatStatementsQuery)
+	_, err := ExecWithPrefix(pgPool, context.Background(), CheckPGStatStatementsQuery)
 	return err
 }

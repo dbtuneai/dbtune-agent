@@ -13,9 +13,9 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/dbtuneai/agent/pkg/backend"
+	"github.com/dbtuneai/agent/pkg/catalog"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
-	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/dbtuneai/agent/pkg/tuning"
 	"github.com/dbtuneai/agent/pkg/version"
 
@@ -77,7 +77,7 @@ type AgentLooper interface {
 	SendError(ctx context.Context, payload backend.ErrorPayload) error
 
 	// CatalogCollectors returns the list of catalog view collectors for this adapter.
-	CatalogCollectors() []queries.CatalogCollector
+	CatalogCollectors() []catalog.Collector
 
 	// SendCatalogPayload sends pre-marshaled, gzip-compressed JSON to the
 	// DBtune server for the named catalog view.

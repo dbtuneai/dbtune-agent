@@ -8,6 +8,7 @@ import (
 
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/catalog"
 	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
@@ -87,7 +88,7 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 		PGVersion:         PGVersion,
 	}
 
-	collectors, err := pg.StandardCatalogCollectors(pgPool, PGVersion, commonAgent.Logger())
+	collectors, err := catalog.StandardCollectors(pgPool, PGVersion, commonAgent.Logger())
 	if err != nil {
 		return nil, err
 	}

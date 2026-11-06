@@ -4,9 +4,10 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/dbtuneai/agent/pkg/catalog"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
-	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -61,16 +62,16 @@ func TestDiffPGSettings(t *testing.T) {
 		{Name: "shared_buffers", Value: "262144", Vartype: "integer"},
 	}
 
-	row := func(name, setting, vartype string) queries.PgSettingsRow {
-		return queries.PgSettingsRow{
-			Name:    queries.Text(name),
-			Setting: queries.Text(setting),
-			Vartype: queries.Text(vartype),
+	row := func(name, setting, vartype string) catalog.PgSettingsRow {
+		return catalog.PgSettingsRow{
+			Name:    catalog.Text(name),
+			Setting: catalog.Text(setting),
+			Vartype: catalog.Text(vartype),
 		}
 	}
 
 	t.Run("server reports both values", func(t *testing.T) {
-		diff := diffPGSettings(targets, []queries.PgSettingsRow{
+		diff := diffPGSettings(targets, []catalog.PgSettingsRow{
 			row("work_mem", "16384", "integer"),
 			row("shared_buffers", "262144", "integer"),
 			row("max_connections", "100", "integer"),
@@ -80,7 +81,7 @@ func TestDiffPGSettings(t *testing.T) {
 	})
 
 	t.Run("value never arrived", func(t *testing.T) {
-		diff := diffPGSettings(targets, []queries.PgSettingsRow{
+		diff := diffPGSettings(targets, []catalog.PgSettingsRow{
 			row("work_mem", "4096", "integer"),
 			row("shared_buffers", "262144", "integer"),
 		})
@@ -91,7 +92,7 @@ func TestDiffPGSettings(t *testing.T) {
 	t.Run("unknown to this server", func(t *testing.T) {
 		diff := diffPGSettings(
 			[]configInfo{{Name: "made_up_guc", Value: "1", Vartype: "integer"}},
-			[]queries.PgSettingsRow{row("work_mem", "16384", "integer")},
+			[]catalog.PgSettingsRow{row("work_mem", "16384", "integer")},
 		)
 		assert.Equal(t, []string{"made_up_guc"}, diff.Missing)
 	})
@@ -100,7 +101,7 @@ func TestDiffPGSettings(t *testing.T) {
 		// Proposal says integer, server says real.
 		diff := diffPGSettings(
 			[]configInfo{{Name: "random_page_cost", Value: "1.1", Vartype: "integer"}},
-			[]queries.PgSettingsRow{row("random_page_cost", "1.1000", "real")},
+			[]catalog.PgSettingsRow{row("random_page_cost", "1.1000", "real")},
 		)
 		assert.True(t, len(diff.Mismatched) == 0, "diff: %s", diff)
 		assert.True(t, len(diff.Missing) == 0, "diff: %s", diff)

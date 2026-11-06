@@ -4,7 +4,8 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/dbtuneai/agent/pkg/pg/queries"
+	"github.com/dbtuneai/agent/pkg/catalog"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -30,7 +31,7 @@ func GetActiveConfig(
 	pool *pgxpool.Pool,
 	ctx context.Context,
 ) (ConfigArraySchema, error) {
-	settings, err := queries.QueryPgSettings(pool, ctx)
+	settings, err := catalog.QueryPgSettings(pool, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +41,7 @@ func GetActiveConfig(
 // settingsToConfigRows converts raw PgSettingsRow values into the
 // ConfigArraySchema consumed by the tuning loop. Numeric vartypes
 // have InferNumericType applied; NULL units become nil.
-func settingsToConfigRows(settings []queries.PgSettingsRow) ConfigArraySchema {
+func settingsToConfigRows(settings []catalog.PgSettingsRow) ConfigArraySchema {
 	configRows := make(ConfigArraySchema, 0, len(settings))
 	for _, s := range settings {
 		var unit interface{}

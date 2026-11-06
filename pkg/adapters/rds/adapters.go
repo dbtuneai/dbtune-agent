@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/catalog"
+	"github.com/dbtuneai/agent/pkg/catalog/collectorconfig"
 	"github.com/dbtuneai/agent/pkg/config"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
-	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
-	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/dbtuneai/agent/pkg/tuning"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -122,7 +122,7 @@ func CreateRDSAdapter(configKey *string) (*RDSAdapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	catalog, err := pg.StandardCatalogCollectors(rdsAdapter.PGDriver, rdsAdapter.PGVersion, rdsAdapter.Logger())
+	catalog, err := catalog.StandardCollectors(rdsAdapter.PGDriver, rdsAdapter.PGVersion, rdsAdapter.Logger())
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +320,7 @@ func (adapter *RDSAdapter) verifyAppliedSettings(
 	names := getConfigNames(targets)
 	diff := settingsDiff{Missing: names}
 	for {
-		rows, queryErr := queries.QueryPgSettings(adapter.PGDriver, waitCtx)
+		rows, queryErr := catalog.QueryPgSettings(adapter.PGDriver, waitCtx)
 		if queryErr != nil {
 			adapter.Logger().Warnf("Could not read pg_settings while verifying the apply: %v", queryErr)
 		} else {
@@ -388,7 +388,7 @@ func asApplyConfigError(err error) tuning.ApplyConfigError {
 func (adapter *RDSAdapter) Collectors() []metrics.Collector {
 	return []metrics.Collector{
 		{
-			Key: pg.MetricHardware,
+			Key: catalog.MetricHardware,
 			Collector: RDSHardwareInfo(
 				adapter.Config.RDSDatabaseIdentifier,
 				&adapter.State,
@@ -474,7 +474,7 @@ func CreateAuroraRDSAdapter() (*AuroraRDSAdapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AuroraRDS adapter: %w", err)
 	}
-	cc, err := pg.CollectorsConfigFromViper(rdsAdapter.Logger())
+	cc, err := catalog.CollectorsConfigFromViper(rdsAdapter.Logger())
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse collectors config: %w", err)
 	}
@@ -483,11 +483,11 @@ func CreateAuroraRDSAdapter() (*AuroraRDSAdapter, error) {
 	// this publicly; see https://github.com/DataDog/integrations-core/issues/15890.
 	// pg_stat_wal_receiver is unsupported for the same reason: its backing
 	// function pg_stat_get_wal_receiver() also errors with "not supported in Aurora".
-	rdsAdapter.Logger().Infof("Aurora: disabling %s and %s (not supported)", queries.PgStatWalName, queries.PgStatWalReceiverName)
+	rdsAdapter.Logger().Infof("Aurora: disabling %s and %s (not supported)", catalog.PgStatWalName, catalog.PgStatWalReceiverName)
 	disabled := false
-	cc.Simple[queries.PgStatWalName] = collectorconfig.BaseConfig{Enabled: &disabled}
-	cc.Simple[queries.PgStatWalReceiverName] = collectorconfig.BaseConfig{Enabled: &disabled}
-	catalog, err := pg.CatalogCollectorsForVersion(rdsAdapter.PGDriver, rdsAdapter.PGVersion, cc, rdsAdapter.Logger())
+	cc.Simple[catalog.PgStatWalName] = collectorconfig.BaseConfig{Enabled: &disabled}
+	cc.Simple[catalog.PgStatWalReceiverName] = collectorconfig.BaseConfig{Enabled: &disabled}
+	catalog, err := catalog.CollectorsForVersion(rdsAdapter.PGDriver, rdsAdapter.PGVersion, cc, rdsAdapter.Logger())
 	if err != nil {
 		return nil, err
 	}

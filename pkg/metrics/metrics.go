@@ -120,7 +120,7 @@ var (
 	AWSRDSClusterParameterGroup = MetricDef{Key: "aws_rds_cluster_parameter_group", Type: String}
 
 	// PG system info. Postgres statistics are sent by the catalog collectors
-	// in pkg/pg/queries, not as metrics.
+	// in pkg/catalog, not as metrics.
 	PGVersion         = MetricDef{Key: "pg_version", Type: String}
 	PGMaxConnections  = MetricDef{Key: "pg_max_connections", Type: Int}
 	PGCurrentDatabase = MetricDef{Key: "pg_current_database", Type: String}

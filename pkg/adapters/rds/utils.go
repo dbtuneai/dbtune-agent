@@ -10,7 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
-	"github.com/dbtuneai/agent/pkg/pg/queries"
+	"github.com/dbtuneai/agent/pkg/catalog"
 	"github.com/dbtuneai/agent/pkg/tuning"
 )
 
@@ -143,8 +143,8 @@ func (d settingsDiff) String() string {
 	return strings.Join(parts, "; ")
 }
 
-func diffPGSettings(targets []configInfo, rows []queries.PgSettingsRow) settingsDiff {
-	byName := make(map[string]queries.PgSettingsRow, len(rows))
+func diffPGSettings(targets []configInfo, rows []catalog.PgSettingsRow) settingsDiff {
+	byName := make(map[string]catalog.PgSettingsRow, len(rows))
 	for _, r := range rows {
 		byName[string(r.Name)] = r
 	}

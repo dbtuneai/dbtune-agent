@@ -9,8 +9,8 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/backend"
+	"github.com/dbtuneai/agent/pkg/catalog"
 	"github.com/dbtuneai/agent/pkg/pg"
-	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/dbtuneai/agent/pkg/tuning"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,14 +35,14 @@ const catalogStagger = 200 * time.Millisecond
 // out without exporting the symbol.
 var bootstrapCollectorNames = []string{
 	// First, so a missing capability is logged before the data it hides.
-	queries.CapabilitiesName,
-	queries.PgIndexInventoryName,
-	queries.PgAttributeName,
-	queries.PgClassName,
-	queries.PgStatsName,
-	queries.PgStatUserTablesName,
-	queries.PgStatUserIndexesName,
-	queries.PgStatioUserIndexesName,
+	catalog.CapabilitiesName,
+	catalog.PgIndexInventoryName,
+	catalog.PgAttributeName,
+	catalog.PgClassName,
+	catalog.PgStatsName,
+	catalog.PgStatUserTablesName,
+	catalog.PgStatUserIndexesName,
+	catalog.PgStatioUserIndexesName,
 }
 
 // isRecoveryError checks if an error indicates the system is in recovery/failover
@@ -245,7 +245,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 
 	// Guarded here rather than at each call site so both the bootstrap pass and
 	// the steady-state tickers survive a panicking catalog collector.
-	collectAndSend := func(ctx context.Context, c queries.CatalogCollector) error {
+	collectAndSend := func(ctx context.Context, c catalog.Collector) error {
 		return guard.Wrap(c.Name, func(ctx context.Context) error {
 			if hg.IsClosed() {
 				logger.Debugf("Skipping catalog collector %s, health gate closed", c.Name)
@@ -285,7 +285,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 		bootstrapWg.Add(1)
 		delay := time.Duration(launchIdx) * catalogStagger
 		launchIdx++
-		go func(c queries.CatalogCollector, delay time.Duration) {
+		go func(c catalog.Collector, delay time.Duration) {
 			defer bootstrapWg.Done()
 			if delay > 0 {
 				select {

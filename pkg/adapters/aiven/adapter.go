@@ -10,6 +10,7 @@ import (
 	aivenclient "github.com/aiven/go-client-codegen"
 	"github.com/aiven/go-client-codegen/handler/service"
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/catalog"
 	"github.com/dbtuneai/agent/pkg/config"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
@@ -103,7 +104,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		PGVersion:         PGVersion,
 	}
 
-	collectors, err := pg.StandardCatalogCollectors(pgPool, PGVersion, commonAgent.Logger())
+	collectors, err := catalog.StandardCollectors(pgPool, PGVersion, commonAgent.Logger())
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +396,7 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails(ctx context.Context) *guardrai
 func AivenCollectors(adapter *AivenPostgreSQLAdapter) []metrics.Collector {
 	return []metrics.Collector{
 		{
-			Key: pg.MetricHardware,
+			Key: catalog.MetricHardware,
 			Collector: AivenHardwareInfo(
 				&adapter.Client,
 				adapter.Config.ProjectName,

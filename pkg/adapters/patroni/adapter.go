@@ -15,9 +15,9 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/backend"
+	"github.com/dbtuneai/agent/pkg/catalog"
 	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/guardrails"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/dbtuneai/agent/pkg/tuning"
@@ -80,7 +80,7 @@ func CreatePatroniAdapter() (*PatroniAdapter, error) {
 		State:           &State{},
 	}
 
-	collectors, err := pg.StandardCatalogCollectors(pgPool, pgVersion, common.Logger())
+	collectors, err := catalog.StandardCollectors(pgPool, pgVersion, common.Logger())
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +190,7 @@ func (adapter *PatroniAdapter) handlePossibleFailoverError(ctx context.Context, 
 // Recognizes if the current node is a standby (replica) node
 func (adapter *PatroniAdapter) isStandbyNode(ctx context.Context) (bool, error) {
 	var inRecovery bool
-	err := utils.QueryRowWithPrefix(adapter.PGDriver, ctx, PGInRecoveryQuery).Scan(&inRecovery)
+	err := pg.QueryRowWithPrefix(adapter.PGDriver, ctx, PGInRecoveryQuery).Scan(&inRecovery)
 	if err != nil {
 		return false, fmt.Errorf("failed to check recovery status: %w", err)
 	}
@@ -440,7 +440,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 		query := `SELECT setting, unit FROM pg_settings WHERE name = $1`
 		var actualSetting string
 		var unit *string
-		err := utils.QueryRowWithPrefix(adapter.PGDriver, dbCtx, query, knob.Name).Scan(&actualSetting, &unit)
+		err := pg.QueryRowWithPrefix(adapter.PGDriver, dbCtx, query, knob.Name).Scan(&actualSetting, &unit)
 		if err != nil {
 			if failoverErr := adapter.handlePossibleFailoverError(ctx, err, "during verification"); failoverErr != nil {
 				return &tuning.ConfigApplyError{Err: failoverErr}

@@ -12,6 +12,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/monitor/armmonitor"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/postgresql/armpostgresqlflexibleservers/v5"
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/catalog"
 	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
@@ -71,7 +72,7 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 		PGVersion:       pgVersion,
 	}
 
-	collectors, err := pg.StandardCatalogCollectors(pgPool, pgVersion, common.Logger())
+	collectors, err := catalog.StandardCollectors(pgPool, pgVersion, common.Logger())
 	if err != nil {
 		return nil, err
 	}

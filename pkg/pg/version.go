@@ -6,7 +6,6 @@ import (
 	"regexp"
 	"strconv"
 
-	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -38,7 +37,7 @@ func (v Version) String() string {
 // PGVersion queries and parses the version of the PostgreSQL instance.
 func PGVersion(pgPool *pgxpool.Pool) (Version, error) {
 	var pgVersion string
-	err := utils.QueryRowWithPrefix(pgPool, context.Background(), PGVersionQuery).Scan(&pgVersion)
+	err := QueryRowWithPrefix(pgPool, context.Background(), PGVersionQuery).Scan(&pgVersion)
 	if err != nil {
 		return Version{}, err
 	}

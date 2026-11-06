@@ -7,6 +7,7 @@ import (
 	"os/exec"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/catalog"
 	"github.com/dbtuneai/agent/pkg/config"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
@@ -82,7 +83,7 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 		GuardrailConfig: guardrailSettings,
 		PGVersion:       PGVersion,
 	}
-	collectors, err := pg.StandardCatalogCollectors(dbpool, PGVersion, commonAgent.Logger())
+	collectors, err := catalog.StandardCollectors(dbpool, PGVersion, commonAgent.Logger())
 	if err != nil {
 		return nil, err
 	}

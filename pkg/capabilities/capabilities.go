@@ -5,7 +5,7 @@
 // which fails startup instead.
 //
 // Each CapabilityChecker owns one area (the Postgres role, a cloud API, ...).
-// The capabilities collector in pkg/pg/queries runs them all, logs what is
+// The capabilities collector in pkg/catalog runs them all, logs what is
 // missing when first seen and when it changes, and sends the results to the
 // backend.
 package capabilities

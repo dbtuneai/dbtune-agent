@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/catalog"
 	"github.com/dbtuneai/agent/pkg/config"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
@@ -74,7 +75,7 @@ func CreateDockerContainerAdapter() (*DockerContainerAdapter, error) {
 		PGDriver:          dbpool,
 		PGVersion:         PGVersion,
 	}
-	catalogCollectors, err := pg.StandardCatalogCollectors(dbpool, PGVersion, commonAgent.Logger())
+	catalogCollectors, err := catalog.StandardCollectors(dbpool, PGVersion, commonAgent.Logger())
 	if err != nil {
 		return nil, err
 	}

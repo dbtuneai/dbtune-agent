@@ -12,9 +12,9 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/backend"
 	"github.com/dbtuneai/agent/pkg/backend/backendtest"
+	"github.com/dbtuneai/agent/pkg/catalog"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
-	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/dbtuneai/agent/pkg/tuning"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MockAgentLooper implements utils.AgentLooper for testing
+// MockAgentLooper implements agent.AgentLooper for testing
 type MockAgentLooper struct {
 	mock.Mock
 }
@@ -104,10 +104,10 @@ func (m *MockAgentLooper) SendError(ctx context.Context, payload backend.ErrorPa
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) CatalogCollectors() []queries.CatalogCollector {
+func (m *MockAgentLooper) CatalogCollectors() []catalog.Collector {
 	args := m.Called()
 	if v := args.Get(0); v != nil {
-		return v.([]queries.CatalogCollector)
+		return v.([]catalog.Collector)
 	}
 	return nil
 }
@@ -510,20 +510,20 @@ func TestRunnerCatalogLoop(t *testing.T) {
 
 	var sendCount, errCount int
 	var mu sync.Mutex
-	okCollector := queries.CatalogCollector{
+	okCollector := catalog.Collector{
 		Name:     "ok_collector",
 		Interval: 20 * time.Millisecond,
-		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+		Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			sendCount++
-			return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+			return &catalog.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
 		},
 	}
-	errCollector := queries.CatalogCollector{
+	errCollector := catalog.Collector{
 		Name:     "err_collector",
 		Interval: 20 * time.Millisecond,
-		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+		Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			errCount++
@@ -540,7 +540,7 @@ func TestRunnerCatalogLoop(t *testing.T) {
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
-	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{okCollector, errCollector})
+	mockAgent.On("CatalogCollectors").Return([]catalog.Collector{okCollector, errCollector})
 	mockAgent.On("SendCatalogPayload", mock.Anything, "ok_collector", mock.Anything).Return(nil)
 	mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p backend.ErrorPayload) bool {
 		return p.ErrorType == "err_collector_error"
@@ -566,10 +566,10 @@ func TestRunnerCatalogLoop_NilDataSkipsSend(t *testing.T) {
 	mockAgent := new(MockAgentLooper)
 	logger := logrus.New()
 
-	nilCollector := queries.CatalogCollector{
+	nilCollector := catalog.Collector{
 		Name:     "nil_collector",
 		Interval: 20 * time.Millisecond,
-		Collect:  func(_ context.Context) (*queries.CollectResult, error) { return nil, nil },
+		Collect:  func(_ context.Context) (*catalog.CollectResult, error) { return nil, nil },
 	}
 
 	mockAgent.On("Logger").Return(logger)
@@ -581,7 +581,7 @@ func TestRunnerCatalogLoop_NilDataSkipsSend(t *testing.T) {
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
-	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{nilCollector})
+	mockAgent.On("CatalogCollectors").Return([]catalog.Collector{nilCollector})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -643,25 +643,25 @@ func TestRunnerCatalogLoop_BootstrapRunsBeforeOthers(t *testing.T) {
 		mu.Unlock()
 	}
 
-	bootstrap := queries.CatalogCollector{
+	bootstrap := catalog.Collector{
 		Name:     "bootstrap_inv",
 		Interval: 1 * time.Hour, // long: don't interfere with the window
-		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+		Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 			record("bootstrap_inv", "collect")
 			time.Sleep(30 * time.Millisecond) // pretend a non-trivial query
-			return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+			return &catalog.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
 		},
 	}
-	other := queries.CatalogCollector{
+	other := catalog.Collector{
 		Name:     "other",
 		Interval: 1 * time.Hour,
-		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+		Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 			record("other", "collect")
-			return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+			return &catalog.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
 		},
 	}
 
-	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{bootstrap, other})
+	mockAgent.On("CatalogCollectors").Return([]catalog.Collector{bootstrap, other})
 	mockAgent.On("SendCatalogPayload", mock.Anything, "bootstrap_inv", mock.Anything).
 		Run(func(_ mock.Arguments) { record("bootstrap_inv", "send") }).
 		Return(nil)
@@ -707,18 +707,18 @@ func TestRunnerCatalogLoop_BootstrapSkipsFirstTick(t *testing.T) {
 		mu           sync.Mutex
 		collectCalls int
 	)
-	bootstrap := queries.CatalogCollector{
+	bootstrap := catalog.Collector{
 		Name:     "bootstrap_inv",
 		Interval: 1 * time.Hour,
-		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+		Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 			mu.Lock()
 			collectCalls++
 			mu.Unlock()
-			return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+			return &catalog.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
 		},
 	}
 
-	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{bootstrap})
+	mockAgent.On("CatalogCollectors").Return([]catalog.Collector{bootstrap})
 	mockAgent.On("SendCatalogPayload", mock.Anything, "bootstrap_inv", mock.Anything).Return(nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), catalogStagger+300*time.Millisecond)
@@ -744,25 +744,25 @@ func TestRunnerCatalogLoop_BootstrapFailureDoesNotBlockOthers(t *testing.T) {
 		mu             sync.Mutex
 		otherCollected bool
 	)
-	bootstrap := queries.CatalogCollector{
+	bootstrap := catalog.Collector{
 		Name:     "bootstrap_inv",
 		Interval: 1 * time.Hour,
-		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+		Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 			return nil, errors.New("bootstrap collect failed")
 		},
 	}
-	other := queries.CatalogCollector{
+	other := catalog.Collector{
 		Name:     "other",
 		Interval: 20 * time.Millisecond,
-		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+		Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 			mu.Lock()
 			otherCollected = true
 			mu.Unlock()
-			return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+			return &catalog.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
 		},
 	}
 
-	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{bootstrap, other})
+	mockAgent.On("CatalogCollectors").Return([]catalog.Collector{bootstrap, other})
 	mockAgent.On("SendCatalogPayload", mock.Anything, "other", mock.Anything).Return(nil)
 	mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p backend.ErrorPayload) bool {
 		return p.ErrorType == "bootstrap_inv_error"
@@ -803,21 +803,21 @@ func TestRunnerCatalogLoop_BootstrapRunsConcurrently(t *testing.T) {
 		mu           sync.Mutex
 		observations []observation
 	)
-	makeCollector := func(name string) queries.CatalogCollector {
-		return queries.CatalogCollector{
+	makeCollector := func(name string) catalog.Collector {
+		return catalog.Collector{
 			Name:     name,
 			Interval: 1 * time.Hour,
-			Collect: func(_ context.Context) (*queries.CollectResult, error) {
+			Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 				mu.Lock()
 				observations = append(observations, observation{name: name, startAt: time.Now()})
 				mu.Unlock()
 				time.Sleep(sleep)
-				return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+				return &catalog.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
 			},
 		}
 	}
 
-	collectors := []queries.CatalogCollector{
+	collectors := []catalog.Collector{
 		makeCollector("boot_a"),
 		makeCollector("boot_b"),
 		makeCollector("boot_c"),
