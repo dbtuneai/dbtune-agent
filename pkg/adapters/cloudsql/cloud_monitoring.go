@@ -1,9 +1,12 @@
 package cloudsql
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
+
+	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 
 	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	"google.golang.org/api/iterator"
@@ -138,4 +141,9 @@ func getLatestMetricValue(cloudMonitoringClient *CloudMonitoringClient, projectI
 	} else {
 		return monitoringpb.TypedValue{}, fmt.Errorf("Unable to get latest metric value")
 	}
+}
+
+type CloudMonitoringClient struct {
+	client *monitoring.MetricClient
+	ctx    context.Context
 }

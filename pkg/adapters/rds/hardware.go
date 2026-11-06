@@ -3,6 +3,7 @@ package rds
 import (
 	"context"
 
+	"github.com/dbtuneai/agent/pkg/catalog"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/sirupsen/logrus"
 )
@@ -74,5 +75,19 @@ func RDSHardwareInfo(
 		}
 
 		return nil
+	}
+}
+
+func (adapter *RDSAdapter) Collectors() []metrics.Collector {
+	return []metrics.Collector{
+		{
+			Key: catalog.MetricHardware,
+			Collector: RDSHardwareInfo(
+				adapter.Config.RDSDatabaseIdentifier,
+				&adapter.State,
+				&adapter.AWSClients,
+				adapter.Logger(),
+			),
+		},
 	}
 }

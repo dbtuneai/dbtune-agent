@@ -6,15 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/sqladmin/v1"
 )
-
-type CloudMonitoringClient struct {
-	client *monitoring.MetricClient
-	ctx    context.Context
-}
 
 type SqlAdminClient struct {
 	client *sqladmin.Service

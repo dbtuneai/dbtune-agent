@@ -7,14 +7,10 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/aws/aws-sdk-go-v2/service/pi"
 	pitypes "github.com/aws/aws-sdk-go-v2/service/pi/types"
-	"github.com/aws/aws-sdk-go-v2/service/rds"
-	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/sirupsen/logrus"
@@ -213,13 +209,6 @@ func getLastDatapoint[T RDSDatapointConstraint](datapoints []T) (*T, error) {
 	return &datapoints[latestIdx], nil
 }
 
-// AWS PRM attribution token. Appended via raw header middleware below, not AddUserAgentKey(Value) -
-// those sanitize "/" to "-" and corrupt this format (confirmed live via CloudTrail).
-const awsPartnerAttributionUserAgent = "APN_1.1/pc_dml4zrdqnmoacdcn4u6vmz9q4$"
-
-// Must run after the SDK's "UserAgent" middleware, or that middleware overwrites this.
-type prmUserAgentMiddleware struct{}
-
 func (prmUserAgentMiddleware) ID() string { return "DBtunePRMUserAgent" }
 
 func (prmUserAgentMiddleware) HandleBuild(
@@ -231,185 +220,12 @@ func (prmUserAgentMiddleware) HandleBuild(
 	return next.HandleBuild(ctx, in)
 }
 
-func addPRMUserAgent(stack *middleware.Stack) error {
-	return stack.Build.Insert(prmUserAgentMiddleware{}, "UserAgent", middleware.After)
-}
-
-func FetchAWSConfig(
-	awsAccessKey string,
-	awsSecretAccessKey string,
-	awsRegion string,
-	ctx context.Context,
-) (aws.Config, error) {
-	region := config.WithRegion(awsRegion)
-	apiOptions := config.WithAPIOptions([]func(*middleware.Stack) error{
-		addPRMUserAgent,
-	})
-	if awsAccessKey != "" && awsSecretAccessKey != "" {
-		// Use static credentials if provided
-		creds := credentials.NewStaticCredentialsProvider(awsAccessKey, awsSecretAccessKey, "")
-		provider := config.WithCredentialsProvider(creds)
-		return config.LoadDefaultConfig(ctx, region, provider, apiOptions)
-	} else {
-		// Use default credential chain
-		// Includes by default WebIdentityToken:
-		// https://github.com/aws/aws-sdk-go-v2/blob/main/config/resolve_credentials.go#L119
-		return config.LoadDefaultConfig(ctx, region, apiOptions)
-	}
-}
-
-// Most circumstantial happens in ApplyConfig in pkg/rds/adapters.go.
-// This function simply applies the config, and reboots if necessary.
-// The reboot is postponed until the parameter group change is staged,
-// so the reboot actually picks it up.
-func ApplyConfig(
-	targetConfig []configInfo,
-	clients *AWSClients,
-	parameterGroupName string,
-	databaseIdentifier string,
-	reqRestart bool,
-	logger *logrus.Logger,
-	ctx context.Context,
-) error {
-	applyMethod := rdsTypes.ApplyMethodImmediate
-	if reqRestart {
-		applyMethod = rdsTypes.ApplyMethodPendingReboot
-	}
-
-	if len(targetConfig) > 0 {
-		args := &rds.ModifyDBParameterGroupInput{
-			DBParameterGroupName: aws.String(parameterGroupName),
-			Parameters:           awsParameters(targetConfig, applyMethod),
-		}
-		_, err := clients.RDSClient.ModifyDBParameterGroup(ctx, args)
-		if err != nil {
-			return fmt.Errorf("failed to modify parameter group: %w", err)
-		}
-	}
-
-	if reqRestart {
-		// The write is staged asynchronously so we wait before triggering the restart.
-		if err := waitParameterStaged(clients, databaseIdentifier, parameterGroupName, logger, ctx); err != nil {
-			return fmt.Errorf("parameter change not staged for reboot: %w", err)
-		}
-
-		args := &rds.RebootDBInstanceInput{DBInstanceIdentifier: aws.String(databaseIdentifier)}
-		if _, err := clients.RDSClient.RebootDBInstance(ctx, args); err != nil {
-			return fmt.Errorf("failed to reboot RDS instance: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// waitParameterStaged waits for RDS to report the parameter group change pending a
-// reboot, so the reboot below actually picks it up. Sleeping before the first read
-// helps with the edge case where the status is pending-reboot since previously.
-func waitParameterStaged(
-	clients *AWSClients,
-	databaseIdentifier string,
-	parameterGroupName string,
-	logger *logrus.Logger,
-	ctx context.Context,
-) error {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-
-	status := ""
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf(
-				"timed out waiting for parameter group %q to reach pending-reboot (last status %q)",
-				parameterGroupName, status)
-		case <-time.After(10 * time.Second):
-		}
-
-		instance, err := fetchRDSDBInstance(databaseIdentifier, clients, ctx)
-		if err != nil {
-			logger.Warnf("Could not read the parameter apply status: %v", err)
-			continue
-		}
-		if len(instance.DBParameterGroups) > 0 {
-			status = aws.ToString(instance.DBParameterGroups[0].ParameterApplyStatus)
-		}
-		if status == "pending-reboot" {
-			return nil
-		}
-		logger.Infof("Waiting for RDS to stage the parameter change (status: %q)", status)
-	}
-}
-
-func getRDSParameterInfo(
-	clients *AWSClients,
-	parameterGroupName string,
-	names []string,
-	ctx context.Context,
-) ([]rdsTypes.Parameter, error) {
-	input := &rds.DescribeDBParametersInput{
-		DBParameterGroupName: aws.String(parameterGroupName),
-		MaxRecords:           aws.Int32(100),
-		Filters: []rdsTypes.Filter{{
-			Name:   aws.String("parameter-name"),
-			Values: names,
-		}},
-	}
-
-	out, err := clients.RDSClient.DescribeDBParameters(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-	return out.Parameters, nil
-}
-
 // Timing for the instance wait. A reboot is minutes; past this something else
 // is going on and the error should say what.
 const (
 	instanceWaitTimeout  = 15 * time.Minute
 	instanceWaitInterval = 15 * time.Second
 )
-
-// Replacing the SDK's DBInstanceAvailable waiter, which succeeds only on a
-// literal "available" and so times out on a healthy instance that is merely
-// backing up or optimizing storage.
-func waitInstanceServing(
-	clients *AWSClients,
-	databaseIdentifier string,
-	logger *logrus.Logger,
-	ctx context.Context,
-) error {
-	ctx, cancel := context.WithTimeout(ctx, instanceWaitTimeout)
-	defer cancel()
-
-	status := "unknown"
-	for {
-		instance, err := fetchRDSDBInstance(databaseIdentifier, clients, ctx)
-		if err != nil {
-			logger.Warnf("Could not read the instance status: %v", err)
-		} else {
-			status = aws.ToString(instance.DBInstanceStatus)
-			switch classifyInstanceStatus(status) {
-			case instanceStatusServing:
-				logger.Infof("RDS reports instance %q serving (status: %q)", databaseIdentifier, status)
-				return nil
-			case instanceStatusTerminal:
-				return fmt.Errorf(
-					"instance %q is in state %q and will not come back on its own",
-					databaseIdentifier, status)
-			case instanceStatusBusy:
-				logger.Infof("Waiting for the instance to come back (status: %q)", status)
-			}
-		}
-
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf(
-				"gave up after %s waiting for instance %q to come back (last status %q): %w",
-				instanceWaitTimeout, databaseIdentifier, status, ctx.Err())
-		case <-time.After(instanceWaitInterval):
-		}
-	}
-}
 
 func getAverageMetricValue(
 	clients *AWSClients,

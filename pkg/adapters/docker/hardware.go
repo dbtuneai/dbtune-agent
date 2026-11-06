@@ -64,3 +64,14 @@ func DockerHardwareInfo(dockerClient *client.Client, containerName string) func(
 		return nil
 	}
 }
+
+// DockerCollectors returns the list of metric collectors for Docker.
+// Provider-specific hardware only; PG catalog views are exposed via CatalogCollectors.
+func DockerCollectors(adapter *DockerContainerAdapter) []metrics.Collector {
+	return []metrics.Collector{
+		{
+			Key:       "hardware",
+			Collector: DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
+		},
+	}
+}

@@ -6,6 +6,7 @@ import (
 
 	aivenclient "github.com/aiven/go-client-codegen"
 	"github.com/aiven/go-client-codegen/handler/service"
+	"github.com/dbtuneai/agent/pkg/catalog"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/sirupsen/logrus"
 )
@@ -95,5 +96,23 @@ func AivenHardwareInfo(
 		}
 
 		return nil
+	}
+}
+
+// AivenCollectors returns the metrics collectors for Aiven PostgreSQL
+func AivenCollectors(adapter *AivenPostgreSQLAdapter) []metrics.Collector {
+	return []metrics.Collector{
+		{
+			Key: catalog.MetricHardware,
+			Collector: AivenHardwareInfo(
+				&adapter.Client,
+				adapter.Config.ProjectName,
+				adapter.Config.ServiceName,
+				adapter.Config.MetricResolution,
+				adapter.Config,
+				adapter.State,
+				adapter.Logger(),
+			),
+		},
 	}
 }

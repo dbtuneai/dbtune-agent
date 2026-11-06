@@ -51,3 +51,12 @@ func HardwareInfoPatroni() func(ctx context.Context, state *metrics.State) error
 		return nil
 	}
 }
+
+func (adapter *PatroniAdapter) Collectors() []metrics.Collector {
+	return []metrics.Collector{
+		{
+			Key:       "hardware",
+			Collector: HardwareInfoPatroni(),
+		},
+	}
+}

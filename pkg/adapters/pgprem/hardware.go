@@ -51,3 +51,12 @@ func HardwareInfoOnPremise() func(ctx context.Context, state *metrics.State) err
 		return nil
 	}
 }
+
+func DefaultCollectors() []metrics.Collector {
+	return []metrics.Collector{
+		{
+			Key:       "hardware",
+			Collector: HardwareInfoOnPremise(),
+		},
+	}
+}

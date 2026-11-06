@@ -8,10 +8,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/dbtuneai/agent/pkg/catalog"
 	"github.com/dbtuneai/agent/pkg/tuning"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 )
 
 // configInfo is one parameter that we want to update, paired with what the

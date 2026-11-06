@@ -103,3 +103,12 @@ func CloudSQLHardwareInfo(logger *logrus.Logger, config Config, cloudMonitoringC
 		return nil
 	}
 }
+
+func (adapter *CloudSQLAdapter) Collectors() []metrics.Collector {
+	return []metrics.Collector{
+		{
+			Key:       "hardware",
+			Collector: CloudSQLHardwareInfo(adapter.Logger(), adapter.CloudSQLConfig, adapter.CloudMonitoringClient),
+		},
+	}
+}
