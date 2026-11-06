@@ -96,7 +96,7 @@ func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger
 // an error, the gate inspects it for connection-level failures. Recovery and
 // connection errors are suppressed (returned as nil) to avoid noisy logging
 // in runWithTicker.
-func withHealthGate(hg *agent.HealthGate, logger *logrus.Logger, fn func() error) error {
+func withHealthGate(hg *HealthGate, logger *logrus.Logger, fn func() error) error {
 	if hg.IsClosed() {
 		logger.Debugf("Skipping, health gate closed")
 		return nil
@@ -125,7 +125,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	}
 
 	// Create a HealthGate to short-circuit DB-hitting calls when the database is unreachable.
-	hg := agent.NewHealthGate(ctx, pool, pg.IsConnectionError, logger)
+	hg := NewHealthGate(ctx, pool, pg.IsConnectionError, logger)
 
 	// Shared across every task so each one keeps its own panic count. The
 	// metric collectors are guarded inside GetMetrics instead, so a panicking

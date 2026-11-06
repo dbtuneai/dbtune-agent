@@ -1,6 +1,6 @@
 //go:build integration
 
-package agent_test
+package runner_test
 
 import (
 	"bytes"
@@ -16,6 +16,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/runner"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
@@ -98,7 +99,7 @@ func TestIntegration_HealthGate_BlocksAndRecovers(t *testing.T) {
 
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)
-	hg := agent.NewHealthGate(ctx, pool, pg.IsConnectionError, logger)
+	hg := runner.NewHealthGate(ctx, pool, pg.IsConnectionError, logger)
 
 	// --- Phase 1: DB is up, gate is open ---
 	require.NoError(t, pool.Ping(ctx))
