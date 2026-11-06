@@ -47,7 +47,7 @@ func BuildCollectors(
 		return collectorconfig.BaseConfig{}
 	}
 
-	checkers := append([]capabilities.CapabilityChecker{PostgresCapabilityChecker(pool, prepareCtx)}, extraCheckers...)
+	checkers := append([]capabilities.CapabilityChecker{capabilities.PostgresChecker(pool, prepareCtx)}, extraCheckers...)
 
 	entries := []entry{
 		// Simple collectors

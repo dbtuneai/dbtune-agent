@@ -15,7 +15,7 @@ import (
 // capability's status by name.
 func postgresStatuses(t *testing.T, pool *pgxpool.Pool) map[string]capabilities.CapabilityStatus {
 	t.Helper()
-	caps, err := PostgresCapabilityChecker(pool, noopPrepareCtx).Check(context.Background())
+	caps, err := capabilities.PostgresChecker(pool, noopPrepareCtx).Check(context.Background())
 	if err != nil {
 		t.Fatalf("Check() error: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestPostgresCapabilities_GrantAndRevoke(t *testing.T) {
 		})
 
 		// Through the collector, so a grant is shown to reach the payload.
-		collector := CapabilitiesCollector(logrus.New(), PostgresCapabilityChecker(pool, noopPrepareCtx))
+		collector := CapabilitiesCollector(logrus.New(), capabilities.PostgresChecker(pool, noopPrepareCtx))
 		statusOf := func(p *CapabilitiesPayload, name string) capabilities.CapabilityStatus {
 			t.Helper()
 			for _, c := range p.Capabilities {

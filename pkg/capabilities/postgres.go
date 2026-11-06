@@ -1,4 +1,4 @@
-package catalog
+package capabilities
 
 // The Postgres capability checker: which privilege-dependent data the agent's
 // database role can see. Missing privileges don't make queries fail: Postgres
@@ -10,14 +10,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dbtuneai/agent/pkg/capabilities"
 	"github.com/dbtuneai/agent/pkg/internal/pgxutil"
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const PostgresCapabilityCheckerName = "postgres"
+const PostgresCheckerName = "postgres"
 
 // PostgresRolePrivileges is what the agent's role has. pg_has_role is true
 // for a superuser, so every privilege is true for one.
@@ -59,12 +58,12 @@ var postgresCapabilities = []postgresCapability{
 	},
 }
 
-// PostgresCapabilityChecker checks the agent's database role.
-func PostgresCapabilityChecker(pool *pgxpool.Pool, prepareCtx PrepareCtx) capabilities.CapabilityChecker {
+// PostgresChecker checks the agent's database role.
+func PostgresChecker(pool *pgxpool.Pool, prepareCtx func(context.Context) (context.Context, error)) CapabilityChecker {
 	scanner := pgxutil.NewScanner[PostgresRolePrivileges]()
-	return capabilities.CapabilityChecker{
-		Name: PostgresCapabilityCheckerName,
-		Check: func(ctx context.Context) ([]capabilities.Capability, error) {
+	return CapabilityChecker{
+		Name: PostgresCheckerName,
+		Check: func(ctx context.Context) ([]Capability, error) {
 			ctx, err := prepareCtx(ctx)
 			if err != nil {
 				return nil, err
@@ -83,18 +82,18 @@ func PostgresCapabilityChecker(pool *pgxpool.Pool, prepareCtx PrepareCtx) capabi
 	}
 }
 
-func postgresCapabilitiesFor(p PostgresRolePrivileges) []capabilities.Capability {
+func postgresCapabilitiesFor(p PostgresRolePrivileges) []Capability {
 	quoted := pgx.Identifier{p.Role}.Sanitize()
-	caps := make([]capabilities.Capability, len(postgresCapabilities))
+	caps := make([]Capability, len(postgresCapabilities))
 	for i, pc := range postgresCapabilities {
-		caps[i] = capabilities.Capability{
+		caps[i] = Capability{
 			Name:   pc.name,
-			Status: capabilities.CapabilityOK,
+			Status: CapabilityOK,
 			Impact: pc.impact,
 			Fix:    fmt.Sprintf(pc.fix, quoted),
 		}
 		if !pc.has(p) {
-			caps[i].Status = capabilities.CapabilityMissing
+			caps[i].Status = CapabilityMissing
 		}
 	}
 	return caps

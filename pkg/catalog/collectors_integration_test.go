@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dbtuneai/agent/pkg/capabilities"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
@@ -2221,7 +2223,7 @@ func TestAutovacuumCount_ReturnsData(t *testing.T) {
 func buildCollectors(pool *pgxpool.Pool, pgMajorVersion int) []Collector {
 	return []Collector{
 		AutovacuumCountCollector(pool, noopPrepareCtx),
-		CapabilitiesCollector(logrus.New(), PostgresCapabilityChecker(pool, noopPrepareCtx)),
+		CapabilitiesCollector(logrus.New(), capabilities.PostgresChecker(pool, noopPrepareCtx)),
 		ConnectionStatsCollector(pool, noopPrepareCtx),
 		DatabaseSizeCollector(pool, noopPrepareCtx),
 		PgAttributeCollector(pool, noopPrepareCtx),

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dbtuneai/agent/pkg/capabilities"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -54,7 +56,7 @@ var scannerBackedTypes = []interface{}{
 	PgStatWalReceiverRow{},
 	PgStatioUserIndexesRow{},
 	PgStatioUserTablesRow{},
-	PostgresRolePrivileges{},
+	capabilities.PostgresRolePrivileges{},
 	WaitEventRow{},
 }
 
