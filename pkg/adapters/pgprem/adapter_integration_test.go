@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/config"
+	"github.com/dbtuneai/agent/pkg/tuning"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
@@ -198,12 +198,12 @@ func TestIntegration_Pgprem_ApplyConfig_Reload_NonRestartParam(t *testing.T) {
 
 	adapter := newAdapter(t, pool, "" /* no service: not needed for reload-only */)
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "work_mem", Setting: int64(8192), Vartype: "integer"},
 		},
 		KnobsOverrides:  []string{"work_mem"},
-		KnobApplication: agent.KnobApplicationReload,
+		KnobApplication: tuning.KnobApplicationReload,
 	}
 
 	require.NoError(t, adapter.ApplyConfig(context.Background(), proposed))
@@ -223,17 +223,17 @@ func TestIntegration_Pgprem_ApplyConfig_Restart_NotAllowed(t *testing.T) {
 
 	adapter := newAdapter(t, pool, "fake.service")
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "shared_buffers", Setting: int64(8192), Vartype: "integer"},
 		},
 		KnobsOverrides:  []string{"shared_buffers"},
-		KnobApplication: agent.KnobApplicationRestart,
+		KnobApplication: tuning.KnobApplicationRestart,
 	}
 
 	err := adapter.ApplyConfig(context.Background(), proposed)
 
-	var notAllowed *agent.RestartNotAllowedError
+	var notAllowed *tuning.RestartNotAllowedError
 	assert.ErrorAs(t, err, &notAllowed)
 	assert.Empty(t, autoConfSetting(t, pool, "shared_buffers"),
 		"no ALTER SYSTEM should have been issued when restart is not allowed")
@@ -249,18 +249,18 @@ func TestIntegration_Pgprem_ApplyConfig_RestartParam_WithReloadIntent(t *testing
 
 	adapter := newAdapter(t, pool, "fake.service")
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "shared_buffers", Setting: int64(8192), Vartype: "integer"},
 		},
 		KnobsOverrides:  []string{"shared_buffers"},
-		KnobApplication: agent.KnobApplicationReload,
+		KnobApplication: tuning.KnobApplicationReload,
 	}
 
 	err := adapter.ApplyConfig(context.Background(), proposed)
 	require.Error(t, err)
 
-	var notAllowed *agent.RestartNotAllowedError
+	var notAllowed *tuning.RestartNotAllowedError
 	assert.False(t, errors.As(err, &notAllowed),
 		"with allow_restart=true the error must reflect the reload-intent refusal, not RestartNotAllowedError")
 	assert.Contains(t, err.Error(), "refusing to apply")
@@ -279,12 +279,12 @@ func TestIntegration_Pgprem_ApplyConfig_Restart_NoServiceName(t *testing.T) {
 
 	adapter := newAdapter(t, pool, "" /* unset */)
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "shared_buffers", Setting: int64(8192), Vartype: "integer"},
 		},
 		KnobsOverrides:  []string{"shared_buffers"},
-		KnobApplication: agent.KnobApplicationRestart,
+		KnobApplication: tuning.KnobApplicationRestart,
 	}
 
 	err := adapter.ApplyConfig(context.Background(), proposed)
@@ -305,12 +305,12 @@ func TestIntegration_Pgprem_ApplyConfig_Reload_NoServiceName(t *testing.T) {
 
 	adapter := newAdapter(t, pool, "")
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "work_mem", Setting: int64(16384), Vartype: "integer"},
 		},
 		KnobsOverrides:  []string{"work_mem"},
-		KnobApplication: agent.KnobApplicationReload,
+		KnobApplication: tuning.KnobApplicationReload,
 	}
 
 	require.NoError(t, adapter.ApplyConfig(context.Background(), proposed))
@@ -333,12 +333,12 @@ func TestIntegration_Pgprem_ApplyConfig_ReloadOnlyParams_WithRestartIntent(t *te
 	// command to fail. The test passing proves it was never invoked.
 	adapter := newAdapter(t, pool, "dbtune-pgprem-this-must-not-be-touched.service")
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "work_mem", Setting: int64(8192), Vartype: "integer"},
 		},
 		KnobsOverrides:  []string{"work_mem"},
-		KnobApplication: agent.KnobApplicationRestart,
+		KnobApplication: tuning.KnobApplicationRestart,
 	}
 
 	require.NoError(t, adapter.ApplyConfig(context.Background(), proposed))
@@ -372,12 +372,12 @@ func TestIntegration_Pgprem_ApplyConfig_Restart_AttemptsSystemctl(t *testing.T) 
 	const bogusService = "dbtune-pgprem-integration-test-nonexistent.service"
 	adapter := newAdapter(t, pool, bogusService)
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "shared_buffers", Setting: int64(4096), Vartype: "integer"},
 		},
 		KnobsOverrides:  []string{"shared_buffers"},
-		KnobApplication: agent.KnobApplicationRestart,
+		KnobApplication: tuning.KnobApplicationRestart,
 	}
 
 	err := adapter.ApplyConfig(context.Background(), proposed)
@@ -406,12 +406,12 @@ func TestIntegration_Pgprem_ApplyConfig_Restart_ViaScript(t *testing.T) {
 	sentinel := filepath.Join(t.TempDir(), "ran")
 	adapter := newAdapterWithRestartScript(t, pool, writeRestartScript(t, "echo restarted > "+sentinel))
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "shared_buffers", Setting: int64(8192), Vartype: "integer"},
 		},
 		KnobsOverrides:  []string{"shared_buffers"},
-		KnobApplication: agent.KnobApplicationRestart,
+		KnobApplication: tuning.KnobApplicationRestart,
 	}
 
 	require.NoError(t, adapter.ApplyConfig(context.Background(), proposed))
@@ -432,12 +432,12 @@ func TestIntegration_Pgprem_ApplyConfig_RestartScript_Fails(t *testing.T) {
 
 	adapter := newAdapterWithRestartScript(t, pool, writeRestartScript(t, "echo boom >&2\nexit 3"))
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "shared_buffers", Setting: int64(4096), Vartype: "integer"},
 		},
 		KnobsOverrides:  []string{"shared_buffers"},
-		KnobApplication: agent.KnobApplicationRestart,
+		KnobApplication: tuning.KnobApplicationRestart,
 	}
 
 	err := adapter.ApplyConfig(context.Background(), proposed)

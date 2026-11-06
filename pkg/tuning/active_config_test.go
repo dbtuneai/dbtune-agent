@@ -1,9 +1,8 @@
-package pg
+package tuning
 
 import (
 	"testing"
 
-	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,7 +20,7 @@ func TestSettingsToConfigRows_IntegerVartype(t *testing.T) {
 	got := settingsToConfigRows(settings)
 	require.Len(t, got, 1)
 
-	row := got[0].(agent.PGConfigRow)
+	row := got[0].(PGConfigRow)
 	assert.Equal(t, "work_mem", row.Name)
 	assert.Equal(t, int64(4096), row.Setting) // InferNumericType: "4096" → int64
 	assert.Equal(t, "kB", row.Unit)
@@ -36,7 +35,7 @@ func TestSettingsToConfigRows_RealVartype(t *testing.T) {
 	got := settingsToConfigRows(settings)
 	require.Len(t, got, 1)
 
-	row := got[0].(agent.PGConfigRow)
+	row := got[0].(PGConfigRow)
 	assert.Equal(t, float64(1.0), row.Setting) // InferNumericType: "1.0" → float64
 	assert.Nil(t, row.Unit)                    // NULL unit → nil
 }
@@ -48,7 +47,7 @@ func TestSettingsToConfigRows_StringVartype(t *testing.T) {
 	got := settingsToConfigRows(settings)
 	require.Len(t, got, 1)
 
-	row := got[0].(agent.PGConfigRow)
+	row := got[0].(PGConfigRow)
 	assert.Equal(t, "UTC", row.Setting) // no InferNumericType for string vartype
 	assert.Equal(t, "string", row.Vartype)
 }
@@ -58,7 +57,7 @@ func TestSettingsToConfigRows_EnumVartype(t *testing.T) {
 		{Name: "wal_level", Setting: "replica", Vartype: "enum", Context: "postmaster"},
 	}
 	got := settingsToConfigRows(settings)
-	row := got[0].(agent.PGConfigRow)
+	row := got[0].(PGConfigRow)
 	assert.Equal(t, "replica", row.Setting)
 }
 
@@ -67,7 +66,7 @@ func TestSettingsToConfigRows_BoolVartype(t *testing.T) {
 		{Name: "jit", Setting: "on", Vartype: "bool", Context: "user"},
 	}
 	got := settingsToConfigRows(settings)
-	row := got[0].(agent.PGConfigRow)
+	row := got[0].(PGConfigRow)
 	// "on" is not a numeric string, so it stays as string
 	assert.Equal(t, "on", row.Setting)
 }
@@ -77,7 +76,7 @@ func TestSettingsToConfigRows_NullUnit(t *testing.T) {
 		{Name: "max_connections", Setting: "100", Vartype: "integer", Context: "postmaster", Unit: nil},
 	}
 	got := settingsToConfigRows(settings)
-	row := got[0].(agent.PGConfigRow)
+	row := got[0].(PGConfigRow)
 	assert.Nil(t, row.Unit)
 }
 
@@ -86,7 +85,7 @@ func TestSettingsToConfigRows_NonNullUnit(t *testing.T) {
 		{Name: "shared_buffers", Setting: "16384", Vartype: "integer", Context: "postmaster", Unit: textPtr("8kB")},
 	}
 	got := settingsToConfigRows(settings)
-	row := got[0].(agent.PGConfigRow)
+	row := got[0].(PGConfigRow)
 	assert.Equal(t, "8kB", row.Unit)
 }
 
@@ -100,44 +99,13 @@ func TestSettingsToConfigRows_MixedRows(t *testing.T) {
 	got := settingsToConfigRows(settings)
 	require.Len(t, got, 4)
 
-	assert.Equal(t, int64(100), got[0].(agent.PGConfigRow).Setting)
-	assert.Equal(t, float64(1.5), got[1].(agent.PGConfigRow).Setting)
-	assert.Equal(t, "UTC", got[2].(agent.PGConfigRow).Setting)
-	assert.Equal(t, "replica", got[3].(agent.PGConfigRow).Setting)
+	assert.Equal(t, int64(100), got[0].(PGConfigRow).Setting)
+	assert.Equal(t, float64(1.5), got[1].(PGConfigRow).Setting)
+	assert.Equal(t, "UTC", got[2].(PGConfigRow).Setting)
+	assert.Equal(t, "replica", got[3].(PGConfigRow).Setting)
 }
 
 func TestSettingsToConfigRows_Empty(t *testing.T) {
 	got := settingsToConfigRows(nil)
 	assert.Empty(t, got)
-}
-
-func TestParsePGVersion(t *testing.T) {
-	tests := []struct {
-		name       string
-		in         string
-		want       Version
-		wantString string
-		wantErr    bool
-	}{
-		{"release", "PostgreSQL 16.4 on x86_64-pc-linux-gnu, compiled by gcc", Version{Major: 16, Minor: 4, HasMinor: true}, "16.4", false},
-		{"rds", "PostgreSQL 12.22 on aarch64-unknown-linux-gnu, compiled by gcc (GCC) 7.3.1, 64-bit", Version{Major: 12, Minor: 22, HasMinor: true}, "12.22", false},
-		{"zero minor", "PostgreSQL 17.0 on x86_64-pc-linux-gnu", Version{Major: 17, Minor: 0, HasMinor: true}, "17.0", false},
-		{"beta", "PostgreSQL 18beta1 on x86_64-pc-linux-gnu", Version{Major: 18}, "18", false},
-		{"rc", "PostgreSQL 17rc1 on x86_64-pc-linux-gnu", Version{Major: 17}, "17", false},
-		{"devel", "PostgreSQL 19devel on x86_64-pc-linux-gnu", Version{Major: 19}, "19", false},
-		{"unrecognized", "not postgres", Version{}, "", true},
-		{"empty", "", Version{}, "", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParsePGVersion(tt.in)
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
-			assert.NoError(t, err)
-			assert.Equal(t, tt.want, got)
-			assert.Equal(t, tt.wantString, got.String())
-		})
-	}
 }

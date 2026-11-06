@@ -8,9 +8,9 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/config"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
-	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/tuning"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/moby/moby/api/types/container"
@@ -230,16 +230,16 @@ func (d *DockerContainerAdapter) Guardrails(ctx context.Context) *guardrails.Sig
 	return nil
 }
 
-func (d *DockerContainerAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(d.PGDriver, ctx)
+func (d *DockerContainerAdapter) GetActiveConfig(ctx context.Context) (tuning.ConfigArraySchema, error) {
+	return tuning.GetActiveConfig(d.PGDriver, ctx)
 }
 
-func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
+func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig *tuning.ProposedConfigResponse) tuning.ApplyConfigError {
 	d.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
-	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
+	parsedKnobs, err := tuning.ParseKnobConfigurations(proposedConfig)
 	if err != nil {
-		return &agent.ConfigApplyError{Err: err}
+		return &tuning.ConfigApplyError{Err: err}
 	}
 
 	// Validate against the running PostgreSQL before mutating
@@ -248,15 +248,15 @@ func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig
 	for _, k := range parsedKnobs {
 		paramNames = append(paramNames, k.Name)
 	}
-	requiresRestart, err := pg.ValidateRestartPolicy(d.PGDriver, ctx, paramNames, proposedConfig.KnobApplication)
+	requiresRestart, err := tuning.ValidateRestartPolicy(d.PGDriver, ctx, paramNames, proposedConfig.KnobApplication)
 	if err != nil {
-		return &agent.ConfigApplyError{Err: err}
+		return &tuning.ConfigApplyError{Err: err}
 	}
 
 	for _, knob := range parsedKnobs {
-		err := pg.AlterSystem(d.PGDriver, knob.Name, knob.SettingValue)
+		err := tuning.AlterSystem(d.PGDriver, knob.Name, knob.SettingValue)
 		if err != nil {
-			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)}
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)}
 		}
 	}
 
@@ -267,18 +267,18 @@ func (d *DockerContainerAdapter) ApplyConfig(ctx context.Context, proposedConfig
 		// Execute docker restart command
 		_, err := d.dockerClient.ContainerRestart(ctx, d.Config.ContainerName, client.ContainerRestartOptions{})
 		if err != nil {
-			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to restart PostgreSQL service: %w", err)}
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to restart PostgreSQL service: %w", err)}
 		}
 
-		err = pg.WaitPostgresReady(d.PGDriver, ctx)
+		err = tuning.WaitPostgresReady(d.PGDriver, ctx)
 		if err != nil {
-			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)}
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)}
 		}
 	} else {
 		// Reload database when everything is applied
-		err := pg.ReloadConfig(d.PGDriver)
+		err := tuning.ReloadConfig(d.PGDriver)
 		if err != nil {
-			return &agent.ConfigApplyError{Err: err}
+			return &tuning.ConfigApplyError{Err: err}
 		}
 	}
 

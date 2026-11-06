@@ -12,9 +12,9 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/config"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
-	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/tuning"
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -201,7 +201,7 @@ func (adapter *AivenPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]met
 }
 
 // ApplyConfig applies configuration changes to the Aiven PostgreSQL service
-func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
+func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *tuning.ProposedConfigResponse) tuning.ApplyConfigError {
 	adapter.Logger().Infof("Applying config")
 
 	// List of knobs to be applied
@@ -211,16 +211,16 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposed
 
 	// Sort the knobs into dbLevelKnobs and serviceLevelKnobs
 	for _, knob := range proposedConfig.KnobsOverrides {
-		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
+		knobConfig, err := tuning.FindRecommendedKnob(proposedConfig.Config, knob)
 		if err != nil {
-			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to find recommended knob: %w", err)}
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to find recommended knob: %w", err)}
 		}
 
 		adapter.Logger().Debugf("Knob config: %+v", knobConfig)
 
 		knobModifiability, ok := aivenModifiableParams[knobConfig.Name]
 		if !ok {
-			return &agent.ConfigApplyError{Err: fmt.Errorf("parameter %s has unknown modifiability status on Aiven. Skipping on applying the configuration", knobConfig.Name)}
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("parameter %s has unknown modifiability status on Aiven. Skipping on applying the configuration", knobConfig.Name)}
 		}
 		switch knobModifiability.ModifyLevel {
 		case ModifyUserPGConfig:
@@ -232,21 +232,21 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposed
 				restartRequired = true
 			}
 		case NoModify:
-			return &agent.ConfigApplyError{Err: fmt.Errorf("parameter %s can not be modified on Aiven. Skipping on applying the configuration", knobConfig.Name)}
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("parameter %s can not be modified on Aiven. Skipping on applying the configuration", knobConfig.Name)}
 		}
 	}
 
 	// If any of the parameters being applied would require a restart but the
 	// agent is not allowed to restart, bail before pushing changes to Aiven.
 	if restartRequired && !config.IsRestartAllowed() {
-		return &agent.RestartNotAllowedError{
+		return &tuning.RestartNotAllowedError{
 			Message: "restart is not allowed in the agent",
 		}
 	}
 	// Refuse to partially apply: KnobApplication=reload but Aiven would
 	// auto-restart for at least one of the proposed knobs.
-	if restartRequired && proposedConfig.KnobApplication == agent.KnobApplicationReload {
-		return &agent.ConfigApplyError{Err: fmt.Errorf("refusing to apply: KnobApplication=reload but at least one parameter would force an Aiven service restart")}
+	if restartRequired && proposedConfig.KnobApplication == tuning.KnobApplicationReload {
+		return &tuning.ConfigApplyError{Err: fmt.Errorf("refusing to apply: KnobApplication=reload but at least one parameter would force an Aiven service restart")}
 	}
 
 	if len(pgSettings) > 0 {
@@ -263,7 +263,7 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposed
 			&service.ServiceUpdateIn{UserConfig: &userConfig, Powered: boolPtr(true)},
 		)
 		if err != nil {
-			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to update PostgreSQL parameters: %w", err)}
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to update PostgreSQL parameters: %w", err)}
 		}
 	} else {
 		adapter.Logger().Warnf("ApplyConfig was called with no changes to apply")
@@ -273,7 +273,7 @@ func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposed
 		adapter.Logger().Info("Restart was required, checking if Aiven PostgreSQL service has restarted")
 		err := adapter.waitForServiceState(service.ServiceStateTypeRunning)
 		if err != nil {
-			return &agent.ConfigApplyError{Err: err}
+			return &tuning.ConfigApplyError{Err: err}
 		}
 	}
 
@@ -462,8 +462,8 @@ func getInitialServiceLevelParameters(client *aivenclient.Client, projectName st
 
 // GetActiveConfig returns the active configuration for the Aiven API
 // as well as through PostgreSQL
-func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
-	// Main differences from the generic pg.GetActiveConfig:
+func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (tuning.ConfigArraySchema, error) {
+	// Main differences from the generic tuning.GetActiveConfig:
 	// * We inject `shared_buffers_percentage` from the Aiven API.
 	//   Until we modify it, Aiven returns nothing, so we fall back to a known default of 20%.
 	// * `work_mem` is set through the Aiven API in MB, but pg_settings reports it in kB.
@@ -506,7 +506,7 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (age
 	}
 
 	// Get the standard pg_settings config.
-	configRows, err := pg.GetActiveConfig(adapter.PGDriver, ctx)
+	configRows, err := tuning.GetActiveConfig(adapter.PGDriver, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -525,9 +525,9 @@ func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (age
 
 // overrideWorkMemKBtoMB finds work_mem in configRows and converts its value
 // from kB (as reported by pg_settings) to MB (as used by the Aiven API).
-func overrideWorkMemKBtoMB(configRows agent.ConfigArraySchema) (agent.ConfigArraySchema, error) {
+func overrideWorkMemKBtoMB(configRows tuning.ConfigArraySchema) (tuning.ConfigArraySchema, error) {
 	for i := 0; i < len(configRows); i++ {
-		pgRow, ok := configRows[i].(agent.PGConfigRow)
+		pgRow, ok := configRows[i].(tuning.PGConfigRow)
 		if !ok || pgRow.Name != "work_mem" {
 			continue
 		}
@@ -544,7 +544,7 @@ func overrideWorkMemKBtoMB(configRows agent.ConfigArraySchema) (agent.ConfigArra
 		default:
 			return nil, fmt.Errorf("unexpected work_mem type: %T", v)
 		}
-		configRows[i] = agent.PGConfigRow{
+		configRows[i] = tuning.PGConfigRow{
 			Name:    "work_mem",
 			Setting: int(workMemKb / 1024),
 			Unit:    "MB",
@@ -558,8 +558,8 @@ func overrideWorkMemKBtoMB(configRows agent.ConfigArraySchema) (agent.ConfigArra
 
 // prependSharedBuffersPercentage prepends a synthetic shared_buffers_percentage
 // setting to the config rows.
-func prependSharedBuffersPercentage(configRows agent.ConfigArraySchema, pct float64) agent.ConfigArraySchema {
-	return append(agent.ConfigArraySchema{agent.PGConfigRow{
+func prependSharedBuffersPercentage(configRows tuning.ConfigArraySchema, pct float64) tuning.ConfigArraySchema {
+	return append(tuning.ConfigArraySchema{tuning.PGConfigRow{
 		Name:    "shared_buffers_percentage",
 		Setting: pct,
 		Unit:    "percentage",

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
@@ -13,6 +12,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/backend/backendtest"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
+	"github.com/dbtuneai/agent/pkg/tuning"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -235,7 +235,7 @@ func TestCommonAgent_SendHeartbeat_Succeeds(t *testing.T) {
 func TestCommonAgent_SendActiveConfig_Succeeds(t *testing.T) {
 	transport := backendtest.CreateSuccessfulTrip()
 	agent := CreateCommonAgentForTests(transport)
-	config := ConfigArraySchema{}
+	config := tuning.ConfigArraySchema{}
 
 	err := agent.SendActiveConfig(context.Background(), config, time.Now())
 	assert.NoError(t, err)
@@ -307,79 +307,8 @@ func TestCommonAgent_GetProposedConfig_Succeeds(t *testing.T) {
 		assert.Equal(t, "work_mem", config.Config[1].Name)
 		assert.Equal(t, "max_connections", config.Config[2].Name)
 		assert.Equal(t, []string{"shared_buffers"}, config.KnobsOverrides)
-		assert.Equal(t, KnobApplicationRestart, config.KnobApplication)
+		assert.Equal(t, tuning.KnobApplicationRestart, config.KnobApplication)
 
 		transport.ActionWasCalled(t, "/api/v1/agent/configurations", http.MethodGet)
 	}
-}
-
-func TestKnobApplication_UnmarshalJSON(t *testing.T) {
-	cases := []struct {
-		name    string
-		input   string
-		want    KnobApplication
-		wantErr bool
-	}{
-		{name: "restart", input: `"restart"`, want: KnobApplicationRestart},
-		{name: "reload", input: `"reload"`, want: KnobApplicationReload},
-		{name: "empty string", input: `""`, wantErr: true},
-		{name: "uppercase", input: `"RESTART"`, wantErr: true},
-		{name: "unknown value", input: `"foo"`, wantErr: true},
-		{name: "non-string", input: `42`, wantErr: true},
-		{name: "null", input: `null`, wantErr: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var got KnobApplication
-			err := json.Unmarshal([]byte(tc.input), &got)
-			if tc.wantErr {
-				assert.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, got)
-		})
-	}
-}
-
-func TestProposedConfigResponse_UnmarshalJSON_RejectsInvalidKnobApplication(t *testing.T) {
-	payload := `{"config":[],"knobs_overrides":[],"knob_application":"sometimes"}`
-	var resp ProposedConfigResponse
-	err := json.Unmarshal([]byte(payload), &resp)
-	assert.Error(t, err, "decoding should fail before an adapter ever sees the response")
-}
-
-// Compile-time check: all variants satisfy ApplyConfigError.
-var (
-	_ ApplyConfigError = (*ConfigApplyError)(nil)
-	_ ApplyConfigError = (*RestartNotAllowedError)(nil)
-	_ ApplyConfigError = (*DefaultParameterGroupError)(nil)
-)
-
-func TestApplyConfigError_ErrorTypes(t *testing.T) {
-	t.Run("ConfigApplyError", func(t *testing.T) {
-		inner := errors.New("driver failure")
-		e := &ConfigApplyError{Err: inner}
-		assert.Equal(t, "config_apply_error", e.ErrorType())
-		assert.Equal(t, "driver failure", e.Error())
-		assert.ErrorIs(t, e, inner)
-	})
-
-	t.Run("RestartNotAllowedError", func(t *testing.T) {
-		e := &RestartNotAllowedError{Message: "restart required but allow_restart=false"}
-		assert.Equal(t, "restart_not_allowed", e.ErrorType())
-		assert.Equal(t, "restart required but allow_restart=false", e.Error())
-	})
-}
-
-func TestProposedConfigResponse_UnmarshalJSON_RejectsMissingKnobApplication(t *testing.T) {
-	// An omitted field leaves KnobApplication at its zero value ("") and
-	// UnmarshalJSON is not invoked. We rely on the field always being sent,
-	// but document the current behavior so it's an explicit choice rather
-	// than an oversight: an omitted field decodes successfully to "".
-	payload := `{"config":[],"knobs_overrides":[]}`
-	var resp ProposedConfigResponse
-	err := json.Unmarshal([]byte(payload), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, KnobApplication(""), resp.KnobApplication)
 }

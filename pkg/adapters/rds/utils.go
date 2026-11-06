@@ -10,9 +10,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
-	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
+	"github.com/dbtuneai/agent/pkg/tuning"
 )
 
 // configInfo is one parameter that we want to update, paired with what the
@@ -34,7 +33,7 @@ func (c configInfo) isChangedRestartParameter() bool {
 }
 
 func getConfigInfo(
-	proposedConfig *agent.ProposedConfigResponse,
+	proposedConfig *tuning.ProposedConfigResponse,
 	clients *AWSClients,
 	parameterGroupName string,
 	ctx context.Context,
@@ -42,7 +41,7 @@ func getConfigInfo(
 	// extract the data from the proposals
 	configs := make([]configInfo, 0, len(proposedConfig.KnobsOverrides))
 	for _, knob := range proposedConfig.KnobsOverrides {
-		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
+		knobConfig, err := tuning.FindRecommendedKnob(proposedConfig.Config, knob)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find recommended knob: %w", err)
 		}

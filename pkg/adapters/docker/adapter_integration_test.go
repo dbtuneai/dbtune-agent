@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/agent"
-	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/tuning"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 	dockercontainer "github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
@@ -181,12 +181,12 @@ func TestIntegration_Docker_ApplyConfig_Reload_NonRestartParam(t *testing.T) {
 
 	adapter := newAdapter(t, pool)
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "work_mem", Setting: int64(8192), Vartype: "integer"},
 		},
 		KnobsOverrides:  []string{"work_mem"},
-		KnobApplication: agent.KnobApplicationReload,
+		KnobApplication: tuning.KnobApplicationReload,
 	}
 
 	require.NoError(t, adapter.ApplyConfig(context.Background(), proposed))
@@ -215,12 +215,12 @@ func TestIntegration_Docker_ApplyConfig_Restart_Allowed(t *testing.T) {
 	// small enough to start on any postgres:16-alpine.
 	const expected8kBUnits = "4096"
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "shared_buffers", Setting: int64(4096), Vartype: "integer"},
 		},
 		KnobsOverrides:  []string{"shared_buffers"},
-		KnobApplication: agent.KnobApplicationRestart,
+		KnobApplication: tuning.KnobApplicationRestart,
 	}
 
 	require.NoError(t, adapter.ApplyConfig(context.Background(), proposed))
@@ -249,17 +249,17 @@ func TestIntegration_Docker_ApplyConfig_Restart_NotAllowed(t *testing.T) {
 
 	adapter := newAdapter(t, pool)
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "shared_buffers", Setting: int64(8192), Vartype: "integer"},
 		},
 		KnobsOverrides:  []string{"shared_buffers"},
-		KnobApplication: agent.KnobApplicationRestart,
+		KnobApplication: tuning.KnobApplicationRestart,
 	}
 
 	err := adapter.ApplyConfig(context.Background(), proposed)
 
-	var notAllowed *agent.RestartNotAllowedError
+	var notAllowed *tuning.RestartNotAllowedError
 	assert.ErrorAs(t, err, &notAllowed, "expected RestartNotAllowedError, got %v", err)
 
 	assert.Empty(t, autoConfSetting(t, pool, "shared_buffers"),
@@ -270,7 +270,7 @@ func TestIntegration_Docker_ApplyConfig_Restart_NotAllowed(t *testing.T) {
 // invariant that a reload-only intent cannot be used to apply a parameter
 // that actually requires a restart. The CNPG fix that drove this branch
 // (refuse partial application) is enforced for docker too via the shared
-// pg.ValidateRestartPolicy helper.
+// tuning.ValidateRestartPolicy helper.
 func TestIntegration_Docker_ApplyConfig_RestartParam_WithReloadIntent(t *testing.T) {
 	setAllowRestart(t, true)
 	pool := newPool(t)
@@ -278,18 +278,18 @@ func TestIntegration_Docker_ApplyConfig_RestartParam_WithReloadIntent(t *testing
 
 	adapter := newAdapter(t, pool)
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "shared_buffers", Setting: int64(8192), Vartype: "integer"},
 		},
 		KnobsOverrides:  []string{"shared_buffers"},
-		KnobApplication: agent.KnobApplicationReload,
+		KnobApplication: tuning.KnobApplicationReload,
 	}
 
 	err := adapter.ApplyConfig(context.Background(), proposed)
 	require.Error(t, err)
 
-	var notAllowed *agent.RestartNotAllowedError
+	var notAllowed *tuning.RestartNotAllowedError
 	assert.False(t, errors.As(err, &notAllowed),
 		"with allow_restart=true, the error should be a refusal due to reload intent, not RestartNotAllowedError")
 	assert.Contains(t, err.Error(), "refusing to apply")
@@ -312,13 +312,13 @@ func TestIntegration_Docker_ApplyConfig_MixedParams_Restart(t *testing.T) {
 
 	startedAt := containerStartedAt(t)
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "shared_buffers", Setting: int64(4096), Vartype: "integer"},
 			{Name: "work_mem", Setting: int64(16384), Vartype: "integer"},
 		},
 		KnobsOverrides:  []string{"shared_buffers", "work_mem"},
-		KnobApplication: agent.KnobApplicationRestart,
+		KnobApplication: tuning.KnobApplicationRestart,
 	}
 
 	require.NoError(t, adapter.ApplyConfig(context.Background(), proposed))
@@ -348,12 +348,12 @@ func TestIntegration_Docker_ApplyConfig_ReloadOnlyParams_WithRestartIntent(t *te
 
 	startedAt := containerStartedAt(t)
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "work_mem", Setting: int64(8192), Vartype: "integer"},
 		},
 		KnobsOverrides:  []string{"work_mem"},
-		KnobApplication: agent.KnobApplicationRestart,
+		KnobApplication: tuning.KnobApplicationRestart,
 	}
 
 	require.NoError(t, adapter.ApplyConfig(context.Background(), proposed))
@@ -374,7 +374,7 @@ func TestIntegration_Docker_ApplyConfig_ReloadOnlyParams_WithRestartIntent(t *te
 func TestIntegration_Docker_ApplyConfig_ValidateUsesLiveCatalog(t *testing.T) {
 	pool := newPool(t)
 
-	got, err := pg.RestartRequiredParams(pool, context.Background(),
+	got, err := tuning.RestartRequiredParams(pool, context.Background(),
 		[]string{"shared_buffers", "work_mem", "max_connections"})
 	require.NoError(t, err)
 

@@ -1,11 +1,9 @@
-package parameters
+package tuning
 
 import (
 	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/dbtuneai/agent/pkg/agent"
 )
 
 type ParsedKnob struct {
@@ -14,19 +12,19 @@ type ParsedKnob struct {
 }
 
 // FindRecommendedKnob finds a recommended knob in recommendation array
-func FindRecommendedKnob(config []agent.PGConfigRow, knob string) (agent.PGConfigRow, error) {
+func FindRecommendedKnob(config []PGConfigRow, knob string) (PGConfigRow, error) {
 	for _, c := range config {
 		if c.Name == knob {
 			return c, nil
 		}
 	}
-	return agent.PGConfigRow{}, fmt.Errorf("knob %s not found in configuration", knob)
+	return PGConfigRow{}, fmt.Errorf("knob %s not found in configuration", knob)
 }
 
 // ParseKnobConfigurations parses and validates all knob configurations before applying any.
 // This ensures that either all configurations are valid and can be applied, or none are applied
 // if there's a parsing error, preventing partial configuration application.
-func ParseKnobConfigurations(proposedConfig *agent.ProposedConfigResponse) ([]ParsedKnob, error) {
+func ParseKnobConfigurations(proposedConfig *ProposedConfigResponse) ([]ParsedKnob, error) {
 	parsedKnobs := make([]ParsedKnob, 0, len(proposedConfig.KnobsOverrides))
 
 	for _, knob := range proposedConfig.KnobsOverrides {

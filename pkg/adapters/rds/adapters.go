@@ -15,6 +15,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/dbtuneai/agent/pkg/pg/collectorconfig"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
+	"github.com/dbtuneai/agent/pkg/tuning"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -195,11 +196,11 @@ func (adapter *RDSAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatVal
 	return info, nil
 }
 
-func (adapter *RDSAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(adapter.PGDriver, ctx)
+func (adapter *RDSAdapter) GetActiveConfig(ctx context.Context) (tuning.ConfigArraySchema, error) {
+	return tuning.GetActiveConfig(adapter.PGDriver, ctx)
 }
 
-func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
+func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *tuning.ProposedConfigResponse) tuning.ApplyConfigError {
 	if adapter.State.CheckApplyDebounced(1 * time.Minute) {
 		adapter.Logger().Infof("Config was applied less than %s ago, skipping", 1*time.Minute)
 		return nil
@@ -209,7 +210,7 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 	defer func() { adapter.State.LastApplyAttempt = time.Now() }()
 
 	if err := adapter.refreshDBInfo(ctx); err != nil {
-		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to refresh DB info before apply: %w", err)}
+		return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to refresh DB info before apply: %w", err)}
 	}
 	// Check that we are not connected to the default parameter group.
 	if err := defaultParameterGroupError(adapter.State.DBInfo); err != nil {
@@ -226,18 +227,18 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 	configs, err := getConfigInfo(
 		proposedConfig, &adapter.AWSClients, adapter.State.DBInfo.ParameterGroupName, ctx)
 	if err != nil {
-		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to resolve knobs to apply: %w", err)}
+		return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to resolve knobs to apply: %w", err)}
 	}
 
 	containsRestartParameterChange := slices.ContainsFunc(configs, configInfo.isChangedRestartParameter)
-	applyMethodIsRestart := proposedConfig.KnobApplication == agent.KnobApplicationRestart
+	applyMethodIsRestart := proposedConfig.KnobApplication == tuning.KnobApplicationRestart
 	if applyMethodIsRestart && !config.IsRestartAllowed() {
-		return &agent.RestartNotAllowedError{
+		return &tuning.RestartNotAllowedError{
 			Message: "restart is not allowed in the agent",
 		}
 	}
 	if containsRestartParameterChange && !applyMethodIsRestart {
-		return &agent.ConfigApplyError{
+		return &tuning.ConfigApplyError{
 			Err: errors.New("a parameter requires a restart to take effect, but the apply method is reload"),
 		}
 	}
@@ -275,13 +276,13 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 	if err := waitInstanceServing(
 		&adapter.AWSClients, adapter.Config.RDSDatabaseIdentifier, adapter.Logger(), ctx,
 	); err != nil {
-		return &agent.ConfigApplyError{Err: fmt.Errorf("error waiting for instance to come back online: %w", err)}
+		return &tuning.ConfigApplyError{Err: fmt.Errorf("error waiting for instance to come back online: %w", err)}
 	}
 
 	adapter.Logger().Info("Waiting for PostgreSQL to come back online...")
-	err = pg.WaitPostgresReady(adapter.PGDriver, ctx)
+	err = tuning.WaitPostgresReady(adapter.PGDriver, ctx)
 	if err != nil {
-		return &agent.ConfigApplyError{Err: fmt.Errorf("error waiting for PostgreSQL to come back online: %w", err)}
+		return &tuning.ConfigApplyError{Err: fmt.Errorf("error waiting for PostgreSQL to come back online: %w", err)}
 	}
 
 	// Check that the values get applied in PostgreSQL.
@@ -306,7 +307,7 @@ const (
 func (adapter *RDSAdapter) verifyAppliedSettings(
 	ctx context.Context,
 	targets []configInfo,
-) agent.ApplyConfigError {
+) tuning.ApplyConfigError {
 	if len(targets) == 0 {
 		return nil
 	}
@@ -325,7 +326,7 @@ func (adapter *RDSAdapter) verifyAppliedSettings(
 		} else {
 			diff = diffPGSettings(targets, rows)
 			if len(diff.Missing) > 0 {
-				return &agent.ConfigApplyError{Err: fmt.Errorf(
+				return &tuning.ConfigApplyError{Err: fmt.Errorf(
 					"cannot verify apply: %s unknown to this PostgreSQL server",
 					strings.Join(diff.Missing, ", "),
 				)}
@@ -339,7 +340,7 @@ func (adapter *RDSAdapter) verifyAppliedSettings(
 
 		select {
 		case <-waitCtx.Done():
-			return &agent.ConfigApplyError{Err: fmt.Errorf(
+			return &tuning.ConfigApplyError{Err: fmt.Errorf(
 				"timed out after %s waiting for PostgreSQL to report the new configuration (%s); %s",
 				pgVerifyTimeout, diff, adapter.parameterGroupDiagnosis(ctx, targets),
 			)}
@@ -374,14 +375,14 @@ func (adapter *RDSAdapter) parameterGroupDiagnosis(ctx context.Context, targets 
 }
 
 // asApplyConfigError keeps a typed ApplyConfigError from anywhere in the chain,
-// so the platform gets its wire type. pg.ValidateRestartPolicy returns
-// *agent.RestartNotAllowedError, which wrapping would downgrade.
-func asApplyConfigError(err error) agent.ApplyConfigError {
-	var typed agent.ApplyConfigError
+// so the platform gets its wire type. tuning.ValidateRestartPolicy returns
+// *tuning.RestartNotAllowedError, which wrapping would downgrade.
+func asApplyConfigError(err error) tuning.ApplyConfigError {
+	var typed tuning.ApplyConfigError
 	if errors.As(err, &typed) {
 		return typed
 	}
-	return &agent.ConfigApplyError{Err: fmt.Errorf("failed to apply config: %w", err)}
+	return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to apply config: %w", err)}
 }
 
 func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {

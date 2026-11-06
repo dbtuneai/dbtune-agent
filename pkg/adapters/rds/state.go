@@ -9,8 +9,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/metrics"
+	"github.com/dbtuneai/agent/pkg/tuning"
 
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
@@ -171,14 +171,14 @@ func (info *DBInfo) ResourceID() (string, error) {
 // attached parameter group is an AWS-managed default.* group (which cannot be
 // modified). Returns nil otherwise, including when dbInfo is nil or the group
 // name is empty.
-func defaultParameterGroupError(dbInfo *DBInfo) *agent.DefaultParameterGroupError {
+func defaultParameterGroupError(dbInfo *DBInfo) *tuning.DefaultParameterGroupError {
 	if dbInfo == nil {
 		return nil
 	}
 	if !strings.HasPrefix(dbInfo.ParameterGroupName, "default.") {
 		return nil
 	}
-	return &agent.DefaultParameterGroupError{ParameterGroupName: dbInfo.ParameterGroupName}
+	return &tuning.DefaultParameterGroupError{ParameterGroupName: dbInfo.ParameterGroupName}
 }
 
 func (info *DBInfo) TryIntoFlatValuesSlice() ([]metrics.FlatValue, error) {

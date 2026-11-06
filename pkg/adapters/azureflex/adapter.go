@@ -14,9 +14,9 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/guardrails"
-	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/tuning"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
 )
@@ -87,38 +87,38 @@ func CreateAzureFlexAdapter() (*AzureFlexAdapter, error) {
 // applying we observe a per-parameter restart-required hint that contradicts
 // a KnobApplication=reload signal, we return restart_not_allowed once the
 // full configuration has been pushed; we do not roll back.
-func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
+func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig *tuning.ProposedConfigResponse) tuning.ApplyConfigError {
 	// Bail before pushing parameter changes to Azure if a restart is required but not allowed.
-	if proposedConfig.KnobApplication == agent.KnobApplicationRestart && !config.IsRestartAllowed() {
-		return &agent.RestartNotAllowedError{
+	if proposedConfig.KnobApplication == tuning.KnobApplicationRestart && !config.IsRestartAllowed() {
+		return &tuning.RestartNotAllowedError{
 			Message: "restart is not allowed in the agent",
 		}
 	}
 
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
-		return &agent.ConfigApplyError{Err: err}
+		return &tuning.ConfigApplyError{Err: err}
 	}
 
 	clientFactory, err := armpostgresqlflexibleservers.NewClientFactory(adapter.AzureFlexConfig.SubscriptionID, cred, nil)
 	if err != nil {
-		return &agent.ConfigApplyError{Err: err}
+		return &tuning.ConfigApplyError{Err: err}
 	}
 
 	paramsClient := clientFactory.NewConfigurationsClient()
 
 	anyShouldRestart := false
 	for _, knob := range proposedConfig.KnobsOverrides {
-		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
+		knobConfig, err := tuning.FindRecommendedKnob(proposedConfig.Config, knob)
 		adapter.Logger().Infof("Applying Knob: %s, %v\n", knob, knobConfig.Setting)
 		if err != nil {
-			return &agent.ConfigApplyError{Err: err}
+			return &tuning.ConfigApplyError{Err: err}
 		}
 		// Apply parameters one by one; if one fails we bail out early so the
 		// wrong config can be detected and reverted to baseline.
 		shouldRestart, err := ApplyParameter(ctx, adapter.Logger(), paramsClient, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, knobConfig)
 		if err != nil {
-			return &agent.ConfigApplyError{Err: err}
+			return &tuning.ConfigApplyError{Err: err}
 		}
 		if shouldRestart {
 			anyShouldRestart = true
@@ -128,18 +128,18 @@ func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig
 	// All parameters have been pushed. If KnobApplication=reload but Azure
 	// flagged at least one knob as restart-required, the intent and reality
 	// have diverged: surface restart_not_allowed without restarting.
-	if proposedConfig.KnobApplication == agent.KnobApplicationReload && anyShouldRestart {
-		return &agent.RestartNotAllowedError{
+	if proposedConfig.KnobApplication == tuning.KnobApplicationReload && anyShouldRestart {
+		return &tuning.RestartNotAllowedError{
 			Message: "at least one parameter requires a restart but KnobApplication=reload",
 		}
 	}
 
-	if proposedConfig.KnobApplication == agent.KnobApplicationRestart && anyShouldRestart {
+	if proposedConfig.KnobApplication == tuning.KnobApplicationRestart && anyShouldRestart {
 		// Restart the service
 		adapter.Logger().Warn("Restarting service")
 		restartResp, err := clientFactory.NewServersClient().BeginRestart(ctx, adapter.AzureFlexConfig.ResourceGroupName, adapter.AzureFlexConfig.ServerName, nil)
 		if err != nil {
-			return &agent.ConfigApplyError{Err: err}
+			return &tuning.ConfigApplyError{Err: err}
 		}
 
 		// wait for restart to complete
@@ -160,14 +160,14 @@ func (adapter *AzureFlexAdapter) ApplyConfig(ctx context.Context, proposedConfig
 
 		_, err = restartResp.Result(ctx)
 		if err != nil {
-			return &agent.ConfigApplyError{Err: err}
+			return &tuning.ConfigApplyError{Err: err}
 		}
 	}
 
 	return nil
 }
 
-func ApplyParameter(ctx context.Context, logger *logrus.Logger, paramsClient *armpostgresqlflexibleservers.ConfigurationsClient, resourceGroupName string, serverName string, config agent.PGConfigRow) (bool, error) {
+func ApplyParameter(ctx context.Context, logger *logrus.Logger, paramsClient *armpostgresqlflexibleservers.ConfigurationsClient, resourceGroupName string, serverName string, config tuning.PGConfigRow) (bool, error) {
 	value, err := config.GetSettingValue()
 	if err != nil {
 		return false, err
@@ -212,8 +212,8 @@ func ApplyParameter(ctx context.Context, logger *logrus.Logger, paramsClient *ar
 	return *res.Configuration.Properties.IsConfigPendingRestart, nil
 }
 
-func (adapter *AzureFlexAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
-	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx)
+func (adapter *AzureFlexAdapter) GetActiveConfig(ctx context.Context) (tuning.ConfigArraySchema, error) {
+	config, err := tuning.GetActiveConfig(adapter.PGDriver, ctx)
 	if err != nil {
 		return nil, err
 	}

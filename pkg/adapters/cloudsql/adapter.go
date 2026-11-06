@@ -10,9 +10,9 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/guardrails"
-	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/tuning"
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/api/sqladmin/v1"
 )
@@ -103,11 +103,11 @@ func CreateCloudSQLAdapter() (*CloudSQLAdapter, error) {
 // require a restart, so we rely on the KnobApplication signal provided.
 // CloudSQL's flag API does not surface a per-flag restart-required hint
 // post-application, so no mismatch detection is possible here.
-func (adapter *CloudSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
+func (adapter *CloudSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *tuning.ProposedConfigResponse) tuning.ApplyConfigError {
 	adapter.Logger().Infof("Applying config")
 
-	if proposedConfig.KnobApplication == agent.KnobApplicationRestart && !config.IsRestartAllowed() {
-		return &agent.RestartNotAllowedError{
+	if proposedConfig.KnobApplication == tuning.KnobApplicationRestart && !config.IsRestartAllowed() {
+		return &tuning.RestartNotAllowedError{
 			Message: "restart is not allowed in the agent",
 		}
 	}
@@ -115,13 +115,13 @@ func (adapter *CloudSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig 
 	flags := []*sqladmin.DatabaseFlags{}
 
 	for _, knob := range proposedConfig.KnobsOverrides {
-		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
+		knobConfig, err := tuning.FindRecommendedKnob(proposedConfig.Config, knob)
 		if err != nil {
-			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to find recommended knob: %w", err)}
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to find recommended knob: %w", err)}
 		}
 		fmtValue, err := knobConfig.GetSettingValue()
 		if err != nil {
-			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to get setting value: %w", err)}
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to get setting value: %w", err)}
 		}
 
 		param := &sqladmin.DatabaseFlags{
@@ -134,30 +134,30 @@ func (adapter *CloudSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig 
 
 	err := adapter.CloudSQLAdminClient.ApplyFlags(adapter.CloudSQLConfig.ProjectID, adapter.CloudSQLConfig.DatabaseName, flags)
 	if err != nil {
-		return &agent.ConfigApplyError{Err: err}
+		return &tuning.ConfigApplyError{Err: err}
 	}
 
-	err = pg.WaitPostgresReady(adapter.PGDriver, ctx)
+	err = tuning.WaitPostgresReady(adapter.PGDriver, ctx)
 	if err != nil {
-		return &agent.ConfigApplyError{Err: fmt.Errorf("Error waiting for PostgreSQL to come back online: %w", err)}
+		return &tuning.ConfigApplyError{Err: fmt.Errorf("Error waiting for PostgreSQL to come back online: %w", err)}
 	}
 	return nil
 }
 
-func (adapter *CloudSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
+func (adapter *CloudSQLAdapter) GetActiveConfig(ctx context.Context) (tuning.ConfigArraySchema, error) {
 	adapter.Logger().Debugf("Getting Active Config")
 
-	config, err := pg.GetActiveConfig(adapter.PGDriver, ctx)
+	config, err := tuning.GetActiveConfig(adapter.PGDriver, ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	// some config rows are marked as internal, we cannot control these at all and
 	// they change in a way we can't predict and so can cause tuning to fail
-	filteredConfig := make(agent.ConfigArraySchema, 0, len(config))
+	filteredConfig := make(tuning.ConfigArraySchema, 0, len(config))
 
 	for _, knob := range config {
-		if k, ok := knob.(agent.PGConfigRow); ok {
+		if k, ok := knob.(tuning.PGConfigRow); ok {
 			if k.Context != "internal" {
 				filteredConfig = append(filteredConfig, k)
 			} else {

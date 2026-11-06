@@ -10,6 +10,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
+	"github.com/dbtuneai/agent/pkg/tuning"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
@@ -186,7 +187,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 				return err
 			}
 
-			var applyErr agent.ApplyConfigError
+			var applyErr tuning.ApplyConfigError
 			if proposedConfig != nil {
 				applyErr = adapter.ApplyConfig(ctx, proposedConfig)
 				if applyErr != nil {

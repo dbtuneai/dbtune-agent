@@ -16,10 +16,10 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/guardrails"
-	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/tuning"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/host"
@@ -196,7 +196,7 @@ func (adapter *PatroniAdapter) isStandbyNode(ctx context.Context) (bool, error) 
 	return inRecovery, nil
 }
 
-func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
+func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *tuning.ProposedConfigResponse) tuning.ApplyConfigError {
 	// Use operations context that will be cancelled during failover
 	// This ensures queries during config application are aborted if failover occurs
 	dbCtx := adapter.State.GetOperationsContext()
@@ -235,7 +235,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 				// Not in stabilization or grace period - block config application
 				logger.Warnf("[FAILOVER_RECOVERY] Failover check BLOCKED config application: %s", failoverErr.Message)
 				// HandleFailoverDetected was already called by CheckForFailover
-				return &agent.ConfigApplyError{Err: failoverErr}
+				return &tuning.ConfigApplyError{Err: failoverErr}
 			}
 		} else {
 			// Other error checking failover status - log but continue
@@ -274,7 +274,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 			if sendErr := adapter.SendError(ctx, errorPayload); sendErr != nil {
 				logger.Errorf("failed to send error report: %v", sendErr)
 			}
-			return &agent.ConfigApplyError{Err: fmt.Errorf("%s", errMsg)}
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("%s", errMsg)}
 		} else if err != nil {
 			logger.Warnf("Failed to check if node is standby: %v", err)
 		}
@@ -286,13 +286,13 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 	logger.Infof("[FAILOVER_RECOVERY] Failover check PASSED - proceeding with config application")
 
 	// Parse and validate all knobs upfront (following CNPG pattern)
-	allKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
+	allKnobs, err := tuning.ParseKnobConfigurations(proposedConfig)
 	if err != nil {
-		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to parse knob configurations: %w", err)}
+		return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to parse knob configurations: %w", err)}
 	}
 
 	// Filter out Patroni-managed parameters upfront
-	parsedKnobs := make([]parameters.ParsedKnob, 0, len(allKnobs))
+	parsedKnobs := make([]tuning.ParsedKnob, 0, len(allKnobs))
 	for _, knob := range allKnobs {
 		if IsPatroniManagedParameter(knob.Name) {
 			logger.Warnf("Skipping Patroni-managed parameter: %s (value: %s)", knob.Name, knob.SettingValue)
@@ -314,9 +314,9 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 	for _, k := range parsedKnobs {
 		paramNames = append(paramNames, k.Name)
 	}
-	needsRestart, err := pg.ValidateRestartPolicy(adapter.PGDriver, dbCtx, paramNames, proposedConfig.KnobApplication)
+	needsRestart, err := tuning.ValidateRestartPolicy(adapter.PGDriver, dbCtx, paramNames, proposedConfig.KnobApplication)
 	if err != nil {
-		return &agent.ConfigApplyError{Err: err}
+		return &tuning.ConfigApplyError{Err: err}
 	}
 
 	// Step 1: Clear postgresql.auto.conf by resetting each parameter that will be changed
@@ -324,17 +324,17 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 	logger.Info("Clearing postgresql.auto.conf by resetting parameters...")
 	for _, knob := range parsedKnobs {
 		logger.Infof("Resetting parameter: %s", knob.Name)
-		if err := pg.AlterSystemReset(adapter.PGDriver, knob.Name); err != nil {
+		if err := tuning.AlterSystemReset(adapter.PGDriver, knob.Name); err != nil {
 			logger.Errorf("Failed to reset parameter %s: %v", knob.Name, err)
-			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to reset parameter %s: %w", knob.Name, err)}
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to reset parameter %s: %w", knob.Name, err)}
 		}
 	}
 
 	// Reload configuration after reset
 	logger.Info("Reloading PostgreSQL configuration after reset...")
-	if err := pg.ReloadConfig(adapter.PGDriver); err != nil {
+	if err := tuning.ReloadConfig(adapter.PGDriver); err != nil {
 		logger.Errorf("Failed to reload configuration: %v", err)
-		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to reload configuration after reset: %w", err)}
+		return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to reload configuration after reset: %w", err)}
 	}
 
 	// Step 2: Build parameters map for Patroni REST API
@@ -352,7 +352,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 	jsonData, err := json.Marshal(patchRequest)
 	if err != nil {
 		logger.Errorf("Error marshaling JSON: %v", err)
-		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to marshal JSON: %w", err)}
+		return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to marshal JSON: %w", err)}
 	}
 
 	logger.Debugf("Patroni PATCH payload: %s", string(jsonData))
@@ -365,7 +365,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 	req, err := http.NewRequestWithContext(dbCtx, "PATCH", configURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		logger.Errorf("Error creating request: %v", err)
-		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to create HTTP request: %w", err)}
+		return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to create HTTP request: %w", err)}
 	}
 
 	// Set Content-Type header
@@ -375,7 +375,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 	resp, err := adapter.HTTPClient.Do(req)
 	if err != nil {
 		logger.Errorf("Error sending request: %v", err)
-		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to send HTTP PATCH request: %w", err)}
+		return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to send HTTP PATCH request: %w", err)}
 	}
 	defer resp.Body.Close()
 
@@ -383,7 +383,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logger.Errorf("Error reading response: %v", err)
-		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to read response body: %w", err)}
+		return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to read response body: %w", err)}
 	}
 
 	logger.Infof("Patroni API Response Status: %s", resp.Status)
@@ -392,7 +392,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 	// Check if the request was successful (2xx status codes)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		logger.Errorf("Patroni API returned error status: %d, body: %s", resp.StatusCode, string(responseBody))
-		return &agent.ConfigApplyError{Err: fmt.Errorf("patroni API returned error status %d: %s", resp.StatusCode, string(responseBody))}
+		return &tuning.ConfigApplyError{Err: fmt.Errorf("patroni API returned error status %d: %s", resp.StatusCode, string(responseBody))}
 	}
 
 	logger.Info("Configuration successfully applied via Patroni REST API")
@@ -410,17 +410,17 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 		// Trigger the restart
 		err = adapter.triggerPostgreSQLRestart(dbCtx)
 		if err != nil {
-			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to trigger PostgreSQL restart: %w", err)}
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to trigger PostgreSQL restart: %w", err)}
 		}
 
 		// Wait for PostgreSQL to come back online
 		logger.Info("Waiting for PostgreSQL to be ready after restart...")
-		err = pg.WaitPostgresReady(adapter.PGDriver, ctx)
+		err = tuning.WaitPostgresReady(adapter.PGDriver, ctx)
 		if err != nil {
 			if failoverErr := adapter.handlePossibleFailoverError(ctx, err, "during restart wait"); failoverErr != nil {
-				return &agent.ConfigApplyError{Err: failoverErr}
+				return &tuning.ConfigApplyError{Err: failoverErr}
 			}
-			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)}
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)}
 		}
 		logger.Info("PostgreSQL is ready after restart")
 
@@ -442,9 +442,9 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 		err := utils.QueryRowWithPrefix(adapter.PGDriver, dbCtx, query, knob.Name).Scan(&actualSetting, &unit)
 		if err != nil {
 			if failoverErr := adapter.handlePossibleFailoverError(ctx, err, "during verification"); failoverErr != nil {
-				return &agent.ConfigApplyError{Err: failoverErr}
+				return &tuning.ConfigApplyError{Err: failoverErr}
 			}
-			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to verify parameter %s in pg_settings: %w", knob.Name, err)}
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to verify parameter %s in pg_settings: %w", knob.Name, err)}
 		}
 
 		// Reconstruct the actual value with unit if present
@@ -460,7 +460,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 		switch {
 		case actualValue == expectedValue || actualSetting == expectedValue:
 			logger.Infof("✓ Verified parameter %s = %s", knob.Name, actualValue)
-		case parameters.NormalizeValue(actualValue) == parameters.NormalizeValue(expectedValue):
+		case tuning.NormalizeValue(actualValue) == tuning.NormalizeValue(expectedValue):
 			// Values match after normalization (e.g., "16384kB" vs "16MB")
 			logger.Infof("✓ Verified parameter %s = %s (matches expected %s)",
 				knob.Name, actualValue, expectedValue)
@@ -468,7 +468,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 			// True mismatch - this is a critical error
 			logger.Errorf("Parameter verification FAILED for %s: expected '%s', but got '%s' from pg_settings",
 				knob.Name, expectedValue, actualValue)
-			return &agent.ConfigApplyError{Err: fmt.Errorf("configuration verification failed: parameter %s has value '%s' but expected '%s'",
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("configuration verification failed: parameter %s has value '%s' but expected '%s'",
 				knob.Name, actualValue, expectedValue)}
 		}
 	}
@@ -481,7 +481,7 @@ func (adapter *PatroniAdapter) ApplyConfig(ctx context.Context, proposedConfig *
 		if errors.As(err, &failoverErr) {
 			// Failover detected after config application
 			// CheckForFailover already sent notification and updated LastKnownPrimary
-			return &agent.ConfigApplyError{Err: failoverErr}
+			return &tuning.ConfigApplyError{Err: failoverErr}
 		}
 		logger.Warnf("Post-application failover check encountered error: %v", err)
 	}
@@ -633,7 +633,7 @@ type PatroniPatchRequest struct {
 	} `json:"postgresql"`
 }
 
-func (adapter *PatroniAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
+func (adapter *PatroniAdapter) GetActiveConfig(ctx context.Context) (tuning.ConfigArraySchema, error) {
 	logger := adapter.Logger()
 	dbCtx := adapter.State.GetOperationsContext()
 
@@ -645,7 +645,7 @@ func (adapter *PatroniAdapter) GetActiveConfig(ctx context.Context) (agent.Confi
 	// currently active configuration. The Patroni DCS can have stale data or not
 	// reflect local overrides in postgresql.auto.conf, so we must query PostgreSQL directly.
 	logger.Info("Fetching active configuration from PostgreSQL")
-	config, err := pg.GetActiveConfig(adapter.PGDriver, dbCtx)
+	config, err := tuning.GetActiveConfig(adapter.PGDriver, dbCtx)
 	if err != nil {
 		if failoverErr := adapter.handlePossibleFailoverError(ctx, err, "in GetActiveConfig"); failoverErr != nil {
 			logger.Infof("[FAILOVER_RECOVERY] Returning failover error to prevent empty data being sent")
@@ -657,10 +657,10 @@ func (adapter *PatroniAdapter) GetActiveConfig(ctx context.Context) (agent.Confi
 	// Filter out Patroni-managed parameters to prevent false "unexpected config change"
 	// alerts. These are managed by Patroni (e.g., during failover) and should not be
 	// reported as configuration drift.
-	filteredConfig := make(agent.ConfigArraySchema, 0, len(config))
+	filteredConfig := make(tuning.ConfigArraySchema, 0, len(config))
 	for _, param := range config {
 		// Type assert to PGConfigRow to access the Name field
-		if row, ok := param.(agent.PGConfigRow); ok {
+		if row, ok := param.(tuning.PGConfigRow); ok {
 			if !IsPatroniManagedParameter(row.Name) {
 				filteredConfig = append(filteredConfig, param)
 			} else {

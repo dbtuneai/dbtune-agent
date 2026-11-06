@@ -5,7 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/tuning"
+
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -26,17 +27,17 @@ func TestApplyConfig_BailsBeforeAivenCallWhenRestartForbidden(t *testing.T) {
 	}
 	adapter.WithLogger(logrus.New())
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "shared_buffers_percentage", Setting: 25.0, Vartype: "real"},
 		},
 		KnobsOverrides:  []string{"shared_buffers_percentage"},
-		KnobApplication: agent.KnobApplicationRestart,
+		KnobApplication: tuning.KnobApplicationRestart,
 	}
 
 	err := adapter.ApplyConfig(context.Background(), proposed)
 
-	var notAllowed *agent.RestartNotAllowedError
+	var notAllowed *tuning.RestartNotAllowedError
 	assert.ErrorAs(t, err, &notAllowed, "expected RestartNotAllowedError, got %v", err)
 }
 
@@ -54,12 +55,12 @@ func TestApplyConfig_ProceedsWhenRestartAllowed(t *testing.T) {
 	}
 	adapter.WithLogger(logrus.New())
 
-	proposed := &agent.ProposedConfigResponse{
-		Config: []agent.PGConfigRow{
+	proposed := &tuning.ProposedConfigResponse{
+		Config: []tuning.PGConfigRow{
 			{Name: "shared_buffers_percentage", Setting: 25.0, Vartype: "real"},
 		},
 		KnobsOverrides:  []string{"shared_buffers_percentage"},
-		KnobApplication: agent.KnobApplicationRestart,
+		KnobApplication: tuning.KnobApplicationRestart,
 	}
 
 	defer func() {
@@ -68,6 +69,6 @@ func TestApplyConfig_ProceedsWhenRestartAllowed(t *testing.T) {
 	}()
 
 	err := adapter.ApplyConfig(context.Background(), proposed)
-	var notAllowed *agent.RestartNotAllowedError
+	var notAllowed *tuning.RestartNotAllowedError
 	assert.False(t, errors.As(err, &notAllowed), "should not bail with RestartNotAllowedError when restarts are allowed")
 }

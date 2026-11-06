@@ -9,9 +9,9 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/config"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
-	"github.com/dbtuneai/agent/pkg/internal/parameters"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/tuning"
 
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -170,16 +170,16 @@ func (adapter *DefaultPostgreSQLAdapter) GetSystemInfo(_ context.Context) ([]met
 	return systemInfo, nil
 }
 
-func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
-	return pg.GetActiveConfig(adapter.pgDriver, ctx)
+func (adapter *DefaultPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (tuning.ConfigArraySchema, error) {
+	return tuning.GetActiveConfig(adapter.pgDriver, ctx)
 }
 
-func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
+func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *tuning.ProposedConfigResponse) tuning.ApplyConfigError {
 	adapter.Logger().Infof("Applying Config: %s", proposedConfig.KnobApplication)
 
-	parsedKnobs, err := parameters.ParseKnobConfigurations(proposedConfig)
+	parsedKnobs, err := tuning.ParseKnobConfigurations(proposedConfig)
 	if err != nil {
-		return &agent.ConfigApplyError{Err: err}
+		return &tuning.ConfigApplyError{Err: err}
 	}
 
 	// Validate against the running PostgreSQL before mutating
@@ -188,18 +188,18 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 	for _, k := range parsedKnobs {
 		paramNames = append(paramNames, k.Name)
 	}
-	requiresRestart, err := pg.ValidateRestartPolicy(adapter.pgDriver, ctx, paramNames, proposedConfig.KnobApplication)
+	requiresRestart, err := tuning.ValidateRestartPolicy(adapter.pgDriver, ctx, paramNames, proposedConfig.KnobApplication)
 	if err != nil {
-		return &agent.ConfigApplyError{Err: err}
+		return &tuning.ConfigApplyError{Err: err}
 	}
 	if requiresRestart && adapter.pgConfig.ServiceName == "" && adapter.pgConfig.RestartScriptPath == "" {
-		return &agent.ConfigApplyError{Err: fmt.Errorf("neither service name nor restart script configured, refusing to apply: a restart is required to take effect")}
+		return &tuning.ConfigApplyError{Err: fmt.Errorf("neither service name nor restart script configured, refusing to apply: a restart is required to take effect")}
 	}
 
 	for _, knob := range parsedKnobs {
-		err = pg.AlterSystem(adapter.pgDriver, knob.Name, knob.SettingValue)
+		err = tuning.AlterSystem(adapter.pgDriver, knob.Name, knob.SettingValue)
 		if err != nil {
-			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)}
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to alter system for %s: %w", knob.Name, err)}
 		}
 	}
 
@@ -207,9 +207,9 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 		// Reload database when everything is applied. KnobApplication=restart
 		// with no postmaster-context params falls through here too: the intent
 		// is treated as a hint, and we avoid a needless restart.
-		err := pg.ReloadConfig(adapter.pgDriver)
+		err := tuning.ReloadConfig(adapter.pgDriver)
 		if err != nil {
-			return &agent.ConfigApplyError{Err: err}
+			return &tuning.ConfigApplyError{Err: err}
 		}
 		return nil
 	}
@@ -231,7 +231,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 		if err != nil || exitCode != 0 {
 			adapter.Logger().Warnf("restart script %s exited with code %d; output: %s",
 				adapter.pgConfig.RestartScriptPath, exitCode, string(output))
-			return &agent.ConfigApplyError{Err: fmt.Errorf("restart script %s failed (exit code %d): %w",
+			return &tuning.ConfigApplyError{Err: fmt.Errorf("restart script %s failed (exit code %d): %w",
 				adapter.pgConfig.RestartScriptPath, exitCode, err)}
 		}
 		adapter.Logger().Warnf("Service restarted via %s (exit code 0).", adapter.pgConfig.RestartScriptPath)
@@ -243,7 +243,7 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 
 			sudoCmd := exec.Command("sudo", "systemctl", "restart", adapter.pgConfig.ServiceName) //nolint:gosec // ServiceName is from trusted config
 			if sudoErr := sudoCmd.Run(); sudoErr != nil {
-				return &agent.ConfigApplyError{Err: fmt.Errorf("failed to restart PostgreSQL service with sudo: %w", sudoErr)}
+				return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to restart PostgreSQL service with sudo: %w", sudoErr)}
 			}
 			adapter.Logger().Warn("Service restarted using sudo.")
 		} else {
@@ -251,8 +251,8 @@ func (adapter *DefaultPostgreSQLAdapter) ApplyConfig(ctx context.Context, propos
 		}
 	}
 
-	if err := pg.WaitPostgresReady(adapter.pgDriver, ctx); err != nil {
-		return &agent.ConfigApplyError{Err: fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)}
+	if err := tuning.WaitPostgresReady(adapter.pgDriver, ctx); err != nil {
+		return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to wait for PostgreSQL to be back online: %w", err)}
 	}
 	return nil
 }

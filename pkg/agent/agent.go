@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"path"
 	"runtime"
-	"strconv"
 	"sync"
 	"time"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/dbtuneai/agent/pkg/pg/queries"
+	"github.com/dbtuneai/agent/pkg/tuning"
 	"github.com/dbtuneai/agent/pkg/version"
 
 	"github.com/google/uuid"
@@ -43,104 +43,6 @@ func GetAgentID() string {
 		sharedAgentID = uuid.New().String()
 	})
 	return sharedAgentID
-}
-
-type ConfigArraySchema []any
-
-// TODO: extract PostgreSQL specific types + methods to utils/separate place
-type PGConfigRow struct {
-	Name    string      `json:"name"`
-	Setting interface{} `json:"setting"`
-	Unit    interface{} `json:"unit"`
-	Vartype string      `json:"vartype"`
-	Context string      `json:"context"`
-}
-
-// GetSettingValue returns the setting value in its appropriate type and format
-// This is needed for cases like Aurora RDS when modifying parameters
-func (p PGConfigRow) GetSettingValue() (string, error) {
-	switch p.Vartype {
-	case "integer":
-		// Handle both string and number JSON representations
-		var val int64
-		switch v := p.Setting.(type) {
-		case int:
-			val = int64(v)
-		case int64:
-			val = v
-		case float64:
-			val = int64(v)
-		case string:
-			parsed, err := strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				return "", fmt.Errorf("failed to parse integer setting: %w", err)
-			}
-			val = parsed
-		default:
-			return "", fmt.Errorf("unexpected type for integer setting: %T", p.Setting)
-		}
-		return fmt.Sprintf("%d", val), nil
-
-	case "real":
-		// Handle both string and number JSON representations
-		var val float64
-		switch v := p.Setting.(type) {
-		case float64:
-			val = v
-		case int:
-			val = float64(v)
-		case int64:
-			val = float64(v)
-		case string:
-			parsed, err := strconv.ParseFloat(v, 64)
-			if err != nil {
-				return "", fmt.Errorf("failed to parse real setting: %w", err)
-			}
-			val = parsed
-		default:
-			return "", fmt.Errorf("unexpected type for real setting: %T", p.Setting)
-		}
-		return fmt.Sprintf("%.6g", val), nil
-
-	case "bool":
-		return fmt.Sprintf("%v", p.Setting), nil
-
-	case "string", "enum":
-		return fmt.Sprintf("%v", p.Setting), nil
-
-	default:
-		return fmt.Sprintf("%v", p.Setting), nil
-	}
-}
-
-// KnobApplication is the apply mode for a proposed configuration. Only the
-// values declared as constants below are valid; any other value fails JSON
-// decoding so adapters never see an unknown mode.
-type KnobApplication string
-
-const (
-	KnobApplicationRestart KnobApplication = "restart"
-	KnobApplicationReload  KnobApplication = "reload"
-)
-
-func (k *KnobApplication) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return err
-	}
-	switch KnobApplication(s) {
-	case KnobApplicationRestart, KnobApplicationReload:
-		*k = KnobApplication(s)
-		return nil
-	default:
-		return fmt.Errorf("invalid knob_application %q (expected %q or %q)", s, KnobApplicationRestart, KnobApplicationReload)
-	}
-}
-
-type ProposedConfigResponse struct {
-	Config          []PGConfigRow   `json:"config"`
-	KnobsOverrides  []string        `json:"knobs_overrides"`
-	KnobApplication KnobApplication `json:"knob_application"`
 }
 
 type AgentLooper interface {
@@ -174,14 +76,14 @@ type AgentLooper interface {
 	GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error)
 	SendSystemInfo(ctx context.Context, systemInfo []metrics.FlatValue) error
 
-	GetActiveConfig(ctx context.Context) (ConfigArraySchema, error)
-	SendActiveConfig(ctx context.Context, config ConfigArraySchema, observedAt time.Time) error
-	GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error)
+	GetActiveConfig(ctx context.Context) (tuning.ConfigArraySchema, error)
+	SendActiveConfig(ctx context.Context, config tuning.ConfigArraySchema, observedAt time.Time) error
+	GetProposedConfig(ctx context.Context) (*tuning.ProposedConfigResponse, error)
 
 	// ApplyConfig applies the configuration to the PostgresSQL server
 	// The configuration is applied with the appropriate method, either with a
 	// restart or a reload operation
-	ApplyConfig(ctx context.Context, knobs *ProposedConfigResponse) ApplyConfigError
+	ApplyConfig(ctx context.Context, knobs *tuning.ProposedConfigResponse) tuning.ApplyConfigError
 
 	// Guardrails is responsible for triggering a signal to the DBtune server
 	// that something is heading towards a failure.
@@ -214,48 +116,6 @@ type AgentPayload struct {
 	AgentID        string `json:"agent_identifier"`
 	AllowRestart   bool   `json:"allow_restart"`
 }
-
-// ApplyConfigError is the closed set of errors AgentLooper.ApplyConfig may
-// return. The unexported marker keeps the set closed to this package.
-// ErrorType() is the wire string the platform dispatches on.
-type ApplyConfigError interface {
-	error
-	ErrorType() string
-	isApplyConfigError()
-}
-
-type RestartNotAllowedError struct {
-	Message string
-}
-
-func (e *RestartNotAllowedError) Error() string     { return e.Message }
-func (e *RestartNotAllowedError) ErrorType() string { return "restart_not_allowed" }
-func (*RestartNotAllowedError) isApplyConfigError() {}
-
-// ConfigApplyError is the fallback variant for ApplyConfig failures with no
-// more specific classification.
-type ConfigApplyError struct {
-	Err error
-}
-
-func (e *ConfigApplyError) Error() string     { return e.Err.Error() }
-func (e *ConfigApplyError) Unwrap() error     { return e.Err }
-func (e *ConfigApplyError) ErrorType() string { return "config_apply_error" }
-func (*ConfigApplyError) isApplyConfigError() {}
-
-// DefaultParameterGroupError is returned when the instance has a default
-// parameter group attached. AWS prohibits modifying default.* groups, so the
-// agent refuses to apply rather than failing mid-way. The platform reads this
-// typed error to surface guidance to the user.
-type DefaultParameterGroupError struct {
-	ParameterGroupName string
-}
-
-func (e *DefaultParameterGroupError) Error() string {
-	return fmt.Sprintf("cannot apply config: instance uses default parameter group %q which AWS does not allow modifying", e.ParameterGroupName)
-}
-func (e *DefaultParameterGroupError) ErrorType() string { return "default_parameter_group" }
-func (*DefaultParameterGroupError) isApplyConfigError() {}
 
 type ErrorPayload struct {
 	ErrorMessage string `json:"error_message"`
@@ -648,13 +508,13 @@ func (a *CommonAgent) SendSystemInfo(ctx context.Context, systemInfo []metrics.F
 	return nil
 }
 
-func (a *CommonAgent) SendActiveConfig(ctx context.Context, config ConfigArraySchema, observedAt time.Time) error {
+func (a *CommonAgent) SendActiveConfig(ctx context.Context, config tuning.ConfigArraySchema, observedAt time.Time) error {
 	a.Logger().Println("Sending active configuration to server")
 
 	type Payload struct {
-		Config     ConfigArraySchema `json:"config"`
-		Hash       string            `json:"hash"`
-		ObservedAt string            `json:"observed_at"`
+		Config     tuning.ConfigArraySchema `json:"config"`
+		Hash       string                   `json:"hash"`
+		ObservedAt string                   `json:"observed_at"`
 	}
 
 	hash, _ := metrics.HashJSON(config)
@@ -685,7 +545,7 @@ func (a *CommonAgent) SendActiveConfig(ctx context.Context, config ConfigArraySc
 	return nil
 }
 
-func (a *CommonAgent) GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error) {
+func (a *CommonAgent) GetProposedConfig(ctx context.Context) (*tuning.ProposedConfigResponse, error) {
 	a.Logger().Println("Fetching proposed configurations")
 
 	resp, err := a.getRequest(ctx, a.ServerURLs.GetKnobRecommendations())
@@ -699,7 +559,7 @@ func (a *CommonAgent) GetProposedConfig(ctx context.Context) (*ProposedConfigRes
 		return nil, err
 	}
 
-	var proposedConfig []ProposedConfigResponse
+	var proposedConfig []tuning.ProposedConfigResponse
 
 	if err := json.Unmarshal(body, &proposedConfig); err != nil {
 		return nil, err
