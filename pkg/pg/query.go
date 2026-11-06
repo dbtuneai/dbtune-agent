@@ -1,3 +1,6 @@
+// Package pg holds PostgreSQL helpers shared by the rest of the agent: queries
+// tagged with the dbtune prefix, the server version, server info and
+// connection error detection.
 package pg
 
 import (

@@ -1,3 +1,5 @@
+// Package runner drives an adapter: it runs the heartbeat, metrics, system
+// info, config, guardrail and catalog loops until the context is cancelled.
 package runner
 
 import (

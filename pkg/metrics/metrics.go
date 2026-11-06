@@ -1,3 +1,5 @@
+// Package metrics defines the metrics the agent reports and the metric
+// collectors that adapters run to gather them.
 package metrics
 
 import (

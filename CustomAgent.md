@@ -21,8 +21,10 @@ go build -o dbtune-agent cmd/agent.go
 
 ```
 dbtune-agent/
-├── cmd/agent.go            # Entry point: picks an adapter, runs startup checks, starts the runner
+├── cmd/agent.go            # Entry point: loads config, picks an adapter, runs startup checks, starts the runner
 └── pkg/
+    ├── runner/             # Runs the loops below; HealthGate pauses database work while PostgreSQL is down
+    ├── agent/              # What an adapter is: AgentLooper, CommonAgent, CatalogGetter, PanicGuard
     ├── adapters/           # One package per deployment type, each with a CONFIG.md
     │   ├── aiven/
     │   ├── azureflex/
@@ -32,36 +34,54 @@ dbtune-agent/
     │   ├── patroni/
     │   ├── pgprem/         # Self-managed PostgreSQL (--local)
     │   └── rds/            # RDS and Aurora
-    ├── agent/              # AgentLooper interface, CommonAgent, MetricCollector
-    ├── backend/            # DBtune backend URLs; backendtest fakes the backend in tests
-    ├── capabilities/       # Capability and CapabilityChecker types
+    ├── backend/            # DBtune API client: one method per endpoint, payload formats, log shipping
+    │   └── backendtest/    # Fakes the backend in tests
+    ├── config/             # Loads dbtune.yaml and DBT_* variables; settings several packages share
+    ├── tuning/             # The config loop: active config, recommendations, ALTER SYSTEM, reload, restart policy
+    ├── catalog/            # Catalog collectors: framework, registry, user config, one file per PostgreSQL view
+    │   └── collectorconfig/ # Parser for the collectors: config section
+    ├── capabilities/       # Capability types and checkers, including the PostgreSQL role checker
+    ├── metrics/            # Metric definitions and the metric collector types
+    ├── guardrails/         # Guardrail signals
+    ├── pg/                 # PostgreSQL helpers: prefixed queries, version, server info, connection errors
     ├── checks/             # Startup checks for config and connectivity
-    ├── guardrails/         # Guardrail signals and settings
-    ├── metrics/            # Metric definitions and payload formatting
-    ├── pg/                 # PostgreSQL config, helpers and collector configuration
-    │   └── queries/        # Catalog collectors, one per PostgreSQL view
-    ├── runner/             # Runs the collection, sending, config and guardrail loops
     ├── version/            # Build version information
-    └── internal/           # kubernetes (used by cnpg), parameters, pgxutil, utils
+    └── internal/           # kubernetes (used by cnpg), pgxutil (row scanner)
 ```
+
+A setting that several packages read lives in `pkg/config`. A setting that only one package reads is parsed next to the code that uses it: each adapter's section in its `config.go`, the `collectors:` section in `pkg/catalog/config.go`, and the `dbtune:` section in `pkg/backend/urls.go`.
+
+Every adapter package uses the same file names:
+
+| File | Holds |
+|---|---|
+| `adapter.go` | The adapter struct and its constructor |
+| `config.go` | The adapter's own config section, documented in `CONFIG.md` |
+| `system_info.go` | `GetSystemInfo` |
+| `apply.go` | `GetActiveConfig`, `ApplyConfig` and their helpers |
+| `guardrails.go` | `Guardrails` |
+| `hardware.go` | The adapter's metric collectors |
+| Other files | Named after the platform API or concern they wrap, such as `cloudwatch.go`, `docker_stats.go` or `failover.go` |
 
 ## How the agent runs
 
 `cmd/agent.go` creates one adapter, chosen by a flag (`--local`, `--docker`, `--rds`, `--aurora`, `--aiven`, `--cloudsql`, `--cnpg`, `--patroni`, `--azure-flex`) or, without a flag, detected from environment variables and the config file. It then hands the adapter to `runner.Runner`, which runs these loops:
 
-| Loop | Interval | What it does |
-|---|---|---|
-| Heartbeat | 15s | Tells the backend the agent is alive |
-| Metrics | 5s | Runs the adapter's metric collectors and sends their values together |
-| System info | 1 min | Sends hardware and PostgreSQL facts (memory, CPU count, version, ...) |
-| Config | 5s | Sends the active configuration, fetches a recommended one and applies it |
-| Guardrails | 1s, at most every 15s | Checks for problems such as memory pressure and signals the backend |
-| Catalog collectors | Each its own | Queries one PostgreSQL view and sends it as its own payload |
+| Loop | Interval | What it does | Code |
+|---|---|---|---|
+| Heartbeat | 15s | Tells the backend the agent is alive | `backend` |
+| Metrics | 5s | Runs the adapter's metric collectors and sends their values together | `agent` runs them, the adapter's `hardware.go` defines them |
+| System info | 1 min | Sends hardware and PostgreSQL facts (memory, CPU count, version, ...) | The adapter's `system_info.go` |
+| Config | 5s | Sends the active configuration, fetches a recommended one and applies it | `tuning`, the adapter's `apply.go` |
+| Guardrails | 1s, at most every 15s | Checks for problems such as memory pressure and signals the backend | The adapter's `guardrails.go` |
+| Catalog collectors | Each its own | Queries one PostgreSQL view and sends it as its own payload | `catalog` |
+
+Every loop sends its results through `backend`.
 
 The agent collects two kinds of data:
 
-- **Metric collectors** (`agent.MetricCollector`) gather hardware and infrastructure metrics from outside PostgreSQL: the OS, Docker, Kubernetes or a cloud provider's monitoring API. Each adapter supplies its own.
-- **Catalog collectors** (`queries.CatalogCollector`) query PostgreSQL views such as `pg_stat_statements`, `pg_class` or `pg_stats`. Every adapter gets the same set from `pg.StandardCatalogCollectors`. Users can enable, disable and tune them in the `collectors:` section of the config file or with `DBT_COLLECTOR_*` environment variables.
+- **Metric collectors** (`metrics.Collector`) gather hardware and infrastructure metrics from outside PostgreSQL: the OS, Docker, Kubernetes or a cloud provider's monitoring API. Each adapter supplies its own.
+- **Catalog collectors** (`catalog.Collector`) query PostgreSQL views such as `pg_stat_statements`, `pg_class` or `pg_stats`. Every adapter gets the same set from `catalog.StandardCollectors`. Users can enable, disable and tune them in the `collectors:` section of the config file or with `DBT_COLLECTOR_*` environment variables.
 
 ## Extension points
 
@@ -79,7 +99,7 @@ type MyAdapter struct {
 }
 
 func CreateMyAdapter() (*MyAdapter, error) {
-	pgConfig, err := pg.ConfigFromViper(nil)
+	pgConfig, err := config.PostgresFromViper(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -96,36 +116,36 @@ func CreateMyAdapter() (*MyAdapter, error) {
 	common.DBPool = pool
 	a := &MyAdapter{CommonAgent: *common, pool: pool}
 
-	catalog, err := pg.StandardCatalogCollectors(pool, pgVersion, common.Logger())
+	collectors, err := catalog.StandardCollectors(pool, pgVersion, common.Logger())
 	if err != nil {
 		return nil, err
 	}
-	a.SetCatalogCollectors(catalog)
-	a.InitCollectors([]agent.MetricCollector{
-		{Key: pg.MetricHardware, Collector: myHardwareCollector()},
+	a.SetCatalogCollectors(collectors)
+	a.InitCollectors([]metrics.Collector{
+		{Key: catalog.MetricHardware, Collector: myHardwareCollector()},
 	})
 	return a, nil
 }
 
 // The deployment-specific part of agent.AgentLooper:
 func (a *MyAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error)
-func (a *MyAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error)
-func (a *MyAdapter) ApplyConfig(ctx context.Context, cfg *agent.ProposedConfigResponse) agent.ApplyConfigError
+func (a *MyAdapter) GetActiveConfig(ctx context.Context) (tuning.ConfigArraySchema, error)
+func (a *MyAdapter) ApplyConfig(ctx context.Context, cfg *tuning.ProposedConfigResponse) tuning.ApplyConfigError
 func (a *MyAdapter) Guardrails(ctx context.Context) *guardrails.Signal
 ```
 
-`pkg/adapters/pgprem` is the simplest complete example. To finish the adapter:
+`pkg/adapters/pgprem` is the simplest complete example. `pkg/tuning` has the building blocks for `ApplyConfig` on a database the agent can reach directly: `ParseKnobConfigurations`, `ValidateRestartPolicy`, `AlterSystem`, `ReloadConfig` and `WaitPostgresReady`. To finish the adapter:
 
-1. Put it in `pkg/adapters/<name>/` with a `CONFIG.md` describing its settings.
+1. Put it in `pkg/adapters/<name>/` with a `CONFIG.md` describing its settings, using the file names above.
 2. Add a flag and a `case` for it in `cmd/agent.go`. To support detection without a flag, add `DetectConfigFromEnv` and `DetectConfigFromConfigFile` functions like the other adapters have.
 
 ### Adding a hardware metric
 
-A metric collector adds values to the shared `MetricsState`. Use a definition from `pkg/metrics` where one fits:
+A metric collector adds values to the shared `metrics.State`. Put it in the adapter's `hardware.go`, and use a definition from `pkg/metrics` where one fits:
 
 ```go
-func myHardwareCollector() func(ctx context.Context, state *agent.MetricsState) error {
-	return func(ctx context.Context, state *agent.MetricsState) error {
+func myHardwareCollector() func(ctx context.Context, state *metrics.State) error {
+	return func(ctx context.Context, state *metrics.State) error {
 		usage, err := readCPUUsage()
 		if err != nil {
 			return err
@@ -144,7 +164,7 @@ For a new metric, define it with `metrics.MetricDef{Key: "my_metric", Type: metr
 
 ### Adding a catalog collector
 
-A catalog collector is a row type, a name, an interval and a query. `pg_stat_archiver` is a minimal example:
+A catalog collector is a row type, a name, an interval and a query, in its own file in `pkg/catalog`. `pg_stat_archiver.go` is a minimal example:
 
 ```go
 type PgStatArchiverRow struct {
@@ -157,22 +177,22 @@ const (
 	PgStatArchiverInterval = 1 * time.Minute
 )
 
-func PgStatArchiverCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) CatalogCollector {
+func PgStatArchiverCollector(pool *pgxpool.Pool, prepareCtx PrepareCtx) Collector {
 	return NewCollector[PgStatArchiverRow](pool, prepareCtx, PgStatArchiverName, PgStatArchiverInterval,
 		`SELECT * FROM pg_stat_archiver`, WithSkipUnchanged())
 }
 ```
 
-Then register it in two places:
+Then register it in two places, both in `pkg/catalog`:
 
-1. The `entries` list in `pg.BuildCatalogCollectors` (`pkg/pg/build_catalog_collectors.go`), so every adapter runs it.
-2. The `collectors` registry in `pkg/pg/collector_config.go`, so users can configure it.
+1. The `entries` list in `BuildCollectors` (`registry.go`), so every adapter runs it.
+2. The `collectors` registry in `config.go`, so users can configure it.
 
 Each catalog collector posts to `/api/v1/agent/<name>`, so the backend needs that endpoint before the collector ships.
 
 ### Reporting missing permissions
 
-When the agent can run without a permission but loses data or features, report it as a capability instead of failing startup. Write a `capabilities.CapabilityChecker` and pass it to `pg.StandardCatalogCollectors` as an extra checker. The capabilities collector runs every checker, logs what is missing and reports it to the backend.
+When the agent can run without a permission but loses data or features, report it as a capability instead of failing startup. Write a `capabilities.CapabilityChecker` and pass it to `catalog.StandardCollectors` as an extra checker. `pkg/capabilities/postgres.go` is an example. The capabilities collector runs every checker, logs what is missing and reports it to the backend.
 
 ## Development guidelines
 

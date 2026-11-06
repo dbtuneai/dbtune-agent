@@ -1,3 +1,6 @@
+// Package agent defines what an adapter is: the AgentLooper interface the
+// runner drives, and CommonAgent, which adapters embed for the backend client
+// and the metric collection loop.
 package agent
 
 import (

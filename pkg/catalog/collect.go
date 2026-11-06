@@ -1,3 +1,7 @@
+// Package catalog collects PostgreSQL catalog views and statistics. collect.go
+// is the collector framework, registry.go builds the set every adapter runs,
+// config.go parses the collectors: config section, and each view has its own
+// file.
 package catalog
 
 import (
