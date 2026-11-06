@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dbtuneai/agent/pkg/internal/utils"
+	"github.com/dbtuneai/agent/pkg/config"
+
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
@@ -48,7 +49,7 @@ func ConfigFromViper(keyValue string, logger *logrus.Logger) (Config, error) {
 	}
 
 	// Validate required configuration
-	err = utils.ValidateStruct(&rdsConfig)
+	err = config.ValidateStruct(&rdsConfig)
 	if err != nil {
 		return Config{}, err
 	}

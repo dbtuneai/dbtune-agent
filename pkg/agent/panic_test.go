@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/dbtuneai/agent/pkg/backend"
+
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,7 +18,7 @@ import (
 type recordingReporter struct {
 	logger   *logrus.Logger
 	mu       sync.Mutex
-	payloads []ErrorPayload
+	payloads []backend.ErrorPayload
 	sendCtx  []error // ctx.Err() seen by each send
 	sendErr  error
 	panicOn  bool // panic instead of sending, mimicking a broken send path
@@ -28,7 +30,7 @@ func newRecordingReporter() *recordingReporter {
 
 func (r *recordingReporter) Logger() *logrus.Logger { return r.logger }
 
-func (r *recordingReporter) SendError(ctx context.Context, payload ErrorPayload) error {
+func (r *recordingReporter) SendError(ctx context.Context, payload backend.ErrorPayload) error {
 	if r.panicOn {
 		panic("send failed")
 	}
@@ -39,10 +41,10 @@ func (r *recordingReporter) SendError(ctx context.Context, payload ErrorPayload)
 	return r.sendErr
 }
 
-func (r *recordingReporter) sent() []ErrorPayload {
+func (r *recordingReporter) sent() []backend.ErrorPayload {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]ErrorPayload(nil), r.payloads...)
+	return append([]backend.ErrorPayload(nil), r.payloads...)
 }
 
 // A panicking collector must not take the process down. The panic becomes an

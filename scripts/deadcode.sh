@@ -11,7 +11,7 @@ DEADCODE=golang.org/x/tools/cmd/deadcode@d49da96b802368c7325ac3b662a238c09a0615b
 # Accepted "unreachable" funcs (deadcode false positives):
 #   *.isApplyConfigError - sealed-interface marker methods. Never called, but
 #   required to keep the ApplyConfigError set closed to its package
-#   (see pkg/agent/agent.go). Extend this regex for new sealed interfaces.
+#   (see pkg/tuning/errors.go). Extend this regex for new sealed interfaces.
 ALLOW_RE='unreachable func: .*\.isApplyConfigError$'
 
 cd "$(dirname "$0")/.."

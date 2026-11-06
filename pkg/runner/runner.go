@@ -1,3 +1,5 @@
+// Package runner drives an adapter: it runs the heartbeat, metrics, system
+// info, config, guardrail and catalog loops until the context is cancelled.
 package runner
 
 import (
@@ -8,8 +10,10 @@ import (
 	"time"
 
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/backend"
+	"github.com/dbtuneai/agent/pkg/catalog"
 	"github.com/dbtuneai/agent/pkg/pg"
-	"github.com/dbtuneai/agent/pkg/pg/queries"
+	"github.com/dbtuneai/agent/pkg/tuning"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
@@ -33,14 +37,14 @@ const catalogStagger = 200 * time.Millisecond
 // out without exporting the symbol.
 var bootstrapCollectorNames = []string{
 	// First, so a missing capability is logged before the data it hides.
-	queries.CapabilitiesName,
-	queries.PgIndexInventoryName,
-	queries.PgAttributeName,
-	queries.PgClassName,
-	queries.PgStatsName,
-	queries.PgStatUserTablesName,
-	queries.PgStatUserIndexesName,
-	queries.PgStatioUserIndexesName,
+	catalog.CapabilitiesName,
+	catalog.PgIndexInventoryName,
+	catalog.PgAttributeName,
+	catalog.PgClassName,
+	catalog.PgStatsName,
+	catalog.PgStatUserTablesName,
+	catalog.PgStatUserIndexesName,
+	catalog.PgStatioUserIndexesName,
 }
 
 // isRecoveryError checks if an error indicates the system is in recovery/failover
@@ -61,7 +65,7 @@ func handleCollectorError(ctx context.Context, adapter agent.AgentLooper, name s
 		adapter.Logger().Debugf("Skipping %s during recovery/restart: %v", name, err)
 		return nil
 	}
-	_ = adapter.SendError(ctx, agent.ErrorPayload{
+	_ = adapter.SendError(ctx, backend.ErrorPayload{
 		ErrorMessage: fmt.Sprintf("Failed to collect %s: %s", name, err.Error()),
 		ErrorType:    name + "_error",
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),
@@ -94,7 +98,7 @@ func runWithTicker(ctx context.Context, ticker *time.Ticker, name string, logger
 // an error, the gate inspects it for connection-level failures. Recovery and
 // connection errors are suppressed (returned as nil) to avoid noisy logging
 // in runWithTicker.
-func withHealthGate(hg *agent.HealthGate, logger *logrus.Logger, fn func() error) error {
+func withHealthGate(hg *HealthGate, logger *logrus.Logger, fn func() error) error {
 	if hg.IsClosed() {
 		logger.Debugf("Skipping, health gate closed")
 		return nil
@@ -123,7 +127,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 	}
 
 	// Create a HealthGate to short-circuit DB-hitting calls when the database is unreachable.
-	hg := agent.NewHealthGate(ctx, pool, pg.IsConnectionError, logger)
+	hg := NewHealthGate(ctx, pool, pg.IsConnectionError, logger)
 
 	// Shared across every task so each one keeps its own panic count. The
 	// metric collectors are guarded inside GetMetrics instead, so a panicking
@@ -186,11 +190,11 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 				return err
 			}
 
-			var applyErr agent.ApplyConfigError
+			var applyErr tuning.ApplyConfigError
 			if proposedConfig != nil {
 				applyErr = adapter.ApplyConfig(ctx, proposedConfig)
 				if applyErr != nil {
-					errorPayload := agent.ErrorPayload{
+					errorPayload := backend.ErrorPayload{
 						ErrorMessage: "Failed to apply configuration: " + applyErr.Error(),
 						ErrorType:    applyErr.ErrorType(),
 						Timestamp:    time.Now().UTC().Format(time.RFC3339),
@@ -243,7 +247,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 
 	// Guarded here rather than at each call site so both the bootstrap pass and
 	// the steady-state tickers survive a panicking catalog collector.
-	collectAndSend := func(ctx context.Context, c queries.CatalogCollector) error {
+	collectAndSend := func(ctx context.Context, c catalog.Collector) error {
 		return guard.Wrap(c.Name, func(ctx context.Context) error {
 			if hg.IsClosed() {
 				logger.Debugf("Skipping catalog collector %s, health gate closed", c.Name)
@@ -283,7 +287,7 @@ func Runner(ctx context.Context, adapter agent.AgentLooper) {
 		bootstrapWg.Add(1)
 		delay := time.Duration(launchIdx) * catalogStagger
 		launchIdx++
-		go func(c queries.CatalogCollector, delay time.Duration) {
+		go func(c catalog.Collector, delay time.Duration) {
 			defer bootstrapWg.Done()
 			if delay > 0 {
 				select {

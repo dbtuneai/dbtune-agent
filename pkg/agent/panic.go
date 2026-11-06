@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dbtuneai/agent/pkg/backend"
+
 	log "github.com/sirupsen/logrus"
 )
 
@@ -31,7 +33,7 @@ func PanicError(name string, recovered any) error {
 // recovered panic.
 type PanicReporter interface {
 	Logger() *log.Logger
-	SendError(ctx context.Context, payload ErrorPayload) error
+	SendError(ctx context.Context, payload backend.ErrorPayload) error
 }
 
 // PanicGuard makes the agent's periodic work panic-proof: a panicking collector
@@ -118,7 +120,7 @@ func (g *PanicGuard) report(ctx context.Context, name string, panicErr error) {
 	}()
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reportTimeout)
 	defer cancel()
-	_ = g.reporter.SendError(ctx, ErrorPayload{
+	_ = g.reporter.SendError(ctx, backend.ErrorPayload{
 		ErrorMessage: panicErr.Error(),
 		ErrorType:    name + "_panic",
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),

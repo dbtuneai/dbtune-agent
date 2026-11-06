@@ -7,6 +7,7 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/backend"
+	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/pg"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -16,7 +17,7 @@ import (
 // If pool is non-nil it is used directly; otherwise a plain pool is created from the connection URL.
 func CheckStartupRequirements(pool *pgxpool.Pool) error {
 	// Check PostgreSQL connection URL
-	pgConfig, err := pg.ConfigFromViper(nil)
+	pgConfig, err := config.PostgresFromViper(nil)
 	if err != nil {
 		return fmt.Errorf("PostgreSQL connection URL not set or invalid: %w", err)
 	}

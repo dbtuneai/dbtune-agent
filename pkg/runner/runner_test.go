@@ -12,9 +12,10 @@ import (
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/backend"
 	"github.com/dbtuneai/agent/pkg/backend/backendtest"
+	"github.com/dbtuneai/agent/pkg/catalog"
 	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
-	"github.com/dbtuneai/agent/pkg/pg/queries"
+	"github.com/dbtuneai/agent/pkg/tuning"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/sirupsen/logrus"
@@ -23,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MockAgentLooper implements utils.AgentLooper for testing
+// MockAgentLooper implements agent.AgentLooper for testing
 type MockAgentLooper struct {
 	mock.Mock
 }
@@ -58,31 +59,31 @@ func (m *MockAgentLooper) SendSystemInfo(ctx context.Context, info []metrics.Fla
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
+func (m *MockAgentLooper) GetActiveConfig(ctx context.Context) (tuning.ConfigArraySchema, error) {
 	args := m.Called(ctx)
-	return args.Get(0).(agent.ConfigArraySchema), args.Error(1)
+	return args.Get(0).(tuning.ConfigArraySchema), args.Error(1)
 }
 
-func (m *MockAgentLooper) SendActiveConfig(ctx context.Context, config agent.ConfigArraySchema, observedAt time.Time) error {
+func (m *MockAgentLooper) SendActiveConfig(ctx context.Context, config tuning.ConfigArraySchema, observedAt time.Time) error {
 	args := m.Called(ctx, config, observedAt)
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) GetProposedConfig(ctx context.Context) (*agent.ProposedConfigResponse, error) {
+func (m *MockAgentLooper) GetProposedConfig(ctx context.Context) (*tuning.ProposedConfigResponse, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*agent.ProposedConfigResponse), args.Error(1)
+	return args.Get(0).(*tuning.ProposedConfigResponse), args.Error(1)
 }
 
-func (m *MockAgentLooper) ApplyConfig(ctx context.Context, config *agent.ProposedConfigResponse) agent.ApplyConfigError {
+func (m *MockAgentLooper) ApplyConfig(ctx context.Context, config *tuning.ProposedConfigResponse) tuning.ApplyConfigError {
 	args := m.Called(ctx, config)
 	v := args.Get(0)
 	if v == nil {
 		return nil
 	}
-	return v.(agent.ApplyConfigError)
+	return v.(tuning.ApplyConfigError)
 }
 
 func (m *MockAgentLooper) Guardrails(ctx context.Context) *guardrails.Signal {
@@ -98,15 +99,15 @@ func (m *MockAgentLooper) SendGuardrailSignal(ctx context.Context, signal guardr
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) SendError(ctx context.Context, payload agent.ErrorPayload) error {
+func (m *MockAgentLooper) SendError(ctx context.Context, payload backend.ErrorPayload) error {
 	args := m.Called(ctx, payload)
 	return args.Error(0)
 }
 
-func (m *MockAgentLooper) CatalogCollectors() []queries.CatalogCollector {
+func (m *MockAgentLooper) CatalogCollectors() []catalog.Collector {
 	args := m.Called()
 	if v := args.Get(0); v != nil {
-		return v.([]queries.CatalogCollector)
+		return v.([]catalog.Collector)
 	}
 	return nil
 }
@@ -197,7 +198,7 @@ func TestPanicGuardedTaskKeepsTicking(t *testing.T) {
 
 	m := new(MockAgentLooper)
 	m.On("Logger").Return(logrus.New())
-	m.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+	m.On("SendError", mock.Anything, mock.MatchedBy(func(p backend.ErrorPayload) bool {
 		return p.ErrorType == "pg_stats_panic" && strings.Contains(p.ErrorMessage, "boom")
 	})).Run(func(mock.Arguments) {
 		mu.Lock()
@@ -240,7 +241,7 @@ func TestRunner(t *testing.T) {
 	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
-	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(tuning.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
@@ -275,7 +276,7 @@ func TestRunnerWithErrors(t *testing.T) {
 	mockAgent.On("Logger").Return(logger)
 	mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, errors.New("metrics error"))
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, errors.New("system info error"))
-	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, errors.New("config error"))
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(tuning.ConfigArraySchema{}, errors.New("config error"))
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
 	mockAgent.expectNoCatalogCollectors()
 
@@ -300,7 +301,7 @@ func TestRunnerWhenGetProposedConfigReturnsAConfigThenApplyConfigShouldBeCalled(
 	mockAgent := new(MockAgentLooper)
 	logger := logrus.New()
 
-	mockRecommendation := &agent.ProposedConfigResponse{}
+	mockRecommendation := &tuning.ProposedConfigResponse{}
 
 	// Note: SendHeartbeat is not expected to be called during the short test window
 	// because the heartbeat ticker has skipFirst: true
@@ -311,7 +312,7 @@ func TestRunnerWhenGetProposedConfigReturnsAConfigThenApplyConfigShouldBeCalled(
 	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
 	mockAgent.expectNoCatalogCollectors()
-	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(tuning.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(mockRecommendation, nil)
 	mockAgent.On("ApplyConfig", mock.Anything, mockRecommendation).Return(nil)
@@ -346,7 +347,7 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
 	mockAgent.expectNoCatalogCollectors()
-	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(tuning.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 
@@ -375,17 +376,17 @@ func TestRunnerWhenGetProposedConfigDoesNotReturnAConfigThenApplyConfigShouldNot
 func TestRunnerApplyConfigFailure_SendsErrorAndActiveConfig(t *testing.T) {
 	cases := []struct {
 		name              string
-		applyErr          agent.ApplyConfigError
+		applyErr          tuning.ApplyConfigError
 		expectedErrorType string
 	}{
 		{
 			name:              "config_apply_error",
-			applyErr:          &agent.ConfigApplyError{Err: errors.New("driver blew up")},
+			applyErr:          &tuning.ConfigApplyError{Err: errors.New("driver blew up")},
 			expectedErrorType: "config_apply_error",
 		},
 		{
 			name:              "restart_not_allowed",
-			applyErr:          &agent.RestartNotAllowedError{Message: "restart required but allow_restart=false"},
+			applyErr:          &tuning.RestartNotAllowedError{Message: "restart required but allow_restart=false"},
 			expectedErrorType: "restart_not_allowed",
 		},
 	}
@@ -394,7 +395,7 @@ func TestRunnerApplyConfigFailure_SendsErrorAndActiveConfig(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mockAgent := new(MockAgentLooper)
 			logger := logrus.New()
-			mockRecommendation := &agent.ProposedConfigResponse{}
+			mockRecommendation := &tuning.ProposedConfigResponse{}
 
 			mockAgent.On("Logger").Return(logger)
 			mockAgent.On("GetMetrics", mock.Anything).Return([]metrics.FlatValue{}, nil)
@@ -403,10 +404,10 @@ func TestRunnerApplyConfigFailure_SendsErrorAndActiveConfig(t *testing.T) {
 			mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
 			mockAgent.On("Guardrails", mock.Anything).Return(nil)
 			mockAgent.expectNoCatalogCollectors()
-			mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+			mockAgent.On("GetActiveConfig", mock.Anything).Return(tuning.ConfigArraySchema{}, nil)
 			mockAgent.On("GetProposedConfig", mock.Anything).Return(mockRecommendation, nil)
 			mockAgent.On("ApplyConfig", mock.Anything, mockRecommendation).Return(tc.applyErr)
-			mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+			mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p backend.ErrorPayload) bool {
 				return p.ErrorType == tc.expectedErrorType &&
 					strings.HasPrefix(p.ErrorMessage, "Failed to apply configuration: ")
 			})).Return(nil)
@@ -418,7 +419,7 @@ func TestRunnerApplyConfigFailure_SendsErrorAndActiveConfig(t *testing.T) {
 			<-ctx.Done()
 			time.Sleep(50 * time.Millisecond)
 
-			mockAgent.AssertCalled(t, "SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+			mockAgent.AssertCalled(t, "SendError", mock.Anything, mock.MatchedBy(func(p backend.ErrorPayload) bool {
 				return p.ErrorType == tc.expectedErrorType
 			}))
 			mockAgent.AssertCalled(t, "SendActiveConfig", mock.Anything, mock.Anything, mock.Anything)
@@ -439,11 +440,11 @@ func (s *stubAgentLooper) GetSystemInfo(_ context.Context) ([]metrics.FlatValue,
 	return []metrics.FlatValue{}, nil
 }
 
-func (s *stubAgentLooper) GetActiveConfig(_ context.Context) (agent.ConfigArraySchema, error) {
-	return agent.ConfigArraySchema{}, nil
+func (s *stubAgentLooper) GetActiveConfig(_ context.Context) (tuning.ConfigArraySchema, error) {
+	return tuning.ConfigArraySchema{}, nil
 }
 
-func (s *stubAgentLooper) ApplyConfig(_ context.Context, _ *agent.ProposedConfigResponse) agent.ApplyConfigError {
+func (s *stubAgentLooper) ApplyConfig(_ context.Context, _ *tuning.ProposedConfigResponse) tuning.ApplyConfigError {
 	return nil
 }
 
@@ -457,15 +458,17 @@ func createStubAgentLooper(rt http.RoundTripper) *stubAgentLooper {
 	client.HTTPClient = underlying
 
 	ca := agent.CommonAgent{
-		AgentID:   "test-agent",
-		APIClient: client,
-		ServerURLs: backend.ServerURLs{
-			ServerUrl: "http://localhost:8080",
-			ApiKey:    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-			DbID:      "550e8400-e29b-41d4-a716-446655440000",
+		Client: backend.Client{
+			AgentID:   "test-agent",
+			APIClient: client,
+			ServerURLs: backend.ServerURLs{
+				ServerUrl: "http://localhost:8080",
+				ApiKey:    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+				DbID:      "550e8400-e29b-41d4-a716-446655440000",
+			},
+			StartTime: time.Now().UTC().Format(time.RFC3339),
+			Version:   "test-version",
 		},
-		StartTime: time.Now().UTC().Format(time.RFC3339),
-		Version:   "test-version",
 	}
 	ca.WithLogger(logrus.New())
 
@@ -507,20 +510,20 @@ func TestRunnerCatalogLoop(t *testing.T) {
 
 	var sendCount, errCount int
 	var mu sync.Mutex
-	okCollector := queries.CatalogCollector{
+	okCollector := catalog.Collector{
 		Name:     "ok_collector",
 		Interval: 20 * time.Millisecond,
-		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+		Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			sendCount++
-			return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+			return &catalog.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
 		},
 	}
-	errCollector := queries.CatalogCollector{
+	errCollector := catalog.Collector{
 		Name:     "err_collector",
 		Interval: 20 * time.Millisecond,
-		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+		Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			errCount++
@@ -533,13 +536,13 @@ func TestRunnerCatalogLoop(t *testing.T) {
 	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
-	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(tuning.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
-	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{okCollector, errCollector})
+	mockAgent.On("CatalogCollectors").Return([]catalog.Collector{okCollector, errCollector})
 	mockAgent.On("SendCatalogPayload", mock.Anything, "ok_collector", mock.Anything).Return(nil)
-	mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+	mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p backend.ErrorPayload) bool {
 		return p.ErrorType == "err_collector_error"
 	})).Return(nil)
 
@@ -563,10 +566,10 @@ func TestRunnerCatalogLoop_NilDataSkipsSend(t *testing.T) {
 	mockAgent := new(MockAgentLooper)
 	logger := logrus.New()
 
-	nilCollector := queries.CatalogCollector{
+	nilCollector := catalog.Collector{
 		Name:     "nil_collector",
 		Interval: 20 * time.Millisecond,
-		Collect:  func(_ context.Context) (*queries.CollectResult, error) { return nil, nil },
+		Collect:  func(_ context.Context) (*catalog.CollectResult, error) { return nil, nil },
 	}
 
 	mockAgent.On("Logger").Return(logger)
@@ -574,11 +577,11 @@ func TestRunnerCatalogLoop_NilDataSkipsSend(t *testing.T) {
 	mockAgent.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	mockAgent.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
-	mockAgent.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	mockAgent.On("GetActiveConfig", mock.Anything).Return(tuning.ConfigArraySchema{}, nil)
 	mockAgent.On("SendActiveConfig", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockAgent.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 	mockAgent.On("Guardrails", mock.Anything).Return(nil)
-	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{nilCollector})
+	mockAgent.On("CatalogCollectors").Return([]catalog.Collector{nilCollector})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -602,7 +605,7 @@ func setupMinimalAgent(t *testing.T) (*MockAgentLooper, *logrus.Logger) {
 	m.On("SendMetrics", mock.Anything, mock.Anything).Return(nil)
 	m.On("GetSystemInfo", mock.Anything).Return([]metrics.FlatValue{}, nil)
 	m.On("SendSystemInfo", mock.Anything, mock.Anything).Return(nil)
-	m.On("GetActiveConfig", mock.Anything).Return(agent.ConfigArraySchema{}, nil)
+	m.On("GetActiveConfig", mock.Anything).Return(tuning.ConfigArraySchema{}, nil)
 	m.On("SendActiveConfig", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	m.On("GetProposedConfig", mock.Anything).Return(nil, nil)
 	m.On("Guardrails", mock.Anything).Return(nil)
@@ -640,25 +643,25 @@ func TestRunnerCatalogLoop_BootstrapRunsBeforeOthers(t *testing.T) {
 		mu.Unlock()
 	}
 
-	bootstrap := queries.CatalogCollector{
+	bootstrap := catalog.Collector{
 		Name:     "bootstrap_inv",
 		Interval: 1 * time.Hour, // long: don't interfere with the window
-		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+		Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 			record("bootstrap_inv", "collect")
 			time.Sleep(30 * time.Millisecond) // pretend a non-trivial query
-			return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+			return &catalog.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
 		},
 	}
-	other := queries.CatalogCollector{
+	other := catalog.Collector{
 		Name:     "other",
 		Interval: 1 * time.Hour,
-		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+		Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 			record("other", "collect")
-			return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+			return &catalog.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
 		},
 	}
 
-	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{bootstrap, other})
+	mockAgent.On("CatalogCollectors").Return([]catalog.Collector{bootstrap, other})
 	mockAgent.On("SendCatalogPayload", mock.Anything, "bootstrap_inv", mock.Anything).
 		Run(func(_ mock.Arguments) { record("bootstrap_inv", "send") }).
 		Return(nil)
@@ -704,18 +707,18 @@ func TestRunnerCatalogLoop_BootstrapSkipsFirstTick(t *testing.T) {
 		mu           sync.Mutex
 		collectCalls int
 	)
-	bootstrap := queries.CatalogCollector{
+	bootstrap := catalog.Collector{
 		Name:     "bootstrap_inv",
 		Interval: 1 * time.Hour,
-		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+		Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 			mu.Lock()
 			collectCalls++
 			mu.Unlock()
-			return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+			return &catalog.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
 		},
 	}
 
-	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{bootstrap})
+	mockAgent.On("CatalogCollectors").Return([]catalog.Collector{bootstrap})
 	mockAgent.On("SendCatalogPayload", mock.Anything, "bootstrap_inv", mock.Anything).Return(nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), catalogStagger+300*time.Millisecond)
@@ -741,27 +744,27 @@ func TestRunnerCatalogLoop_BootstrapFailureDoesNotBlockOthers(t *testing.T) {
 		mu             sync.Mutex
 		otherCollected bool
 	)
-	bootstrap := queries.CatalogCollector{
+	bootstrap := catalog.Collector{
 		Name:     "bootstrap_inv",
 		Interval: 1 * time.Hour,
-		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+		Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 			return nil, errors.New("bootstrap collect failed")
 		},
 	}
-	other := queries.CatalogCollector{
+	other := catalog.Collector{
 		Name:     "other",
 		Interval: 20 * time.Millisecond,
-		Collect: func(_ context.Context) (*queries.CollectResult, error) {
+		Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 			mu.Lock()
 			otherCollected = true
 			mu.Unlock()
-			return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+			return &catalog.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
 		},
 	}
 
-	mockAgent.On("CatalogCollectors").Return([]queries.CatalogCollector{bootstrap, other})
+	mockAgent.On("CatalogCollectors").Return([]catalog.Collector{bootstrap, other})
 	mockAgent.On("SendCatalogPayload", mock.Anything, "other", mock.Anything).Return(nil)
-	mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+	mockAgent.On("SendError", mock.Anything, mock.MatchedBy(func(p backend.ErrorPayload) bool {
 		return p.ErrorType == "bootstrap_inv_error"
 	})).Return(nil)
 
@@ -800,21 +803,21 @@ func TestRunnerCatalogLoop_BootstrapRunsConcurrently(t *testing.T) {
 		mu           sync.Mutex
 		observations []observation
 	)
-	makeCollector := func(name string) queries.CatalogCollector {
-		return queries.CatalogCollector{
+	makeCollector := func(name string) catalog.Collector {
+		return catalog.Collector{
 			Name:     name,
 			Interval: 1 * time.Hour,
-			Collect: func(_ context.Context) (*queries.CollectResult, error) {
+			Collect: func(_ context.Context) (*catalog.CollectResult, error) {
 				mu.Lock()
 				observations = append(observations, observation{name: name, startAt: time.Now()})
 				mu.Unlock()
 				time.Sleep(sleep)
-				return &queries.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
+				return &catalog.CollectResult{JSON: []byte(`{"ok":true}`)}, nil
 			},
 		}
 	}
 
-	collectors := []queries.CatalogCollector{
+	collectors := []catalog.Collector{
 		makeCollector("boot_a"),
 		makeCollector("boot_b"),
 		makeCollector("boot_c"),
@@ -909,7 +912,7 @@ func TestHandleCollectorError_RecoverySuppressed(t *testing.T) {
 func TestHandleCollectorError_NonRecoveryReportsAndReturns(t *testing.T) {
 	m := new(MockAgentLooper)
 	m.On("Logger").Return(logrus.New())
-	m.On("SendError", mock.Anything, mock.MatchedBy(func(p agent.ErrorPayload) bool {
+	m.On("SendError", mock.Anything, mock.MatchedBy(func(p backend.ErrorPayload) bool {
 		return p.ErrorType == "catalog_view_error" && strings.Contains(p.ErrorMessage, "boom")
 	})).Return(nil)
 

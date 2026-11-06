@@ -1,0 +1,77 @@
+package docker
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"github.com/dbtuneai/agent/pkg/metrics"
+
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
+)
+
+// DockerHardwareInfo collects hardware metrics from a Docker container using the Docker API
+func DockerHardwareInfo(dockerClient *client.Client, containerName string) func(ctx context.Context, state *metrics.State) error {
+	return func(ctx context.Context, state *metrics.State) error {
+		// Get container stats. IncludePreviousSample makes the daemon take two
+		// samples one second apart; without it PreCPUStats is empty and the CPU
+		// percentage becomes a cumulative average since the container started.
+		stats, err := dockerClient.ContainerStats(ctx, containerName, client.ContainerStatsOptions{
+			Stream:                false,
+			IncludePreviousSample: true,
+		})
+		if err != nil {
+			return err
+		}
+		defer stats.Body.Close()
+
+		// Parse stats and create metrics
+		var statsJSON container.StatsResponse
+
+		// Decode JSON stats
+		decoder := json.NewDecoder(stats.Body)
+		if err := decoder.Decode(&statsJSON); err != nil {
+			return err
+		}
+
+		// Calculate CPU percentage using the utility function
+		cpuPercent := CalculateDockerCPUPercent(
+			statsJSON.PreCPUStats.CPUUsage.TotalUsage,
+			statsJSON.PreCPUStats.SystemUsage,
+			&statsJSON,
+		)
+
+		// Add metrics
+		cpuMetric, err := metrics.NodeCPUUsage.AsFlatValue(cpuPercent)
+		if err != nil {
+			return err
+		}
+		state.AddMetric(cpuMetric)
+
+		// Validate memory stats before calculating
+		if statsJSON.MemoryStats.Usage == 0 {
+			return fmt.Errorf("invalid memory stats: usage is 0")
+		}
+
+		memoryUsed := CalculateDockerMemoryUsed(statsJSON.MemoryStats)
+		memUsedMetric, err := metrics.NodeMemoryUsed.AsFlatValue(int64(memoryUsed))
+		if err != nil {
+			return err
+		}
+		state.AddMetric(memUsedMetric)
+
+		return nil
+	}
+}
+
+// DockerCollectors returns the list of metric collectors for Docker.
+// Provider-specific hardware only; PG catalog views are exposed via CatalogCollectors.
+func DockerCollectors(adapter *DockerContainerAdapter) []metrics.Collector {
+	return []metrics.Collector{
+		{
+			Key:       "hardware",
+			Collector: DockerHardwareInfo(adapter.dockerClient, adapter.Config.ContainerName),
+		},
+	}
+}

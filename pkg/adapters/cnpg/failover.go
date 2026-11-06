@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/backend"
 	"github.com/dbtuneai/agent/pkg/internal/kubernetes"
 )
 
@@ -246,7 +246,7 @@ func (adapter *CNPGAdapter) HandleFailoverDetected(ctx context.Context, failover
 
 	// Send failover error to backend
 	// Backend decides: stop tuning session? apply baseline? etc.
-	errorPayload := agent.ErrorPayload{
+	errorPayload := backend.ErrorPayload{
 		ErrorMessage: failoverErr.Error(),
 		ErrorType:    "failover_detected",
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),
@@ -285,4 +285,35 @@ func containsPlaceholder(s string) bool {
 	}
 
 	return false
+}
+
+// failoverErrorFromQuery returns a FailoverDetectedError if a GetSystemInfo
+// query failed because of a failover, or nil for any other error.
+func (adapter *CNPGAdapter) failoverErrorFromQuery(dbCtx context.Context, err error) error {
+	logger := adapter.Logger()
+
+	// Check if context was cancelled (failover during operation)
+	if dbCtx.Err() == context.Canceled {
+		logger.Infof("[FAILOVER_RECOVERY] GetSystemInfo aborted due to context cancellation")
+		return &FailoverDetectedError{
+			OldPrimary: adapter.State.GetLastKnownPrimary(),
+			NewPrimary: "(context cancelled)",
+			Message:    "operation cancelled due to failover",
+		}
+	}
+
+	// Check if error indicates PostgreSQL failover (before CNPG detects it)
+	errStr := strings.ToLower(err.Error())
+	if strings.Contains(errStr, "database system is shutting down") ||
+		strings.Contains(errStr, "database system is starting up") ||
+		strings.Contains(errStr, "cannot execute") && strings.Contains(errStr, "recovery") {
+		logger.Warnf("[FAILOVER_RECOVERY] PostgreSQL failover detected in GetSystemInfo: %v", err)
+		return &FailoverDetectedError{
+			OldPrimary: adapter.State.GetLastKnownPrimary(),
+			NewPrimary: "(PostgreSQL shutting down)",
+			Message:    err.Error(),
+		}
+	}
+
+	return nil
 }

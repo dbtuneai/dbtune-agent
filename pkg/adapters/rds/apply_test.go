@@ -7,23 +7,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dbtuneai/agent/pkg/tuning"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
-	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAsApplyConfigError(t *testing.T) {
-	t.Run("preserves the type pg.ValidateRestartPolicy returns", func(t *testing.T) {
+	t.Run("preserves the type tuning.ValidateRestartPolicy returns", func(t *testing.T) {
 		// Wrapping would downgrade this to config_apply_error.
-		inner := &agent.RestartNotAllowedError{Message: "restart is not allowed in the agent"}
+		inner := &tuning.RestartNotAllowedError{Message: "restart is not allowed in the agent"}
 		got := asApplyConfigError(inner)
 		assert.Equal(t, "restart_not_allowed", got.ErrorType())
 	})
 
 	t.Run("survives wrapping", func(t *testing.T) {
-		inner := &agent.RestartNotAllowedError{Message: "nope"}
+		inner := &tuning.RestartNotAllowedError{Message: "nope"}
 		got := asApplyConfigError(fmt.Errorf("failed to modify parameter group: %w", inner))
 		assert.Equal(t, "restart_not_allowed", got.ErrorType())
 	})
@@ -51,9 +52,9 @@ func TestGetConfigInfo_UnknownKnob(t *testing.T) {
 	// knob fails the whole batch without an AWS call. That ordering is what
 	// makes this testable with a zero AWSClients.
 	_, err := getConfigInfo(
-		&agent.ProposedConfigResponse{
+		&tuning.ProposedConfigResponse{
 			KnobsOverrides: []string{"work_mem", "nope"},
-			Config: []agent.PGConfigRow{
+			Config: []tuning.PGConfigRow{
 				{Name: "work_mem", Setting: 16384, Vartype: "integer"},
 			},
 		},

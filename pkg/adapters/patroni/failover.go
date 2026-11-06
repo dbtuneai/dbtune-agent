@@ -3,12 +3,14 @@ package patroni
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/backend"
+	"github.com/dbtuneai/agent/pkg/pg"
 )
 
 const (
@@ -255,7 +257,7 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 
 				// Send failover notification to backend ONLY if not in intentional restart
 				if !adapter.State.IsInRestartWindow() {
-					errorPayload := agent.ErrorPayload{
+					errorPayload := backend.ErrorPayload{
 						ErrorMessage: fmt.Sprintf("failover detected: %s -> NO PRIMARY DETECTED: cluster status unavailable: %v",
 							lastKnownPrimary, err),
 						ErrorType: "failover_detected",
@@ -298,7 +300,7 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 
 			// Send failover notification to backend ONLY if not in intentional restart
 			if !adapter.State.IsInRestartWindow() {
-				errorPayload := agent.ErrorPayload{
+				errorPayload := backend.ErrorPayload{
 					ErrorMessage: fmt.Sprintf("failover detected: %s -> NO PRIMARY DETECTED: cluster state: %s",
 						lastKnownPrimary, clusterStatus.State),
 					ErrorType: "failover_detected",
@@ -359,7 +361,7 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 
 		// Send failover notification to backend ONLY if not in intentional restart
 		if !adapter.State.IsInRestartWindow() {
-			errorPayload := agent.ErrorPayload{
+			errorPayload := backend.ErrorPayload{
 				ErrorMessage: fmt.Sprintf("failover detected: %s -> %s: cluster state: %s",
 					lastKnownPrimary, currentPrimary, clusterStatus.State),
 				ErrorType: "failover_detected",
@@ -383,4 +385,85 @@ func (adapter *PatroniAdapter) CheckForFailover(ctx context.Context) error {
 	logger.Debugf("Failover check passed: primary unchanged (%s)", currentPrimary)
 
 	return nil
+}
+
+// initializePrimaryTracking establishes the initial primary node tracking
+// This should be called once during adapter initialization
+func (adapter *PatroniAdapter) initializePrimaryTracking(ctx context.Context) error {
+	logger := adapter.Logger()
+
+	clusterStatus, err := adapter.getPatroniClusterStatus(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get initial cluster status: %w", err)
+	}
+
+	if clusterStatus.CurrentPrimary != "" {
+		adapter.State.SetLastKnownPrimary(clusterStatus.CurrentPrimary)
+		logger.Infof("Initial primary node tracked: %s", clusterStatus.CurrentPrimary)
+	} else {
+		logger.Warn("No primary node detected during initialization")
+	}
+
+	return nil
+}
+
+const PGInRecoveryQuery = "SELECT pg_is_in_recovery()"
+
+// checkFailoverBeforeOperation checks for failover before starting an operation.
+// Returns an error if failover is detected or cluster check fails.
+func (adapter *PatroniAdapter) checkFailoverBeforeOperation(ctx context.Context, operation string) error {
+	logger := adapter.Logger()
+	if err := adapter.CheckForFailover(ctx); err != nil {
+		var failoverErr *FailoverDetectedError
+		if errors.As(err, &failoverErr) {
+			logger.Infof("[FAILOVER_RECOVERY] Operations blocked during recovery: %s", failoverErr.Message)
+			return failoverErr
+		}
+		logger.Warnf("[FAILOVER_RECOVERY] BLOCKING %s due to cluster check failure: %v", operation, err)
+		return err
+	}
+	return nil
+}
+
+// handlePossibleFailoverError checks if an error indicates a PostgreSQL failover,
+// records it if first detection, sends notification, and returns a FailoverDetectedError.
+// Returns nil if the error is not a failover error.
+func (adapter *PatroniAdapter) handlePossibleFailoverError(ctx context.Context, err error, errContext string) *FailoverDetectedError {
+	if !isPostgreSQLFailoverError(err) {
+		return nil
+	}
+
+	logger := adapter.Logger()
+	logger.Warnf("[FAILOVER_RECOVERY] PostgreSQL failover detected %s: %v", errContext, err)
+
+	if adapter.State.TimeSinceLastFailover() == 0 {
+		adapter.State.SetLastFailoverTime(time.Now())
+		logger.Errorf("[FAILOVER_RECOVERY] Failover detected via PostgreSQL error %s", errContext)
+
+		errorPayload := backend.ErrorPayload{
+			ErrorMessage: fmt.Sprintf("Failover detected: %s", err.Error()),
+			ErrorType:    "failover_detected",
+			Timestamp:    time.Now().UTC().Format(time.RFC3339),
+		}
+		if sendErr := adapter.SendError(ctx, errorPayload); sendErr != nil {
+			logger.Errorf("failed to send error report: %v", sendErr)
+		}
+		logger.Info("Failover notification sent to backend")
+	}
+
+	return &FailoverDetectedError{
+		OldPrimary: adapter.State.GetLastKnownPrimary(),
+		NewPrimary: NoPrimaryDetected,
+		Message:    fmt.Sprintf("PostgreSQL error: %v", err),
+	}
+}
+
+// Recognizes if the current node is a standby (replica) node
+func (adapter *PatroniAdapter) isStandbyNode(ctx context.Context) (bool, error) {
+	var inRecovery bool
+	err := pg.QueryRowWithPrefix(adapter.PGDriver, ctx, PGInRecoveryQuery).Scan(&inRecovery)
+	if err != nil {
+		return false, fmt.Errorf("failed to check recovery status: %w", err)
+	}
+	return inRecovery, nil
 }

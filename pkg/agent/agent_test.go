@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/dbtuneai/agent/pkg/backend"
 	"github.com/dbtuneai/agent/pkg/backend/backendtest"
-	"github.com/dbtuneai/agent/pkg/guardrails"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/sirupsen/logrus"
@@ -20,10 +18,10 @@ import (
 )
 
 // mockCollector creates a collector that simulates different behaviors
-func mockCollector(delay time.Duration, shouldError bool, metrics []metrics.FlatValue) MetricCollector {
-	return MetricCollector{
+func mockCollector(delay time.Duration, shouldError bool, values []metrics.FlatValue) metrics.Collector {
+	return metrics.Collector{
 		Key: "test_collector",
-		Collector: func(ctx context.Context, state *MetricsState) error {
+		Collector: func(ctx context.Context, state *metrics.State) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -31,7 +29,7 @@ func mockCollector(delay time.Duration, shouldError bool, metrics []metrics.Flat
 				if shouldError {
 					return errors.New("collector error")
 				}
-				for _, metric := range metrics {
+				for _, metric := range values {
 					state.AddMetric(metric)
 				}
 				return nil
@@ -43,9 +41,9 @@ func mockCollector(delay time.Duration, shouldError bool, metrics []metrics.Flat
 func TestGetMetrics(t *testing.T) {
 	t.Run("happy path - all collectors succeed", func(t *testing.T) {
 		agent := &CommonAgent{
-			logger: logrus.New(),
-			MetricsState: MetricsState{
-				Collectors: []MetricCollector{
+			Client: clientWithLogger(logrus.New()),
+			MetricsState: metrics.State{
+				Collectors: []metrics.Collector{
 					mockCollector(100*time.Millisecond, false, []metrics.FlatValue{{
 						Key:   "metric1",
 						Value: 1,
@@ -72,9 +70,9 @@ func TestGetMetrics(t *testing.T) {
 
 	t.Run("partial failure - one collector errors", func(t *testing.T) {
 		agent := &CommonAgent{
-			logger: logrus.New(),
-			MetricsState: MetricsState{
-				Collectors: []MetricCollector{
+			Client: clientWithLogger(logrus.New()),
+			MetricsState: metrics.State{
+				Collectors: []metrics.Collector{
 					mockCollector(100*time.Millisecond, true, nil), // This one will error
 					mockCollector(200*time.Millisecond, false, []metrics.FlatValue{{
 						Key:   "metric2",
@@ -96,9 +94,9 @@ func TestGetMetrics(t *testing.T) {
 
 	t.Run("context timeout - slow collectors are cancelled", func(t *testing.T) {
 		agent := &CommonAgent{
-			logger: logrus.New(),
-			MetricsState: MetricsState{
-				Collectors: []MetricCollector{
+			Client: clientWithLogger(logrus.New()),
+			MetricsState: metrics.State{
+				Collectors: []metrics.Collector{
 					mockCollector(100*time.Millisecond, false, []metrics.FlatValue{{
 						Key:   "metric1",
 						Value: 1,
@@ -129,11 +127,11 @@ func TestGetMetrics(t *testing.T) {
 			{"/api/v1/agent/log-entries", http.MethodPost},
 		})
 		agent := CreateCommonAgentForTests(transport)
-		agent.MetricsState = MetricsState{
-			Collectors: []MetricCollector{
+		agent.MetricsState = metrics.State{
+			Collectors: []metrics.Collector{
 				{
 					Key: "panicking_collector",
-					Collector: func(_ context.Context, _ *MetricsState) error {
+					Collector: func(_ context.Context, _ *metrics.State) error {
 						var nilMap map[string]int
 						nilMap["boom"] = 1 // assignment to entry in nil map
 						return nil
@@ -169,11 +167,11 @@ func TestGetMetrics(t *testing.T) {
 			{"/api/v1/agent/log-entries", http.MethodPost},
 		})
 		agent := CreateCommonAgentForTests(transport)
-		agent.MetricsState = MetricsState{
-			Collectors: []MetricCollector{
+		agent.MetricsState = metrics.State{
+			Collectors: []metrics.Collector{
 				{
 					Key: "panicking_collector",
-					Collector: func(_ context.Context, _ *MetricsState) error {
+					Collector: func(_ context.Context, _ *metrics.State) error {
 						panic("boom")
 					},
 				},
@@ -208,178 +206,27 @@ func CreateCommonAgentForTests(rt http.RoundTripper) CommonAgent {
 	httpClient := retryablehttp.NewClient()
 	httpClient.HTTPClient = &underlyingHTTPClient
 
-	return CommonAgent{
-		AgentID:   "test-agent",
-		APIClient: httpClient,
-		logger:    logrus.New(),
-		ServerURLs: backend.ServerURLs{
-			ServerUrl: "http://localhost:8080",
-			ApiKey:    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-			DbID:      "550e8400-e29b-41d4-a716-446655440000",
+	ca := CommonAgent{
+		Client: backend.Client{
+			AgentID:   "test-agent",
+			APIClient: httpClient,
+			ServerURLs: backend.ServerURLs{
+				ServerUrl: "http://localhost:8080",
+				ApiKey:    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+				DbID:      "550e8400-e29b-41d4-a716-446655440000",
+			},
+			StartTime: time.Now().UTC().Format(time.RFC3339),
+			Version:   "test-version",
 		},
-		StartTime: time.Now().UTC().Format(time.RFC3339),
-		Version:   "test-version",
 	}
+	ca.WithLogger(logrus.New())
+	return ca
 }
 
-func TestCommonAgent_SendHeartbeat_Succeeds(t *testing.T) {
-	transport := backendtest.CreateSuccessfulTrip()
-	agent := CreateCommonAgentForTests(transport)
-
-	err := agent.SendHeartbeat(context.Background())
-	assert.NoError(t, err)
-
-	transport.ActionWasCalled(t, "/api/v1/agent/heartbeat", http.MethodPost)
-}
-
-func TestCommonAgent_SendActiveConfig_Succeeds(t *testing.T) {
-	transport := backendtest.CreateSuccessfulTrip()
-	agent := CreateCommonAgentForTests(transport)
-	config := ConfigArraySchema{}
-
-	err := agent.SendActiveConfig(context.Background(), config, time.Now())
-	assert.NoError(t, err)
-
-	transport.ActionWasCalled(t, "/api/v1/agent/configurations", http.MethodPost)
-}
-
-func TestCommonAgent_SendError_Succeeds(t *testing.T) {
-	transport := backendtest.CreateSuccessfulTrip()
-	agent := CreateCommonAgentForTests(transport)
-
-	err := agent.SendError(context.Background(), ErrorPayload{
-		ErrorMessage: "something went wrong",
-		ErrorType:    "test_error",
-		Timestamp:    time.Now().UTC().Format(time.RFC3339),
-	})
-	assert.NoError(t, err)
-
-	transport.ActionWasCalled(t, "/api/v1/agent/log-entries", http.MethodPost)
-}
-
-func TestCommonAgent_SendGuardrailSignal_Succeeds(t *testing.T) {
-	transport := backendtest.CreateSuccessfulTrip()
-	agent := CreateCommonAgentForTests(transport)
-
-	err := agent.SendGuardrailSignal(context.Background(), guardrails.Signal{
-		Level: guardrails.Critical,
-		Type:  guardrails.Memory,
-	})
-	assert.NoError(t, err)
-
-	transport.ActionWasCalled(t, "/api/v1/agent/guardrails", http.MethodPost)
-}
-
-func TestCommonAgent_SendMetrics_Succeeds(t *testing.T) {
-	transport := backendtest.CreateSuccessfulTrip()
-	agent := CreateCommonAgentForTests(transport)
-
-	err := agent.SendMetrics(context.Background(), []metrics.FlatValue{
-		{Key: "metric1", Value: 1, Type: "int"},
-		{Key: "metric2", Value: 3.14, Type: "float"},
-	})
-	assert.NoError(t, err)
-
-	transport.ActionWasCalled(t, "/api/v1/agent/metrics", http.MethodPost)
-}
-
-func TestCommonAgent_SendSystemInfo_Succeeds(t *testing.T) {
-	transport := backendtest.CreateSuccessfulTrip()
-	agent := CreateCommonAgentForTests(transport)
-
-	err := agent.SendSystemInfo(context.Background(), []metrics.FlatValue{
-		{Key: "os", Value: "linux", Type: "string"},
-		{Key: "cpu_count", Value: 4, Type: "int"},
-	})
-	assert.NoError(t, err)
-
-	transport.ActionWasCalled(t, "/api/v1/agent/system-info", http.MethodPut)
-}
-
-func TestCommonAgent_GetProposedConfig_Succeeds(t *testing.T) {
-	transport := backendtest.CreateSuccessfulTrip()
-	agent := CreateCommonAgentForTests(transport)
-
-	config, err := agent.GetProposedConfig(context.Background())
-	if assert.NoError(t, err) && assert.NotNil(t, config) {
-		assert.Len(t, config.Config, 3)
-		assert.Equal(t, "shared_buffers", config.Config[0].Name)
-		assert.Equal(t, "work_mem", config.Config[1].Name)
-		assert.Equal(t, "max_connections", config.Config[2].Name)
-		assert.Equal(t, []string{"shared_buffers"}, config.KnobsOverrides)
-		assert.Equal(t, KnobApplicationRestart, config.KnobApplication)
-
-		transport.ActionWasCalled(t, "/api/v1/agent/configurations", http.MethodGet)
-	}
-}
-
-func TestKnobApplication_UnmarshalJSON(t *testing.T) {
-	cases := []struct {
-		name    string
-		input   string
-		want    KnobApplication
-		wantErr bool
-	}{
-		{name: "restart", input: `"restart"`, want: KnobApplicationRestart},
-		{name: "reload", input: `"reload"`, want: KnobApplicationReload},
-		{name: "empty string", input: `""`, wantErr: true},
-		{name: "uppercase", input: `"RESTART"`, wantErr: true},
-		{name: "unknown value", input: `"foo"`, wantErr: true},
-		{name: "non-string", input: `42`, wantErr: true},
-		{name: "null", input: `null`, wantErr: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var got KnobApplication
-			err := json.Unmarshal([]byte(tc.input), &got)
-			if tc.wantErr {
-				assert.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, got)
-		})
-	}
-}
-
-func TestProposedConfigResponse_UnmarshalJSON_RejectsInvalidKnobApplication(t *testing.T) {
-	payload := `{"config":[],"knobs_overrides":[],"knob_application":"sometimes"}`
-	var resp ProposedConfigResponse
-	err := json.Unmarshal([]byte(payload), &resp)
-	assert.Error(t, err, "decoding should fail before an adapter ever sees the response")
-}
-
-// Compile-time check: all variants satisfy ApplyConfigError.
-var (
-	_ ApplyConfigError = (*ConfigApplyError)(nil)
-	_ ApplyConfigError = (*RestartNotAllowedError)(nil)
-	_ ApplyConfigError = (*DefaultParameterGroupError)(nil)
-)
-
-func TestApplyConfigError_ErrorTypes(t *testing.T) {
-	t.Run("ConfigApplyError", func(t *testing.T) {
-		inner := errors.New("driver failure")
-		e := &ConfigApplyError{Err: inner}
-		assert.Equal(t, "config_apply_error", e.ErrorType())
-		assert.Equal(t, "driver failure", e.Error())
-		assert.ErrorIs(t, e, inner)
-	})
-
-	t.Run("RestartNotAllowedError", func(t *testing.T) {
-		e := &RestartNotAllowedError{Message: "restart required but allow_restart=false"}
-		assert.Equal(t, "restart_not_allowed", e.ErrorType())
-		assert.Equal(t, "restart required but allow_restart=false", e.Error())
-	})
-}
-
-func TestProposedConfigResponse_UnmarshalJSON_RejectsMissingKnobApplication(t *testing.T) {
-	// An omitted field leaves KnobApplication at its zero value ("") and
-	// UnmarshalJSON is not invoked. We rely on the field always being sent,
-	// but document the current behavior so it's an explicit choice rather
-	// than an oversight: an omitted field decodes successfully to "".
-	payload := `{"config":[],"knobs_overrides":[]}`
-	var resp ProposedConfigResponse
-	err := json.Unmarshal([]byte(payload), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, KnobApplication(""), resp.KnobApplication)
+// clientWithLogger returns a backend client that only has a logger, for tests
+// that never reach the backend.
+func clientWithLogger(logger *logrus.Logger) backend.Client {
+	var c backend.Client
+	c.WithLogger(logger)
+	return c
 }

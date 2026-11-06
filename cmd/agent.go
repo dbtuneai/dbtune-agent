@@ -2,12 +2,10 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 
 	"github.com/dbtuneai/agent/pkg/adapters/aiven"
 	"github.com/dbtuneai/agent/pkg/adapters/azureflex"
@@ -19,7 +17,7 @@ import (
 	"github.com/dbtuneai/agent/pkg/adapters/rds"
 	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/checks"
-	"github.com/dbtuneai/agent/pkg/pg"
+	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/runner"
 	"github.com/dbtuneai/agent/pkg/version"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -63,35 +61,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Set the file name of the configurations file
-	viper.SetConfigName("dbtune")
-	viper.SetConfigType("yaml")
-
-	// Locations where to look for the config file
-	viper.AddConfigPath("/etc/")        // config at /etc/dbtune.yaml
-	viper.AddConfigPath("/etc/dbtune/") // config at /etc/dbtune/dbtune.yaml
-	if pd := os.Getenv("PROGRAMDATA"); pd != "" {
-		viper.AddConfigPath(filepath.Join(pd, "dbtune")) // %PROGRAMDATA%\dbtune\dbtune.yaml (Windows system-wide)
-	}
-	if ad := os.Getenv("APPDATA"); ad != "" {
-		viper.AddConfigPath(filepath.Join(ad, "dbtune")) // %APPDATA%\dbtune\dbtune.yaml (Windows per-user)
-	}
-	viper.AddConfigPath(".") // optionally look for config in the working directory
-
-	// Read the configuration file
-	if err := viper.ReadInConfig(); err != nil {
-		var configNotFoundErr viper.ConfigFileNotFoundError
-		if errors.As(err, &configNotFoundErr) {
-			// Config file not found; ignore the error
-			log.Println("No config file found, proceeding with environment variables only.")
-		} else {
-			// Config file was found but another error occurred
-			log.Fatalf("Error reading config file, %s", err)
-		}
-	}
-
-	viper.AutomaticEnv()      // Read also environment variables
-	viper.SetEnvPrefix("DBT") // Set a prefix for environment variables
+	config.Load()
 
 	var adapter agent.AgentLooper
 	var err error
@@ -106,7 +76,7 @@ func main() {
 			log.Fatalf("Failed to read Azure Flex config: %v", cfgErr)
 		}
 		if azFlexCfg.AuthMethod == azureflex.AuthMethodEntra {
-			pgCfg, cfgErr := pg.ConfigFromViper(nil)
+			pgCfg, cfgErr := config.PostgresFromViper(nil)
 			if cfgErr != nil {
 				log.Fatalf("Failed to read PostgreSQL config: %v", cfgErr)
 			}

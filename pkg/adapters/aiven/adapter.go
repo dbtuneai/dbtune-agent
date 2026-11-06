@@ -3,16 +3,12 @@ package aiven
 import (
 	"context"
 	"fmt"
-	"math"
-	"strconv"
 	"time"
 
 	aivenclient "github.com/aiven/go-client-codegen"
-	"github.com/aiven/go-client-codegen/handler/service"
 	"github.com/dbtuneai/agent/pkg/agent"
-	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
-	"github.com/dbtuneai/agent/pkg/internal/parameters"
-	"github.com/dbtuneai/agent/pkg/metrics"
+	"github.com/dbtuneai/agent/pkg/catalog"
+	"github.com/dbtuneai/agent/pkg/config"
 	"github.com/dbtuneai/agent/pkg/pg"
 	pgPool "github.com/jackc/pgx/v5/pgxpool"
 )
@@ -29,8 +25,8 @@ type AivenPostgreSQLAdapter struct {
 	Config            Config
 	Client            aivenclient.Client
 	State             *State
-	GuardrailSettings guardrails.Config
-	pgConfig          pg.Config
+	GuardrailSettings config.Guardrails
+	pgConfig          config.Postgres
 	PGDriver          *pgPool.Pool
 	PGVersion         pg.Version
 }
@@ -43,12 +39,12 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		return nil, err
 	}
 
-	guardrailSettings, err := guardrails.ConfigFromViper(nil)
+	guardrailSettings, err := config.GuardrailsFromViper(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate settings for guardrails %w", err)
 	}
 
-	pgConfig, err := pg.ConfigFromViper(nil)
+	pgConfig, err := config.PostgresFromViper(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +98,7 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 		PGVersion:         PGVersion,
 	}
 
-	collectors, err := pg.StandardCatalogCollectors(pgPool, PGVersion, commonAgent.Logger())
+	collectors, err := catalog.StandardCollectors(pgPool, PGVersion, commonAgent.Logger())
 	if err != nil {
 		return nil, err
 	}
@@ -111,305 +107,6 @@ func CreateAivenPostgreSQLAdapter() (*AivenPostgreSQLAdapter, error) {
 	adapter.InitCollectors(AivenCollectors(adapter))
 
 	return adapter, nil
-}
-
-// GetSystemInfo returns system information for the Aiven PostgreSQL service
-func (adapter *AivenPostgreSQLAdapter) GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error) {
-	adapter.Logger().Info("Collecting Aiven system info")
-
-	// Get service information from Aiven API
-	service, err := adapter.Client.ServiceGet(
-		ctx,
-		adapter.Config.ProjectName,
-		adapter.Config.ServiceName,
-		[2]string{"include_secrets", "false"},
-	)
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to get service info: %w", err)
-	}
-
-	numCPUs := *service.NodeCpuCount
-	nodeMemoryMb := *service.NodeMemoryMb
-	totalMemoryBytes := int64(math.Round(nodeMemoryMb * 1024.0 * 1024.0))
-
-	// Store hardware information in state
-	adapter.State.Hardware = Hardware{
-		TotalMemoryBytes: totalMemoryBytes,
-		NumCPUs:          numCPUs,
-		LastChecked:      time.Now(),
-	}
-
-	// Update the last known PGStatMonitorEnable state
-	pgStatMonitorEnable, ok := service.UserConfig["pg_stat_monitor_enable"]
-	if ok {
-		adapter.State.LastKnownPGStatMonitorEnable = pgStatMonitorEnable.(bool)
-	}
-
-	// Get PostgreSQL version and max connections from database
-	pgVersion, err := pg.PGVersion(adapter.PGDriver)
-	if err != nil {
-		return nil, err
-	}
-
-	maxConnections, err := pg.MaxConnections(adapter.PGDriver)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create metrics
-	totalMemory, err := metrics.NodeMemoryTotal.AsFlatValue(totalMemoryBytes)
-	if err != nil {
-		adapter.Logger().Errorf("Error creating total memory metric: %v", err)
-		return nil, err
-	}
-
-	noCPUsMetric, err := metrics.NodeCPUCount.AsFlatValue(numCPUs)
-	if err != nil {
-		adapter.Logger().Errorf("Error creating number of CPUs metric: %v", err)
-		return nil, err
-	}
-	version, err := metrics.PGVersion.AsFlatValue(pgVersion.String())
-	if err != nil {
-		adapter.Logger().Errorf("Error creating PostgreSQL version metric: %v", err)
-		return nil, err
-	}
-
-	maxConnectionsMetric, err := metrics.PGMaxConnections.AsFlatValue(maxConnections)
-	if err != nil {
-		adapter.Logger().Errorf("Error creating max connections metric: %v", err)
-		return nil, err
-	}
-
-	databaseInfo, err := pg.DatabaseSystemInfo(adapter.PGDriver)
-	if err != nil {
-		adapter.Logger().Errorf("Error creating database system info metrics: %v", err)
-		return nil, err
-	}
-
-	systemInfo := make([]metrics.FlatValue, 0, 4+len(databaseInfo))
-	systemInfo = append(systemInfo,
-		version,
-		totalMemory,
-		maxConnectionsMetric,
-		noCPUsMetric,
-	)
-	systemInfo = append(systemInfo, databaseInfo...)
-
-	return systemInfo, nil
-}
-
-// ApplyConfig applies configuration changes to the Aiven PostgreSQL service
-func (adapter *AivenPostgreSQLAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
-	adapter.Logger().Infof("Applying config")
-
-	// List of knobs to be applied
-	userConfig := make(map[string]any)
-	pgSettings := make(map[string]any)
-	restartRequired := false
-
-	// Sort the knobs into dbLevelKnobs and serviceLevelKnobs
-	for _, knob := range proposedConfig.KnobsOverrides {
-		knobConfig, err := parameters.FindRecommendedKnob(proposedConfig.Config, knob)
-		if err != nil {
-			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to find recommended knob: %w", err)}
-		}
-
-		adapter.Logger().Debugf("Knob config: %+v", knobConfig)
-
-		knobModifiability, ok := aivenModifiableParams[knobConfig.Name]
-		if !ok {
-			return &agent.ConfigApplyError{Err: fmt.Errorf("parameter %s has unknown modifiability status on Aiven. Skipping on applying the configuration", knobConfig.Name)}
-		}
-		switch knobModifiability.ModifyLevel {
-		case ModifyUserPGConfig:
-			pgSettings[knobConfig.Name] = knobConfig.Setting
-		case ModifyServiceLevel:
-			// If it requires a restart, it will be automatically handled.
-			userConfig[knobConfig.Name] = knobConfig.Setting
-			if knobModifiability.RequiresRestart {
-				restartRequired = true
-			}
-		case NoModify:
-			return &agent.ConfigApplyError{Err: fmt.Errorf("parameter %s can not be modified on Aiven. Skipping on applying the configuration", knobConfig.Name)}
-		}
-	}
-
-	// If any of the parameters being applied would require a restart but the
-	// agent is not allowed to restart, bail before pushing changes to Aiven.
-	if restartRequired && !agent.IsRestartAllowed() {
-		return &agent.RestartNotAllowedError{
-			Message: "restart is not allowed in the agent",
-		}
-	}
-	// Refuse to partially apply: KnobApplication=reload but Aiven would
-	// auto-restart for at least one of the proposed knobs.
-	if restartRequired && proposedConfig.KnobApplication == agent.KnobApplicationReload {
-		return &agent.ConfigApplyError{Err: fmt.Errorf("refusing to apply: KnobApplication=reload but at least one parameter would force an Aiven service restart")}
-	}
-
-	if len(pgSettings) > 0 {
-		userConfig["pg"] = pgSettings
-	}
-	if len(userConfig) > 0 {
-		adapter.Logger().Debugf("User config to be sent to Aiven: %+v", userConfig)
-
-		// Apply the configuration update
-		_, err := adapter.Client.ServiceUpdate(
-			ctx,
-			adapter.Config.ProjectName,
-			adapter.Config.ServiceName,
-			&service.ServiceUpdateIn{UserConfig: &userConfig, Powered: boolPtr(true)},
-		)
-		if err != nil {
-			return &agent.ConfigApplyError{Err: fmt.Errorf("failed to update PostgreSQL parameters: %w", err)}
-		}
-	} else {
-		adapter.Logger().Warnf("ApplyConfig was called with no changes to apply")
-	}
-
-	if restartRequired {
-		adapter.Logger().Info("Restart was required, checking if Aiven PostgreSQL service has restarted")
-		err := adapter.waitForServiceState(service.ServiceStateTypeRunning)
-		if err != nil {
-			return &agent.ConfigApplyError{Err: err}
-		}
-	}
-
-	adapter.State.LastAppliedConfig = time.Now()
-	return nil
-}
-
-// waitForServiceState waits for the service to reach the specified state
-func (adapter *AivenPostgreSQLAdapter) waitForServiceState(state service.ServiceStateType) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for service to reach state %s", state)
-		case <-time.After(10 * time.Second):
-			serviceResponse, err := adapter.Client.ServiceGet(
-				context.Background(),
-				adapter.Config.ProjectName,
-				adapter.Config.ServiceName,
-			)
-			if err != nil {
-				adapter.Logger().Warnf("Failed to get service status: %v", err)
-				continue
-			}
-
-			if serviceResponse.State == state {
-				adapter.Logger().Infof("Service reached state: %s", state)
-				return nil
-			}
-			adapter.Logger().Debugf("Service state: %s, waiting for: %s", serviceResponse.State, state)
-		}
-	}
-}
-
-// Guardrails implements resource usage guardrails
-// Aiven only provides 30 second resolution data for hardware info, which we
-// need for guardrails.
-func (adapter *AivenPostgreSQLAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
-	timeSinceLastGuardrailCheck := time.Since(adapter.State.LastGuardrailCheck)
-	if timeSinceLastGuardrailCheck < adapter.Config.MetricResolution {
-		adapter.Logger().Debugf(
-			"Guardrails checked %s ago, lower than the resolution of %s, skipping",
-			timeSinceLastGuardrailCheck,
-			adapter.Config.MetricResolution,
-		)
-		return nil
-	}
-
-	// NOTE: We use the latest obtained during HardwareInfo() if it's recent, otherwise,
-	// re-fetch the metrics.
-	var lastMemoryAvailablePercentage float64
-
-	timeSinceLastMemoryAvailable := time.Since(adapter.State.LastMemoryAvailableTime)
-	if timeSinceLastMemoryAvailable < adapter.Config.MetricResolution {
-		adapter.Logger().Debugf(
-			"Memory check %s ago, lower than the resolution of %s, using cached value",
-			timeSinceLastMemoryAvailable,
-			adapter.Config.MetricResolution,
-		)
-		lastMemoryAvailablePercentage = adapter.State.LastMemoryAvailablePercentage
-	} else {
-		adapter.Logger().Debugf(
-			"Memory check %s ago, higher than the resolution of %s, fetching new value",
-			timeSinceLastMemoryAvailable,
-			adapter.Config.MetricResolution,
-		)
-		metrics, err := GetFetchedMetrics(
-			ctx,
-			FetchedMetricsIn{
-				Client:      &adapter.Client,
-				ProjectName: adapter.Config.ProjectName,
-				ServiceName: adapter.Config.ServiceName,
-				Logger:      adapter.Logger(),
-				Period:      service.PeriodTypeHour,
-			},
-		)
-		if err != nil {
-			adapter.Logger().Errorf("Failed to get fetched metric for guardrail: %v", err)
-			return nil
-		}
-		memAvailableMetric := metrics[MEM_AVAILABLE_KEY]
-		if memAvailableMetric.Value != nil {
-			if perc, ok := memAvailableMetric.Value.(float64); ok {
-				lastMemoryAvailablePercentage = perc
-				adapter.State.LastMemoryAvailableTime = memAvailableMetric.Timestamp
-			} else {
-				adapter.Logger().Warnf("memAvailableMetric.Value is not a float64: %v", memAvailableMetric.Value)
-				return nil
-			}
-		} else {
-			adapter.Logger().Warn("memAvailableMetric.Value is nil")
-			return nil
-		}
-	}
-
-	adapter.Logger().Info("Checking guardrails for Aiven PostgreSQL")
-	adapter.State.LastGuardrailCheck = time.Now()
-
-	memoryAvailablePercentage := lastMemoryAvailablePercentage
-
-	if memoryAvailablePercentage > adapter.GuardrailSettings.MemoryThreshold {
-		adapter.Logger().Warnf(
-			"Memory usage: %.2f%% is over threshold %.2f%%, triggering critical guardrail",
-			memoryAvailablePercentage,
-			adapter.GuardrailSettings.MemoryThreshold,
-		)
-		return &guardrails.Signal{
-			Level: guardrails.Critical,
-			Type:  guardrails.Memory,
-		}
-	}
-
-	return nil
-}
-
-// AivenCollectors returns the metrics collectors for Aiven PostgreSQL
-func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
-	return []agent.MetricCollector{
-		{
-			Key: pg.MetricHardware,
-			Collector: AivenHardwareInfo(
-				&adapter.Client,
-				adapter.Config.ProjectName,
-				adapter.Config.ServiceName,
-				adapter.Config.MetricResolution,
-				adapter.Config,
-				adapter.State,
-				adapter.Logger(),
-			),
-		},
-	}
-}
-
-func boolPtr(b bool) *bool {
-	return &b
 }
 
 type InitialServiceLevelParameters struct {
@@ -457,112 +154,4 @@ func getInitialServiceLevelParameters(client *aivenclient.Client, projectName st
 		InitialSharedBuffersPercentage: sharedBuffers,
 		InitialPGStatMonitorEnable:     pgStatMonitorEnable,
 	}, nil
-}
-
-// GetActiveConfig returns the active configuration for the Aiven API
-// as well as through PostgreSQL
-func (adapter *AivenPostgreSQLAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArraySchema, error) {
-	// Main differences from the generic pg.GetActiveConfig:
-	// * We inject `shared_buffers_percentage` from the Aiven API.
-	//   Until we modify it, Aiven returns nothing, so we fall back to a known default of 20%.
-	// * `work_mem` is set through the Aiven API in MB, but pg_settings reports it in kB.
-	//   We convert kB→MB and override the unit/context so the value round-trips correctly.
-	logger := adapter.Logger()
-	logger.Debug("Getting active config for Aiven PostgreSQL")
-
-	service, err := adapter.Client.ServiceGet(
-		ctx,
-		adapter.Config.ProjectName,
-		adapter.Config.ServiceName,
-		[2]string{"include_secrets", "false"},
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	userConfig := service.UserConfig
-
-	// HACK: This isn't for configRows, it's purely to keep track of
-	// this parameter, which we use to trigger session restarts.
-	// There's no point re-querying the service for this information
-	// elsewhere so we do it here.
-	if val, ok := userConfig["pg_stat_monitor_enable"]; ok && val != nil {
-		if b, ok := val.(bool); ok {
-			adapter.State.LastKnownPGStatMonitorEnable = b
-		}
-	}
-
-	// Get shared_buffers_percentage from Aiven API, defaulting to 20% if unset.
-	var sharedBuffersPercentage float64
-	if val, ok := userConfig["shared_buffers_percentage"]; ok && val != nil {
-		if f, ok := val.(float64); ok {
-			sharedBuffersPercentage = f
-		} else {
-			return nil, fmt.Errorf("shared_buffers_percentage is not convertable to float64! %v", val)
-		}
-	} else {
-		sharedBuffersPercentage = DEFAULT_SHARED_BUFFERS_PERCENTAGE
-	}
-
-	// Get the standard pg_settings config.
-	configRows, err := pg.GetActiveConfig(adapter.PGDriver, ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Override work_mem: convert kB (from pg_settings) → MB (Aiven's unit).
-	configRows, err = overrideWorkMemKBtoMB(configRows)
-	if err != nil {
-		return nil, err
-	}
-
-	// Prepend the synthetic shared_buffers_percentage setting from Aiven API.
-	configRows = prependSharedBuffersPercentage(configRows, sharedBuffersPercentage)
-
-	return configRows, nil
-}
-
-// overrideWorkMemKBtoMB finds work_mem in configRows and converts its value
-// from kB (as reported by pg_settings) to MB (as used by the Aiven API).
-func overrideWorkMemKBtoMB(configRows agent.ConfigArraySchema) (agent.ConfigArraySchema, error) {
-	for i := 0; i < len(configRows); i++ {
-		pgRow, ok := configRows[i].(agent.PGConfigRow)
-		if !ok || pgRow.Name != "work_mem" {
-			continue
-		}
-		var workMemKb int64
-		switch v := pgRow.Setting.(type) {
-		case int64:
-			workMemKb = v
-		case string:
-			parsed, err := strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				return nil, fmt.Errorf("error converting work_mem to int64: %w", err)
-			}
-			workMemKb = parsed
-		default:
-			return nil, fmt.Errorf("unexpected work_mem type: %T", v)
-		}
-		configRows[i] = agent.PGConfigRow{
-			Name:    "work_mem",
-			Setting: int(workMemKb / 1024),
-			Unit:    "MB",
-			Vartype: "integer",
-			Context: "service",
-		}
-		break
-	}
-	return configRows, nil
-}
-
-// prependSharedBuffersPercentage prepends a synthetic shared_buffers_percentage
-// setting to the config rows.
-func prependSharedBuffersPercentage(configRows agent.ConfigArraySchema, pct float64) agent.ConfigArraySchema {
-	return append(agent.ConfigArraySchema{agent.PGConfigRow{
-		Name:    "shared_buffers_percentage",
-		Setting: pct,
-		Unit:    "percentage",
-		Vartype: "real",
-		Context: "service",
-	}}, configRows...)
 }

@@ -1,17 +1,14 @@
+// Package agent defines what an adapter is: the AgentLooper interface the
+// runner drives, and CommonAgent, which adapters embed for the backend client
+// and the metric collection loop.
 package agent
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"path"
 	"runtime"
-	"strconv"
 	"sync"
 	"time"
 
@@ -19,128 +16,14 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/dbtuneai/agent/pkg/backend"
+	"github.com/dbtuneai/agent/pkg/catalog"
 	guardrails "github.com/dbtuneai/agent/pkg/guardrails"
-	"github.com/dbtuneai/agent/pkg/internal/utils"
 	"github.com/dbtuneai/agent/pkg/metrics"
-	"github.com/dbtuneai/agent/pkg/pg/queries"
+	"github.com/dbtuneai/agent/pkg/tuning"
 	"github.com/dbtuneai/agent/pkg/version"
 
-	"github.com/google/uuid"
-	"github.com/hashicorp/go-retryablehttp"
 	"github.com/spf13/viper"
 )
-
-// Package-level agent ID, generated once and shared across all CommonAgent instances
-var (
-	agentIDOnce   sync.Once
-	sharedAgentID string
-)
-
-// GetAgentID returns the shared agent ID, generating it once on first call
-func GetAgentID() string {
-	agentIDOnce.Do(func() {
-		sharedAgentID = uuid.New().String()
-	})
-	return sharedAgentID
-}
-
-type ConfigArraySchema []any
-
-// TODO: extract PostgreSQL specific types + methods to utils/separate place
-type PGConfigRow struct {
-	Name    string      `json:"name"`
-	Setting interface{} `json:"setting"`
-	Unit    interface{} `json:"unit"`
-	Vartype string      `json:"vartype"`
-	Context string      `json:"context"`
-}
-
-// GetSettingValue returns the setting value in its appropriate type and format
-// This is needed for cases like Aurora RDS when modifying parameters
-func (p PGConfigRow) GetSettingValue() (string, error) {
-	switch p.Vartype {
-	case "integer":
-		// Handle both string and number JSON representations
-		var val int64
-		switch v := p.Setting.(type) {
-		case int:
-			val = int64(v)
-		case int64:
-			val = v
-		case float64:
-			val = int64(v)
-		case string:
-			parsed, err := strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				return "", fmt.Errorf("failed to parse integer setting: %w", err)
-			}
-			val = parsed
-		default:
-			return "", fmt.Errorf("unexpected type for integer setting: %T", p.Setting)
-		}
-		return fmt.Sprintf("%d", val), nil
-
-	case "real":
-		// Handle both string and number JSON representations
-		var val float64
-		switch v := p.Setting.(type) {
-		case float64:
-			val = v
-		case int:
-			val = float64(v)
-		case int64:
-			val = float64(v)
-		case string:
-			parsed, err := strconv.ParseFloat(v, 64)
-			if err != nil {
-				return "", fmt.Errorf("failed to parse real setting: %w", err)
-			}
-			val = parsed
-		default:
-			return "", fmt.Errorf("unexpected type for real setting: %T", p.Setting)
-		}
-		return fmt.Sprintf("%.6g", val), nil
-
-	case "bool":
-		return fmt.Sprintf("%v", p.Setting), nil
-
-	case "string", "enum":
-		return fmt.Sprintf("%v", p.Setting), nil
-
-	default:
-		return fmt.Sprintf("%v", p.Setting), nil
-	}
-}
-
-// KnobApplication is the apply mode for a proposed configuration. Only the
-// values declared as constants below are valid; any other value fails JSON
-// decoding so adapters never see an unknown mode.
-type KnobApplication string
-
-const (
-	KnobApplicationRestart KnobApplication = "restart"
-	KnobApplicationReload  KnobApplication = "reload"
-)
-
-func (k *KnobApplication) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return err
-	}
-	switch KnobApplication(s) {
-	case KnobApplicationRestart, KnobApplicationReload:
-		*k = KnobApplication(s)
-		return nil
-	default:
-		return fmt.Errorf("invalid knob_application %q (expected %q or %q)", s, KnobApplicationRestart, KnobApplicationReload)
-	}
-}
-
-type ProposedConfigResponse struct {
-	Config          []PGConfigRow   `json:"config"`
-	KnobsOverrides  []string        `json:"knobs_overrides"`
-	KnobApplication KnobApplication `json:"knob_application"`
-}
 
 type AgentLooper interface {
 	// SendHeartbeat sends a heartbeat to the DBtune server
@@ -173,14 +56,14 @@ type AgentLooper interface {
 	GetSystemInfo(ctx context.Context) ([]metrics.FlatValue, error)
 	SendSystemInfo(ctx context.Context, systemInfo []metrics.FlatValue) error
 
-	GetActiveConfig(ctx context.Context) (ConfigArraySchema, error)
-	SendActiveConfig(ctx context.Context, config ConfigArraySchema, observedAt time.Time) error
-	GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error)
+	GetActiveConfig(ctx context.Context) (tuning.ConfigArraySchema, error)
+	SendActiveConfig(ctx context.Context, config tuning.ConfigArraySchema, observedAt time.Time) error
+	GetProposedConfig(ctx context.Context) (*tuning.ProposedConfigResponse, error)
 
 	// ApplyConfig applies the configuration to the PostgresSQL server
 	// The configuration is applied with the appropriate method, either with a
 	// restart or a reload operation
-	ApplyConfig(ctx context.Context, knobs *ProposedConfigResponse) ApplyConfigError
+	ApplyConfig(ctx context.Context, knobs *tuning.ProposedConfigResponse) tuning.ApplyConfigError
 
 	// Guardrails is responsible for triggering a signal to the DBtune server
 	// that something is heading towards a failure.
@@ -194,10 +77,10 @@ type AgentLooper interface {
 	SendGuardrailSignal(ctx context.Context, signal guardrails.Signal) error
 
 	// SendError sends an error report to the DBtune server
-	SendError(ctx context.Context, payload ErrorPayload) error
+	SendError(ctx context.Context, payload backend.ErrorPayload) error
 
 	// CatalogCollectors returns the list of catalog view collectors for this adapter.
-	CatalogCollectors() []queries.CatalogCollector
+	CatalogCollectors() []catalog.Collector
 
 	// SendCatalogPayload sends pre-marshaled, gzip-compressed JSON to the
 	// DBtune server for the named catalog view.
@@ -207,122 +90,14 @@ type AgentLooper interface {
 	Logger() *log.Logger
 }
 
-type AgentPayload struct {
-	AgentVersion   string `json:"agent_version"`
-	AgentStartTime string `json:"agent_start_time"`
-	AgentID        string `json:"agent_identifier"`
-	AllowRestart   bool   `json:"allow_restart"`
-}
-
-// ApplyConfigError is the closed set of errors AgentLooper.ApplyConfig may
-// return. The unexported marker keeps the set closed to this package.
-// ErrorType() is the wire string the platform dispatches on.
-type ApplyConfigError interface {
-	error
-	ErrorType() string
-	isApplyConfigError()
-}
-
-type RestartNotAllowedError struct {
-	Message string
-}
-
-func (e *RestartNotAllowedError) Error() string     { return e.Message }
-func (e *RestartNotAllowedError) ErrorType() string { return "restart_not_allowed" }
-func (*RestartNotAllowedError) isApplyConfigError() {}
-
-// ConfigApplyError is the fallback variant for ApplyConfig failures with no
-// more specific classification.
-type ConfigApplyError struct {
-	Err error
-}
-
-func (e *ConfigApplyError) Error() string     { return e.Err.Error() }
-func (e *ConfigApplyError) Unwrap() error     { return e.Err }
-func (e *ConfigApplyError) ErrorType() string { return "config_apply_error" }
-func (*ConfigApplyError) isApplyConfigError() {}
-
-// DefaultParameterGroupError is returned when the instance has a default
-// parameter group attached. AWS prohibits modifying default.* groups, so the
-// agent refuses to apply rather than failing mid-way. The platform reads this
-// typed error to surface guidance to the user.
-type DefaultParameterGroupError struct {
-	ParameterGroupName string
-}
-
-func (e *DefaultParameterGroupError) Error() string {
-	return fmt.Sprintf("cannot apply config: instance uses default parameter group %q which AWS does not allow modifying", e.ParameterGroupName)
-}
-func (e *DefaultParameterGroupError) ErrorType() string { return "default_parameter_group" }
-func (*DefaultParameterGroupError) isApplyConfigError() {}
-
-func IsRestartAllowed() bool {
-	return viper.GetBool("postgresql.allow_restart")
-}
-
-type ErrorPayload struct {
-	ErrorMessage string `json:"error_message"`
-	ErrorType    string `json:"error_type"`
-	Timestamp    string `json:"timestamp"`
-}
-
-type IOCounterStat struct {
-	ReadCount  uint64
-	WriteCount uint64
-}
-
-// Caches is a struct that holds the caches for the agent
-// that is updated between each metric collection beat.
-// Currently, this is fixed for all adapters.
-// TODO: Make this dynamic for each adapter, this could use
-// GJSON and SJSON to update the cache as a string, but the locking then would be a problem in reading and writing without custom methods on state.
-type Caches struct {
-	IOCountersStat IOCounterStat
-
-	// Hardware specific cache for guardrails
-	// {
-	// 	"total_memory": 1024,
-	// 	"disk_size": 1024,
-	// }
-	HardwareCache map[string]interface{}
-}
-
-type MetricCollector struct {
-	Key       string
-	Collector func(ctx context.Context, state *MetricsState) error
-}
-
-type MetricsState struct {
-	Collectors []MetricCollector
-	// Caching layer, for metrics that are derived based on multiple heartbeats
-	Cache Caches
-	// Every round of metric collections this array will be filled with the metrics
-	// that are collected, and then emptied
-	Metrics []metrics.FlatValue
-	Mutex   *sync.Mutex
-}
-
-// AddMetric appends a metric in a thread-safe way
-func (state *MetricsState) AddMetric(metric metrics.FlatValue) {
-	state.Mutex.Lock()
-	defer state.Mutex.Unlock()
-	state.Metrics = append(state.Metrics, metric)
-}
-
 type CommonAgent struct {
-	backend.ServerURLs
-	logger    *log.Logger
-	APIClient *retryablehttp.Client
-	// Unique identifier for this agent instance
-	AgentID string
-	// Time the agent started
-	StartTime    string
-	MetricsState MetricsState
+	// Client talks to the DBtune backend. Embedded so its Send* methods,
+	// GetProposedConfig and Logger satisfy AgentLooper.
+	backend.Client
+	MetricsState metrics.State
 	// Timeout configuration
 	CollectionTimeout time.Duration // Total timeout for all collectors
 	IndividualTimeout time.Duration // Timeout for each individual collector
-	// Version information
-	Version string
 	// DBPool is the pgxpool.Pool used for database connections.
 	// Set by adapters so the runner can create a HealthGate.
 	DBPool *pgxpool.Pool
@@ -364,49 +139,13 @@ func CreateCommonAgentWithVersion(version string) *CommonAgent {
 		logger.SetLevel(log.InfoLevel)
 	}
 
-	serverUrl, err := backend.CreateServerURLs()
-	if err != nil {
-		logger.Fatalf("Error creating server URLs: %s", err)
-	}
-
-	client := retryablehttp.NewClient()
-	// 30 retries, as the cap is 30seconds for the back-off wait time
-	client.RetryMax = 30
-	client.HTTPClient.Timeout = 4 * time.Second
-	// retryablehttp logs every failed attempt at Error level. Those are
-	// transient and retried, so silencing its internal logger keeps retry noise
-	// off the backend log hook. The real outcome surfaces via the error Do
-	// returns once retries are exhausted, logged by the caller (runWithTicker /
-	// SendHeartbeat). Do guards all internal logging on a nil logger.
-	client.Logger = nil
-
-	// Intercept each attempt to add the API token and trace retries at Debug.
-	client.RequestLogHook = func(_ retryablehttp.Logger, req *http.Request, attempt int) {
-		key := req.Header.Get("DBTUNE-API-KEY")
-		if key == "" {
-			req.Header.Add("DBTUNE-API-KEY", serverUrl.ApiKey)
-		}
-		if attempt > 0 {
-			logger.Debugf("retrying %s %s (attempt %d)", req.Method, req.URL, attempt+1)
-		}
-	}
-
-	hook := utils.CreateBackendHook(serverUrl.AgentURL("raw-logs"), serverUrl.ApiKey)
-	logger.AddHook(hook)
-
-	agentID := GetAgentID()
-	logger.Infof("Agent instance ID: %s", agentID)
+	client := backend.NewClient(logger, version)
 
 	return &CommonAgent{
-		ServerURLs: serverUrl,
-		APIClient:  client,
-		logger:     logger,
-		AgentID:    agentID,
-		StartTime:  time.Now().UTC().Format(time.RFC3339),
-		Version:    version,
-		MetricsState: MetricsState{
-			Collectors: []MetricCollector{},
-			Cache:      Caches{},
+		Client: *client,
+		MetricsState: metrics.State{
+			Collectors: []metrics.Collector{},
+			Cache:      metrics.Caches{},
 			Mutex:      &sync.Mutex{},
 			Metrics:    []metrics.FlatValue{},
 		},
@@ -416,106 +155,13 @@ func CreateCommonAgentWithVersion(version string) *CommonAgent {
 	}
 }
 
-func (a *CommonAgent) Logger() *log.Logger {
-	return a.logger
-}
-
-func (a *CommonAgent) WithLogger(logger *log.Logger) {
-	a.logger = logger
-}
-
 func (a *CommonAgent) Pool() *pgxpool.Pool {
 	return a.DBPool
 }
 
-// postJSON sends a POST request with JSON body using the provided context.
-func (a *CommonAgent) postJSON(ctx context.Context, url string, jsonData []byte) (*http.Response, error) {
-	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	return a.APIClient.Do(req)
-}
-
-// putJSON sends a PUT request with JSON body using the provided context.
-func (a *CommonAgent) putJSON(ctx context.Context, url string, jsonData []byte) (*http.Response, error) {
-	req, err := retryablehttp.NewRequestWithContext(ctx, "PUT", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	return a.APIClient.Do(req)
-}
-
-// postJSONGzip sends a POST request with a gzip-compressed JSON body
-// using the provided context.
-func (a *CommonAgent) postJSONGzip(ctx context.Context, url string, jsonData []byte) (*http.Response, error) {
-	buf, err := gzipCompress(jsonData)
-	if err != nil {
-		return nil, err
-	}
-	a.Logger().Debugf("POST %s: %d bytes -> %d bytes gzipped", url, len(jsonData), buf.Len())
-	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", url, buf)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Content-Encoding", "gzip")
-	return a.APIClient.Do(req)
-}
-
-// getRequest sends a GET request using the provided context.
-func (a *CommonAgent) getRequest(ctx context.Context, url string) (*http.Response, error) {
-	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	return a.APIClient.Do(req)
-}
-
-// SendHeartbeat sends a heartbeat to the DBtune server
-// to indicate that the agent is running.
-// This method does not need to be overridden by any adapter
-func (a *CommonAgent) SendHeartbeat(ctx context.Context) error {
-	url := a.ServerURLs.AgentURL("heartbeat")
-	a.Logger().Infof("Sending heartbeat to %s", url)
-
-	payload := AgentPayload{
-		AgentVersion:   a.Version,
-		AgentStartTime: a.StartTime,
-		AgentID:        a.AgentID,
-		AllowRestart:   IsRestartAllowed(),
-	}
-
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		a.Logger().Errorf("Error marshaling JSON: %s", err)
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
-	defer cancel()
-
-	resp, err := a.postJSON(ctx, url, jsonData)
-	if err != nil {
-		a.Logger().Errorf("Failed to send heartbeat: %v", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 204 {
-		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Errorf("Failed to send heartbeat to %s, status: %d, body: %s", url, resp.StatusCode, string(body))
-		return fmt.Errorf("heartbeat failed with status code %d", resp.StatusCode)
-	}
-
-	return nil
-}
-
 // Should be called after creating the common agent is created to attach the collectors.
 // You can also forgo this step if you create the common agent with the collectors already attached.
-func (a *CommonAgent) InitCollectors(collectors []MetricCollector) {
+func (a *CommonAgent) InitCollectors(collectors []metrics.Collector) {
 	a.MetricsState.Collectors = collectors
 }
 
@@ -599,204 +245,4 @@ func (a *CommonAgent) GetMetrics(ctx context.Context) ([]metrics.FlatValue, erro
 		return a.MetricsState.Metrics, errors.Join(collectorErrors...)
 	}
 	return a.MetricsState.Metrics, nil
-}
-
-func (a *CommonAgent) SendMetrics(ctx context.Context, ms []metrics.FlatValue) error {
-	a.Logger().Println("Sending metrics to server")
-
-	formattedMetrics := metrics.FormatMetrics(ms)
-
-	jsonData, err := json.Marshal(formattedMetrics)
-	if err != nil {
-		return err
-	}
-
-	resp, err := a.postJSON(ctx, a.ServerURLs.AgentURL("metrics"), jsonData)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 204 {
-		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Warnf("Failed to send metrics. Response body: %s", string(body))
-		return fmt.Errorf("failed to send metrics, code: %d", resp.StatusCode)
-	}
-
-	return nil
-}
-
-func (a *CommonAgent) SendSystemInfo(ctx context.Context, systemInfo []metrics.FlatValue) error {
-	a.Logger().Println("Sending system info to server")
-
-	formattedMetrics := metrics.FormatSystemInfo(systemInfo)
-
-	jsonData, err := json.Marshal(formattedMetrics)
-	if err != nil {
-		return err
-	}
-
-	resp, err := a.putJSON(ctx, a.ServerURLs.AgentURL("system-info"), jsonData)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 204 && resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Errorf("Failed to send system info. Response body: %s", string(body))
-		return fmt.Errorf("failed to send system info, code: %d", resp.StatusCode)
-	}
-
-	return nil
-}
-
-func (a *CommonAgent) SendActiveConfig(ctx context.Context, config ConfigArraySchema, observedAt time.Time) error {
-	a.Logger().Println("Sending active configuration to server")
-
-	type Payload struct {
-		Config     ConfigArraySchema `json:"config"`
-		Hash       string            `json:"hash"`
-		ObservedAt string            `json:"observed_at"`
-	}
-
-	hash, _ := metrics.HashJSON(config)
-
-	jsonData, err := json.Marshal(Payload{
-		Config:     config,
-		Hash:       hash,
-		ObservedAt: observedAt.UTC().Format(time.RFC3339Nano),
-	})
-	if err != nil {
-		return err
-	}
-
-	a.Logger().Debugf("Active config payload: %s", string(jsonData))
-
-	resp, err := a.postJSONGzip(ctx, a.ServerURLs.AgentURL("configurations"), jsonData)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 204 && resp.StatusCode != 201 {
-		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Errorf("Failed to send configuration info. Response body: %s", string(body))
-		return fmt.Errorf("failed to send config info, code: %d", resp.StatusCode)
-	}
-
-	return nil
-}
-
-func (a *CommonAgent) GetProposedConfig(ctx context.Context) (*ProposedConfigResponse, error) {
-	a.Logger().Println("Fetching proposed configurations")
-
-	resp, err := a.getRequest(ctx, a.ServerURLs.GetKnobRecommendations())
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var proposedConfig []ProposedConfigResponse
-
-	if err := json.Unmarshal(body, &proposedConfig); err != nil {
-		return nil, err
-	}
-
-	if len(proposedConfig) > 0 {
-		return &proposedConfig[0], nil
-	}
-
-	return nil, nil
-}
-
-// SendGuardrailSignal sends a guardrail signal to the DBtune server
-// that something is heading towards a failure.
-func (a *CommonAgent) SendGuardrailSignal(ctx context.Context, signal guardrails.Signal) error {
-	a.Logger().Warnf("🚨 Sending Guardrail, level: %s, type: %s", signal.Level, signal.Type)
-
-	jsonData, err := json.Marshal(signal)
-	if err != nil {
-		return err
-	}
-
-	resp, err := a.postJSON(ctx, a.ServerURLs.AgentURL("guardrails"), jsonData)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 204 && resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Error("Failed to send guardrail signal. Response body: ", string(body))
-		return fmt.Errorf("failed to send guardrail signal, code: %d", resp.StatusCode)
-	}
-
-	return nil
-}
-
-// catalogSendTimeout bounds a single SendCatalogPayload POST, including any
-// retries performed by the retryable http client.
-const catalogSendTimeout = 30 * time.Second
-
-// gzipCompress compresses data using gzip and returns the compressed buffer.
-func gzipCompress(data []byte) (*bytes.Buffer, error) {
-	buf := &bytes.Buffer{}
-	gz := gzip.NewWriter(buf)
-	if _, err := gz.Write(data); err != nil {
-		return nil, fmt.Errorf("gzip write: %w", err)
-	}
-	if err := gz.Close(); err != nil {
-		return nil, fmt.Errorf("gzip close: %w", err)
-	}
-	return buf, nil
-}
-
-// SendCatalogPayload sends pre-marshaled JSON bytes for a catalog view,
-// gzip-compressed, to the DBtune server.
-func (a *CommonAgent) SendCatalogPayload(ctx context.Context, name string, payload []byte) error {
-	a.Logger().Printf("Sending %s payload (%d bytes)", name, len(payload))
-
-	ctx, cancel := context.WithTimeout(ctx, catalogSendTimeout)
-	defer cancel()
-
-	resp, err := a.postJSONGzip(ctx, a.ServerURLs.AgentURL(name), payload)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("failed to send %s, code: %d, body: %s", name, resp.StatusCode, body)
-	}
-	return nil
-}
-
-func (a *CommonAgent) SendError(ctx context.Context, payload ErrorPayload) error {
-	a.Logger().Errorf("🚨 Sending Error Report, type: %s, message: %s", payload.ErrorType, payload.ErrorMessage)
-
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	resp, err := a.postJSON(ctx, a.ServerURLs.AgentURL("log-entries"), jsonData)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		a.Logger().Errorf("Failed to send error. Response body: %s", string(body))
-		return fmt.Errorf("failed to send error, code: %d", resp.StatusCode)
-	}
-
-	return nil
 }

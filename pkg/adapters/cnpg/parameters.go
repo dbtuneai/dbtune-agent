@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/dbtuneai/agent/pkg/tuning"
 )
 
 // CNPGManagedParameters are parameters that CNPG's webhook validation explicitly
@@ -132,7 +132,7 @@ var memoryParameterUnits = map[string]string{
 // CNPG expects memory values like "2GB", "256MB" instead of raw block counts like "262144".
 //
 // For non-memory parameters, returns the original value unchanged.
-func ConvertToCNPGFormat(name string, value string, _ *agent.PGConfigRow) string {
+func ConvertToCNPGFormat(name string, value string, _ *tuning.PGConfigRow) string {
 	unit, isMemoryParam := memoryParameterUnits[name]
 	if !isMemoryParam {
 		return value
