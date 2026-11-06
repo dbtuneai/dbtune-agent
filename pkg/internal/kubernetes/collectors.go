@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/metrics"
 )
 
@@ -27,8 +26,8 @@ type ContainerMetricsCache struct {
 // CNPGContainerMetricsCollector returns a collector function that dynamically discovers the CNPG primary pod
 // before collecting metrics. This ensures metrics are always collected from the current primary,
 // even after failovers.
-func CNPGContainerMetricsCollector(client Client, clusterName string, containerName string) func(ctx context.Context, state *agent.MetricsState) error {
-	return func(ctx context.Context, state *agent.MetricsState) error {
+func CNPGContainerMetricsCollector(client Client, clusterName string, containerName string) func(ctx context.Context, state *metrics.State) error {
+	return func(ctx context.Context, state *metrics.State) error {
 		// Dynamically discover the current primary pod
 		primaryPod, err := client.FindCNPGPrimaryPod(ctx, clusterName)
 		if err != nil {
@@ -43,7 +42,7 @@ func CNPGContainerMetricsCollector(client Client, clusterName string, containerN
 
 // CollectContainerMetrics gathers container metrics from Kubernetes
 // It collects CPU and memory usage, as well as I/O statistics, calculating deltas where appropriate
-func CollectContainerMetrics(ctx context.Context, containerClient ContainerClient, state *agent.MetricsState) error {
+func CollectContainerMetrics(ctx context.Context, containerClient ContainerClient, state *metrics.State) error {
 	// Initialize cache in the state if not already present
 	if state.Cache.HardwareCache == nil {
 		state.Cache.HardwareCache = make(map[string]any)

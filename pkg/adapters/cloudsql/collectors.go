@@ -3,13 +3,12 @@ package cloudsql
 import (
 	"context"
 
-	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/sirupsen/logrus"
 )
 
-func CloudSQLHardwareInfo(logger *logrus.Logger, config Config, cloudMonitoringClient *CloudMonitoringClient) func(ctx context.Context, metric_state *agent.MetricsState) error {
-	return func(_ context.Context, metric_state *agent.MetricsState) error {
+func CloudSQLHardwareInfo(logger *logrus.Logger, config Config, cloudMonitoringClient *CloudMonitoringClient) func(ctx context.Context, metric_state *metrics.State) error {
+	return func(_ context.Context, metric_state *metrics.State) error {
 		// CPU
 		cpuUtil, err := GetCPUUtilization(cloudMonitoringClient, config.ProjectID, config.DatabaseName)
 		if err != nil {
@@ -35,7 +34,7 @@ func CloudSQLHardwareInfo(logger *logrus.Logger, config Config, cloudMonitoringC
 		diskReadCount := metric_state.Cache.IOCountersStat.ReadCount + uint64(diskIOPSRead.GetInt64Value())    //nolint:gosec // IOPS values are always positive
 		diskTotalCount := diskWriteCount + diskReadCount
 
-		metric_state.Cache.IOCountersStat = agent.IOCounterStat{WriteCount: diskWriteCount, ReadCount: diskReadCount}
+		metric_state.Cache.IOCountersStat = metrics.IOCounterStat{WriteCount: diskWriteCount, ReadCount: diskReadCount}
 
 		diskIOPSWriteMetric, _ := metrics.NodeDiskIOPSWritePerSecond.AsFlatValue(float64(diskIOPSWrite.GetInt64Value() / 60.))
 		metric_state.AddMetric(diskIOPSWriteMetric)

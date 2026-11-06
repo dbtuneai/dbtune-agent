@@ -783,8 +783,8 @@ func (adapter *PatroniAdapter) Guardrails(_ context.Context) *guardrails.Signal 
 	return nil
 }
 
-func (adapter *PatroniAdapter) Collectors() []agent.MetricCollector {
-	return []agent.MetricCollector{
+func (adapter *PatroniAdapter) Collectors() []metrics.Collector {
+	return []metrics.Collector{
 		{
 			Key:       "hardware",
 			Collector: HardwareInfoPatroni(),

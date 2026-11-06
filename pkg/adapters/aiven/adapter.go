@@ -392,8 +392,8 @@ func (adapter *AivenPostgreSQLAdapter) Guardrails(ctx context.Context) *guardrai
 }
 
 // AivenCollectors returns the metrics collectors for Aiven PostgreSQL
-func AivenCollectors(adapter *AivenPostgreSQLAdapter) []agent.MetricCollector {
-	return []agent.MetricCollector{
+func AivenCollectors(adapter *AivenPostgreSQLAdapter) []metrics.Collector {
+	return []metrics.Collector{
 		{
 			Key: pg.MetricHardware,
 			Collector: AivenHardwareInfo(

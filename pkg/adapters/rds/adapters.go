@@ -385,8 +385,8 @@ func asApplyConfigError(err error) tuning.ApplyConfigError {
 	return &tuning.ConfigApplyError{Err: fmt.Errorf("failed to apply config: %w", err)}
 }
 
-func (adapter *RDSAdapter) Collectors() []agent.MetricCollector {
-	return []agent.MetricCollector{
+func (adapter *RDSAdapter) Collectors() []metrics.Collector {
+	return []metrics.Collector{
 		{
 			Key: pg.MetricHardware,
 			Collector: RDSHardwareInfo(

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/metrics"
 
 	"github.com/moby/moby/api/types/container"
@@ -13,8 +12,8 @@ import (
 )
 
 // DockerHardwareInfo collects hardware metrics from a Docker container using the Docker API
-func DockerHardwareInfo(dockerClient *client.Client, containerName string) func(ctx context.Context, state *agent.MetricsState) error {
-	return func(ctx context.Context, state *agent.MetricsState) error {
+func DockerHardwareInfo(dockerClient *client.Client, containerName string) func(ctx context.Context, state *metrics.State) error {
+	return func(ctx context.Context, state *metrics.State) error {
 		// Get container stats. IncludePreviousSample makes the daemon take two
 		// samples one second apart; without it PreCPUStats is empty and the CPU
 		// percentage becomes a cumulative average since the container started.

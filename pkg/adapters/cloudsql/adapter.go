@@ -269,8 +269,8 @@ func (adapter *CloudSQLAdapter) Guardrails(_ context.Context) *guardrails.Signal
 	return nil
 }
 
-func (adapter *CloudSQLAdapter) Collectors() []agent.MetricCollector {
-	return []agent.MetricCollector{
+func (adapter *CloudSQLAdapter) Collectors() []metrics.Collector {
+	return []metrics.Collector{
 		{
 			Key:       "hardware",
 			Collector: CloudSQLHardwareInfo(adapter.Logger(), adapter.CloudSQLConfig, adapter.CloudMonitoringClient),

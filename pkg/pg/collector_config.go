@@ -15,7 +15,7 @@ import (
 // Collector names left from before Postgres metrics moved from
 // MetricCollectors to CatalogCollectors. They stay in the collector registry
 // below so configs and DBT_COLLECTOR_* env vars that name them still parse.
-// MetricHardware is still the Key of each adapter's hardware MetricCollector.
+// MetricHardware is still the Key of each adapter's hardware metrics.Collector.
 // Some names are also a catalog collector's name (database_connections,
 // system_db_size, server_uptime), so their config applies to that collector;
 // config under the other names is accepted and ignored.

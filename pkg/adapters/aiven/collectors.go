@@ -6,7 +6,6 @@ import (
 
 	aivenclient "github.com/aiven/go-client-codegen"
 	"github.com/aiven/go-client-codegen/handler/service"
-	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/sirupsen/logrus"
 )
@@ -20,8 +19,8 @@ func AivenHardwareInfo(
 	_ Config,
 	state *State,
 	logger *logrus.Logger,
-) func(ctx context.Context, state *agent.MetricsState) error {
-	return func(ctx context.Context, metricState *agent.MetricsState) error {
+) func(ctx context.Context, state *metrics.State) error {
+	return func(ctx context.Context, metricState *metrics.State) error {
 		if time.Since(state.Hardware.LastChecked) < metricResolution {
 			logger.Debugf(
 				"Hardware info already fetched in the last %s, skipping",

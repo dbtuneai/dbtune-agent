@@ -87,54 +87,11 @@ type AgentLooper interface {
 	Logger() *log.Logger
 }
 
-type IOCounterStat struct {
-	ReadCount  uint64
-	WriteCount uint64
-}
-
-// Caches is a struct that holds the caches for the agent
-// that is updated between each metric collection beat.
-// Currently, this is fixed for all adapters.
-// TODO: Make this dynamic for each adapter, this could use
-// GJSON and SJSON to update the cache as a string, but the locking then would be a problem in reading and writing without custom methods on state.
-type Caches struct {
-	IOCountersStat IOCounterStat
-
-	// Hardware specific cache for guardrails
-	// {
-	// 	"total_memory": 1024,
-	// 	"disk_size": 1024,
-	// }
-	HardwareCache map[string]interface{}
-}
-
-type MetricCollector struct {
-	Key       string
-	Collector func(ctx context.Context, state *MetricsState) error
-}
-
-type MetricsState struct {
-	Collectors []MetricCollector
-	// Caching layer, for metrics that are derived based on multiple heartbeats
-	Cache Caches
-	// Every round of metric collections this array will be filled with the metrics
-	// that are collected, and then emptied
-	Metrics []metrics.FlatValue
-	Mutex   *sync.Mutex
-}
-
-// AddMetric appends a metric in a thread-safe way
-func (state *MetricsState) AddMetric(metric metrics.FlatValue) {
-	state.Mutex.Lock()
-	defer state.Mutex.Unlock()
-	state.Metrics = append(state.Metrics, metric)
-}
-
 type CommonAgent struct {
 	// Client talks to the DBtune backend. Embedded so its Send* methods,
 	// GetProposedConfig and Logger satisfy AgentLooper.
 	backend.Client
-	MetricsState MetricsState
+	MetricsState metrics.State
 	// Timeout configuration
 	CollectionTimeout time.Duration // Total timeout for all collectors
 	IndividualTimeout time.Duration // Timeout for each individual collector
@@ -183,9 +140,9 @@ func CreateCommonAgentWithVersion(version string) *CommonAgent {
 
 	return &CommonAgent{
 		Client: *client,
-		MetricsState: MetricsState{
-			Collectors: []MetricCollector{},
-			Cache:      Caches{},
+		MetricsState: metrics.State{
+			Collectors: []metrics.Collector{},
+			Cache:      metrics.Caches{},
 			Mutex:      &sync.Mutex{},
 			Metrics:    []metrics.FlatValue{},
 		},
@@ -201,7 +158,7 @@ func (a *CommonAgent) Pool() *pgxpool.Pool {
 
 // Should be called after creating the common agent is created to attach the collectors.
 // You can also forgo this step if you create the common agent with the collectors already attached.
-func (a *CommonAgent) InitCollectors(collectors []MetricCollector) {
+func (a *CommonAgent) InitCollectors(collectors []metrics.Collector) {
 	a.MetricsState.Collectors = collectors
 }
 

@@ -18,10 +18,10 @@ import (
 )
 
 // mockCollector creates a collector that simulates different behaviors
-func mockCollector(delay time.Duration, shouldError bool, metrics []metrics.FlatValue) MetricCollector {
-	return MetricCollector{
+func mockCollector(delay time.Duration, shouldError bool, values []metrics.FlatValue) metrics.Collector {
+	return metrics.Collector{
 		Key: "test_collector",
-		Collector: func(ctx context.Context, state *MetricsState) error {
+		Collector: func(ctx context.Context, state *metrics.State) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -29,7 +29,7 @@ func mockCollector(delay time.Duration, shouldError bool, metrics []metrics.Flat
 				if shouldError {
 					return errors.New("collector error")
 				}
-				for _, metric := range metrics {
+				for _, metric := range values {
 					state.AddMetric(metric)
 				}
 				return nil
@@ -42,8 +42,8 @@ func TestGetMetrics(t *testing.T) {
 	t.Run("happy path - all collectors succeed", func(t *testing.T) {
 		agent := &CommonAgent{
 			Client: clientWithLogger(logrus.New()),
-			MetricsState: MetricsState{
-				Collectors: []MetricCollector{
+			MetricsState: metrics.State{
+				Collectors: []metrics.Collector{
 					mockCollector(100*time.Millisecond, false, []metrics.FlatValue{{
 						Key:   "metric1",
 						Value: 1,
@@ -71,8 +71,8 @@ func TestGetMetrics(t *testing.T) {
 	t.Run("partial failure - one collector errors", func(t *testing.T) {
 		agent := &CommonAgent{
 			Client: clientWithLogger(logrus.New()),
-			MetricsState: MetricsState{
-				Collectors: []MetricCollector{
+			MetricsState: metrics.State{
+				Collectors: []metrics.Collector{
 					mockCollector(100*time.Millisecond, true, nil), // This one will error
 					mockCollector(200*time.Millisecond, false, []metrics.FlatValue{{
 						Key:   "metric2",
@@ -95,8 +95,8 @@ func TestGetMetrics(t *testing.T) {
 	t.Run("context timeout - slow collectors are cancelled", func(t *testing.T) {
 		agent := &CommonAgent{
 			Client: clientWithLogger(logrus.New()),
-			MetricsState: MetricsState{
-				Collectors: []MetricCollector{
+			MetricsState: metrics.State{
+				Collectors: []metrics.Collector{
 					mockCollector(100*time.Millisecond, false, []metrics.FlatValue{{
 						Key:   "metric1",
 						Value: 1,
@@ -127,11 +127,11 @@ func TestGetMetrics(t *testing.T) {
 			{"/api/v1/agent/log-entries", http.MethodPost},
 		})
 		agent := CreateCommonAgentForTests(transport)
-		agent.MetricsState = MetricsState{
-			Collectors: []MetricCollector{
+		agent.MetricsState = metrics.State{
+			Collectors: []metrics.Collector{
 				{
 					Key: "panicking_collector",
-					Collector: func(_ context.Context, _ *MetricsState) error {
+					Collector: func(_ context.Context, _ *metrics.State) error {
 						var nilMap map[string]int
 						nilMap["boom"] = 1 // assignment to entry in nil map
 						return nil
@@ -167,11 +167,11 @@ func TestGetMetrics(t *testing.T) {
 			{"/api/v1/agent/log-entries", http.MethodPost},
 		})
 		agent := CreateCommonAgentForTests(transport)
-		agent.MetricsState = MetricsState{
-			Collectors: []MetricCollector{
+		agent.MetricsState = metrics.State{
+			Collectors: []metrics.Collector{
 				{
 					Key: "panicking_collector",
-					Collector: func(_ context.Context, _ *MetricsState) error {
+					Collector: func(_ context.Context, _ *metrics.State) error {
 						panic("boom")
 					},
 				},

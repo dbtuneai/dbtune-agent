@@ -92,8 +92,8 @@ func CreateDefaultPostgreSQLAdapter() (*DefaultPostgreSQLAdapter, error) {
 	return c, nil
 }
 
-func DefaultCollectors() []agent.MetricCollector {
-	return []agent.MetricCollector{
+func DefaultCollectors() []metrics.Collector {
+	return []metrics.Collector{
 		{
 			Key:       "hardware",
 			Collector: HardwareInfoOnPremise(),

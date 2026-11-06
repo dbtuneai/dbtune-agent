@@ -645,8 +645,8 @@ func (adapter *CNPGAdapter) Guardrails(ctx context.Context) *guardrails.Signal {
 	return nil
 }
 
-func Collectors(kubeClient kubernetes.Client, clusterName string, containerName string) []agent.MetricCollector {
-	return []agent.MetricCollector{
+func Collectors(kubeClient kubernetes.Client, clusterName string, containerName string) []metrics.Collector {
+	return []metrics.Collector{
 		{
 			Key:       "hardware",
 			Collector: kubernetes.CNPGContainerMetricsCollector(kubeClient, clusterName, containerName),

@@ -109,10 +109,10 @@ func TestIntegration_HealthGate_BlocksAndRecovers(t *testing.T) {
 	var collectorCalls int
 	var mu sync.Mutex
 
-	makeCollector := func(key string) agent.MetricCollector {
-		return agent.MetricCollector{
+	makeCollector := func(key string) metrics.Collector {
+		return metrics.Collector{
 			Key: key,
-			Collector: func(ctx context.Context, state *agent.MetricsState) error {
+			Collector: func(ctx context.Context, state *metrics.State) error {
 				mu.Lock()
 				collectorCalls++
 				mu.Unlock()
@@ -127,13 +127,13 @@ func TestIntegration_HealthGate_BlocksAndRecovers(t *testing.T) {
 		}
 	}
 
-	collectors := make([]agent.MetricCollector, numCollectors)
+	collectors := make([]metrics.Collector, numCollectors)
 	for i := range numCollectors {
 		collectors[i] = makeCollector(fmt.Sprintf("collector_%d", i))
 	}
 
 	a := &agent.CommonAgent{
-		MetricsState: agent.MetricsState{
+		MetricsState: metrics.State{
 			Collectors: collectors,
 			Mutex:      &sync.Mutex{},
 			Metrics:    []metrics.FlatValue{},

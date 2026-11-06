@@ -4,15 +4,14 @@ import (
 	"context"
 	"time"
 
-	"github.com/dbtuneai/agent/pkg/agent"
 	"github.com/dbtuneai/agent/pkg/metrics"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"
 )
 
-func HardwareInfoOnPremise() func(ctx context.Context, state *agent.MetricsState) error {
-	return func(_ context.Context, state *agent.MetricsState) error {
+func HardwareInfoOnPremise() func(ctx context.Context, state *metrics.State) error {
+	return func(_ context.Context, state *metrics.State) error {
 		cpuPercentage, _ := cpu.Percent(time.Millisecond*100, false) // Report the average CPU usage over 100ms
 		cpuModelMetric, _ := metrics.NodeCPUUsage.AsFlatValue(cpuPercentage[0])
 		state.AddMetric(cpuModelMetric)
@@ -29,7 +28,7 @@ func HardwareInfoOnPremise() func(ctx context.Context, state *agent.MetricsState
 			reads += ioCounter.ReadCount
 		}
 
-		if state.Cache.IOCountersStat != (agent.IOCounterStat{}) {
+		if state.Cache.IOCountersStat != (metrics.IOCounterStat{}) {
 			totalIOps := (reads + writes) - (state.Cache.IOCountersStat.ReadCount + state.Cache.IOCountersStat.WriteCount)
 			iopsTotalMetric, _ := metrics.NodeDiskIOTotalCount.AsFlatValue(totalIOps)
 			state.AddMetric(iopsTotalMetric)
@@ -42,7 +41,7 @@ func HardwareInfoOnPremise() func(ctx context.Context, state *agent.MetricsState
 		}
 
 		// Update cache
-		state.Cache.IOCountersStat = agent.IOCounterStat{ReadCount: reads, WriteCount: writes}
+		state.Cache.IOCountersStat = metrics.IOCounterStat{ReadCount: reads, WriteCount: writes}
 
 		// Memory usage
 		memoryInfo, _ := mem.VirtualMemory()
