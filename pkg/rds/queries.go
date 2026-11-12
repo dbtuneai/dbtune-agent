@@ -231,8 +231,18 @@ func (prmUserAgentMiddleware) HandleBuild(
 	return next.HandleBuild(ctx, in)
 }
 
+// sdkUserAgentStepID is the ID of the SDK's own user-agent build step, which ours must follow.
+const sdkUserAgentStepID = "UserAgent"
+
+// LoadDefaultConfig also hands these API options to the SDK's credential-provider clients, and the
+// container credentials client used by ECS task roles and EKS Pod Identity has no UserAgent step.
+// Inserting relative to a missing step fails the credential fetch, so skip those stacks: they don't
+// call AWS service APIs and need no attribution tag.
 func addPRMUserAgent(stack *middleware.Stack) error {
-	return stack.Build.Insert(prmUserAgentMiddleware{}, "UserAgent", middleware.After)
+	if _, ok := stack.Build.Get(sdkUserAgentStepID); !ok {
+		return nil
+	}
+	return stack.Build.Insert(prmUserAgentMiddleware{}, sdkUserAgentStepID, middleware.After)
 }
 
 func FetchAWSConfig(
