@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	rdsTypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/dbtuneai/agent/pkg/agent"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,6 +64,33 @@ func TestGetConfigInfo_UnknownKnob(t *testing.T) {
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to find recommended knob")
+}
+
+func TestGetConfigInfo_NoKnobs(t *testing.T) {
+	// RDS rejects DescribeDBParameters with an empty parameter-name filter, so
+	// an empty proposal must not reach AWS. The zero AWSClients would panic if
+	// it did.
+	configs, err := getConfigInfo(
+		&agent.ProposedConfigResponse{},
+		&AWSClients{},
+		"my-pg",
+		context.Background(),
+	)
+	require.NoError(t, err)
+	assert.Empty(t, configs)
+}
+
+func TestApplyConfig_NoKnobs(t *testing.T) {
+	// The zero AWSClients would panic on any AWS call, so passing proves the
+	// empty proposal returns before refreshing instance info.
+	adapter := &RDSAdapter{}
+	adapter.WithLogger(logrus.New())
+
+	err := adapter.ApplyConfig(context.Background(), &agent.ProposedConfigResponse{
+		KnobApplication: agent.KnobApplicationReload,
+	})
+	require.NoError(t, err)
+	assert.True(t, adapter.State.LastApplyAttempt.IsZero(), "an empty proposal is not an apply attempt")
 }
 
 func TestStateCheckApplyDebounced(t *testing.T) {

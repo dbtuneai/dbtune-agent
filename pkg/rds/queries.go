@@ -346,6 +346,12 @@ func getRDSParameterInfo(
 	names []string,
 	ctx context.Context,
 ) ([]rdsTypes.Parameter, error) {
+	// RDS rejects a parameter-name filter with no values
+	// (InvalidParameterCombination), and an empty proposal has nothing to read.
+	if len(names) == 0 {
+		return nil, nil
+	}
+
 	input := &rds.DescribeDBParametersInput{
 		DBParameterGroupName: aws.String(parameterGroupName),
 		MaxRecords:           aws.Int32(100),
