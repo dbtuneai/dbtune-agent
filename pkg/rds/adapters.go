@@ -199,6 +199,13 @@ func (adapter *RDSAdapter) GetActiveConfig(ctx context.Context) (agent.ConfigArr
 }
 
 func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agent.ProposedConfigResponse) agent.ApplyConfigError {
+	// The backend sends only the knobs that differ from the active config, so
+	// an empty list means the recommendation is already running.
+	if len(proposedConfig.KnobsOverrides) == 0 {
+		adapter.Logger().Info("Proposed config has no knobs to change. Exiting apply.")
+		return nil
+	}
+
 	if adapter.State.CheckApplyDebounced(1 * time.Minute) {
 		adapter.Logger().Infof("Config was applied less than %s ago, skipping", 1*time.Minute)
 		return nil
