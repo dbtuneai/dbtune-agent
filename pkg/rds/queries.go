@@ -335,19 +335,39 @@ func waitParameterStaged(
 		case <-time.After(10 * time.Second):
 		}
 
-		instance, err := fetchRDSDBInstance(databaseIdentifier, clients, ctx)
+		current, err := fetchParameterApplyStatus(clients, databaseIdentifier, ctx)
 		if err != nil {
 			logger.Warnf("Could not read the parameter apply status: %v", err)
 			continue
 		}
-		if len(instance.DBParameterGroups) > 0 {
-			status = aws.ToString(instance.DBParameterGroups[0].ParameterApplyStatus)
-		}
+		status = current
 		if status == "pending-reboot" {
 			return nil
 		}
 		logger.Infof("Waiting for RDS to stage the parameter change (status: %q)", status)
 	}
+}
+
+// fetchParameterApplyStatus reads how far RDS has gotten in applying a new config:
+// "applying" while a change is on its way, then "in-sync", or "pending-reboot"
+// when a static change waits for a reboot.
+func fetchParameterApplyStatus(
+	clients *AWSClients,
+	databaseIdentifier string,
+	ctx context.Context,
+) (string, error) {
+	instance, err := fetchRDSDBInstance(databaseIdentifier, clients, ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(instance.DBParameterGroups) == 0 {
+		return "", fmt.Errorf("instance %q reports no parameter group", databaseIdentifier)
+	}
+	status := aws.ToString(instance.DBParameterGroups[0].ParameterApplyStatus)
+	if status == "" {
+		return "", fmt.Errorf("instance %q reports no parameter apply status", databaseIdentifier)
+	}
+	return status, nil
 }
 
 func getRDSParameterInfo(

@@ -298,10 +298,11 @@ func (adapter *RDSAdapter) ApplyConfig(ctx context.Context, proposedConfig *agen
 	return nil
 }
 
-// Timing for the pg_settings read-back. RDS propagates an immediate change
-// within about a minute; past that it is not coming.
+// Timing for the pg_settings read-back. RDS applies an immediate change to the
+// instance in the background and promises no deadline, so this allows well
+// past the usual minute before calling the apply failed.
 const (
-	pgVerifyTimeout  = 90 * time.Second
+	pgVerifyTimeout  = 10 * time.Minute
 	pgVerifyInterval = 5 * time.Second
 	// For the one-off group read on the failure path.
 	paramGroupReadTimeout = 30 * time.Second
@@ -373,9 +374,11 @@ func (adapter *RDSAdapter) parameterGroupDiagnosis(ctx context.Context, targets 
 			name, strings.Join(mismatches, "\n"),
 		)
 	}
+	status, statusErr := fetchParameterApplyStatus(
+		&adapter.AWSClients, adapter.Config.RDSDatabaseIdentifier, ctx)
 	return fmt.Sprintf(
-		"parameter group %q does hold the requested values, but they are not live in the database.",
-		name,
+		"parameter group %q holds the requested values, but %s",
+		name, describeApplyStatus(status, statusErr),
 	)
 }
 

@@ -1,6 +1,7 @@
 package rds
 
 import (
+	"errors"
 	"slices"
 	"testing"
 
@@ -250,4 +251,28 @@ func TestClassifyInstanceStatus(t *testing.T) {
 			assert.Equal(t, c.want, classifyInstanceStatus(c.status))
 		})
 	}
+}
+
+func TestDescribeApplyStatus(t *testing.T) {
+	t.Run("applying says RDS is not done", func(t *testing.T) {
+		got := describeApplyStatus("applying", nil)
+		assert.Contains(t, got, "still applying")
+		assert.Contains(t, got, "parameter apply status: applying")
+	})
+
+	t.Run("in-sync points at an override", func(t *testing.T) {
+		got := describeApplyStatus("in-sync", nil)
+		assert.Contains(t, got, "parameter apply status: in-sync")
+		assert.Contains(t, got, "pg_settings")
+	})
+
+	t.Run("other statuses are named", func(t *testing.T) {
+		assert.Contains(t, describeApplyStatus("pending-reboot", nil), "parameter apply status: pending-reboot")
+	})
+
+	t.Run("an unread status carries the read error", func(t *testing.T) {
+		got := describeApplyStatus("", errors.New("AccessDenied"))
+		assert.Contains(t, got, "could not be read")
+		assert.Contains(t, got, "AccessDenied")
+	})
 }
