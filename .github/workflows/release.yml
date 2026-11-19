@@ -60,4 +60,13 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+
+      - name: Announce release in Slack
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          errors: true
+          payload: |
+            channel: "#deployment-notifications"
+            text: "🚀 new DBtune Agent ${{ github.ref_name }} release. <${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}|Changelog>"
