@@ -25,12 +25,17 @@ type PostgresRolePrivileges struct {
 	// pg_read_all_stats and pg_read_all_settings are granted through pg_monitor.
 	ReadAllStats    bool `db:"pg_read_all_stats"`
 	ReadAllSettings bool `db:"pg_read_all_settings"`
+	ReadAllData     bool `db:"pg_read_all_data"`
 }
 
+// pg_has_role errors on a role that doesn't exist, so pg_read_all_data is
+// looked up through pg_roles. It's new in PostgreSQL 14; on older versions
+// there's nothing to grant, so it isn't checked and reports true.
 const postgresRolePrivilegesQuery = `SELECT
 	current_user AS role,
 	pg_has_role(current_user, 'pg_read_all_stats', 'USAGE') AS pg_read_all_stats,
-	pg_has_role(current_user, 'pg_read_all_settings', 'USAGE') AS pg_read_all_settings`
+	pg_has_role(current_user, 'pg_read_all_settings', 'USAGE') AS pg_read_all_settings,
+	COALESCE((SELECT pg_has_role(current_user, oid, 'USAGE') FROM pg_roles WHERE rolname = 'pg_read_all_data'), true) AS pg_read_all_data`
 
 // postgresCapability is a capability the agent needs from its role and what is
 // lost without it. Add a PostgresRolePrivileges field and a row here to check
@@ -55,6 +60,12 @@ var postgresCapabilities = []postgresCapability{
 		has:    func(p PostgresRolePrivileges) bool { return p.ReadAllSettings },
 		impact: "superuser-only settings such as shared_preload_libraries are hidden",
 		fix:    "GRANT pg_monitor TO %s;",
+	},
+	{
+		name:   "pg_read_all_data",
+		has:    func(p PostgresRolePrivileges) bool { return p.ReadAllData },
+		impact: "dbtune cannot access column statistics from pg_stats",
+		fix:    "GRANT pg_read_all_data TO %s;",
 	},
 }
 
