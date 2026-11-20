@@ -24,9 +24,6 @@ const (
 	CNPGAPIVersion   = "v1"
 	CNPGResourceName = "clusters"
 
-	// CNPG label for cluster identification
-	CNPGClusterLabel = "cnpg.io/cluster"
-
 	// CNPG parameters path in the Cluster CRD spec
 	CNPGParametersPath = "spec.postgresql.parameters"
 

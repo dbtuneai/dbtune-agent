@@ -31,7 +31,7 @@ func ConfigFromViper() (Config, error) {
 	_ = dbtuneConfig.BindEnv("pod_name", "DBT_CNPG_POD_NAME")
 	_ = dbtuneConfig.BindEnv("container_name", "DBT_CNPG_CONTAINER_NAME")
 	// Default to "postgres" which is the standard container name in CNPG pods
-	dbtuneConfig.SetDefault("container_name", "postgres")
+	dbtuneConfig.SetDefault("container_name", DEFAULT_CONTAINER_NAME)
 
 	var config Config
 
