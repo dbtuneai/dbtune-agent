@@ -166,6 +166,25 @@ func diffPGSettings(targets []configInfo, rows []queries.PgSettingsRow) settings
 	return diff
 }
 
+// describeApplyStatus completes the timeout error for a group that holds the
+// requested values while PostgreSQL reports others. status is the instance's
+// parameter apply status, "" if it could not be read; readErr is why.
+func describeApplyStatus(status string, readErr error) string {
+	switch status {
+	case "":
+		return fmt.Sprintf(
+			"the instance's parameter apply status could not be read (%v), so it is unknown whether RDS finished applying them.",
+			readErr)
+	case "applying":
+		return "RDS is still applying them to the instance (parameter apply status: applying)."
+	case "in-sync":
+		return "RDS reports them applied to the instance (parameter apply status: in-sync), yet PostgreSQL reports other values. " +
+			"It is likely that something outside the group sets them, such as a per-database or per-role setting; the source column of pg_settings shows where each value comes from."
+	default:
+		return fmt.Sprintf("they are not live in the database (parameter apply status: %s).", status)
+	}
+}
+
 // valuesEqual compares two settings in the same unit, tolerating
 // representation differences: "1" vs "1.0", "on" vs "true", "LOGICAL" vs
 // "logical".
